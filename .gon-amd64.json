@@ -1,0 +1,14 @@
+{
+  "source": ["./dist/macos-amd64_darwin_amd64_v1/baton-github"],
+  "bundle_id": "com.conductorone.connector-github",
+  "apple_id": {
+    "username" : "justin.gallardo@conductorone.com",
+    "password":  "@env:AC_PASSWORD"
+  },
+  "sign": {
+    "application_identity": "Developer ID Application: Justin Gallardo (858DKH55XL)"
+  },
+  "zip" :{
+    "output_path":  "./dist/baton-github-darwin-amd64.signed.zip"
+  }
+}
