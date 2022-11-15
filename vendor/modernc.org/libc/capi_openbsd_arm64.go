@@ -3,7 +3,8 @@
 package libc // import "modernc.org/libc"
 
 var CAPI = map[string]struct{}{
-	"_C_ctype_":                        {},
+	"_CurrentRuneLocale":               {},
+	"_DefaultRuneLocale":               {},
 	"_IO_putc":                         {},
 	"_ThreadRuneLocale":                {},
 	"___errno_location":                {},
@@ -49,7 +50,6 @@ var CAPI = map[string]struct{}{
 	"__builtin_inf":                    {},
 	"__builtin_inff":                   {},
 	"__builtin_infl":                   {},
-	"__builtin_isblank":                {},
 	"__builtin_isnan":                  {},
 	"__builtin_isunordered":            {},
 	"__builtin_llabs":                  {},
@@ -129,7 +129,6 @@ var CAPI = map[string]struct{}{
 	"__toread_needs_stdio_exit":        {},
 	"__uflow":                          {},
 	"__xuname":                         {},
-	"_ctype_":                          {},
 	"_exit":                            {},
 	"_longjmp":                         {},
 	"_obstack_begin":                   {},
@@ -157,9 +156,6 @@ var CAPI = map[string]struct{}{
 	"backtrace_symbols_fd":             {},
 	"bind":                             {},
 	"bsearch":                          {},
-	"bswap16":                          {},
-	"bswap32":                          {},
-	"bswap64":                          {},
 	"bzero":                            {},
 	"calloc":                           {},
 	"ceil":                             {},
@@ -287,7 +283,6 @@ var CAPI = map[string]struct{}{
 	"isalpha":                          {},
 	"isascii":                          {},
 	"isatty":                           {},
-	"isblank":                          {},
 	"isdigit":                          {},
 	"islower":                          {},
 	"isnan":                            {},

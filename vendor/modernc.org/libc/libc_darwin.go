@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	gosignal "os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	gotime "time"
@@ -384,8 +383,6 @@ func Xsysconf(t *TLS, name int32) long {
 	switch name {
 	case unistd.X_SC_PAGESIZE:
 		return long(unix.Getpagesize())
-	case unistd.X_SC_NPROCESSORS_ONLN:
-		return long(runtime.NumCPU())
 	}
 
 	panic(todo(""))
