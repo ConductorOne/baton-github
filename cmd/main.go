@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ductone/connector-sdk/pkg/cli"
-	"github.com/ductone/connector-sdk/pkg/connectorbuilder"
-	"github.com/ductone/connector-sdk/pkg/sdk"
-	"github.com/ductone/connector-sdk/pkg/types"
+	"github.com/conductorone/baton-sdk/pkg/cli"
+	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/conductorone/baton-sdk/pkg/sdk"
+	"github.com/conductorone/baton-sdk/pkg/types"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 
-	"github.com/ductone/connector-github/pkg/connector"
+	"github.com/conductorone/baton-github/pkg/connector"
 )
 
 var version = "dev"

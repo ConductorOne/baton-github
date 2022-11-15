@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	v2 "github.com/ductone/connector-sdk/pb/c1/connector/v2"
-	"github.com/ductone/connector-sdk/pkg/annotations"
-	"github.com/ductone/connector-sdk/pkg/pagination"
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/google/go-github/v41/github"
 )
 

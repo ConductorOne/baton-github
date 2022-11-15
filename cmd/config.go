@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ductone/connector-sdk/pkg/cli"
+	"github.com/conductorone/baton-sdk/pkg/cli"
 	"github.com/spf13/cobra"
 )
 

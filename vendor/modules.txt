@@ -117,6 +117,33 @@ github.com/aws/smithy-go/time
 github.com/aws/smithy-go/transport/http
 github.com/aws/smithy-go/transport/http/internal/io
 github.com/aws/smithy-go/waiter
+# github.com/conductorone/baton-sdk v0.0.2
+## explicit; go 1.19
+github.com/conductorone/baton-sdk/internal/connector
+github.com/conductorone/baton-sdk/internal/dotc1z
+github.com/conductorone/baton-sdk/internal/prototools
+github.com/conductorone/baton-sdk/pb/c1/connector/v2
+github.com/conductorone/baton-sdk/pb/c1/connector_wrapper/v1
+github.com/conductorone/baton-sdk/pb/c1/ratelimit/v1
+github.com/conductorone/baton-sdk/pb/c1/reader/v2
+github.com/conductorone/baton-sdk/pb/c1/utls/v1
+github.com/conductorone/baton-sdk/pkg/annotations
+github.com/conductorone/baton-sdk/pkg/cli
+github.com/conductorone/baton-sdk/pkg/connectorbuilder
+github.com/conductorone/baton-sdk/pkg/connectorstore
+github.com/conductorone/baton-sdk/pkg/dotc1z/manager
+github.com/conductorone/baton-sdk/pkg/dotc1z/manager/local
+github.com/conductorone/baton-sdk/pkg/dotc1z/manager/s3
+github.com/conductorone/baton-sdk/pkg/logging
+github.com/conductorone/baton-sdk/pkg/pagination
+github.com/conductorone/baton-sdk/pkg/ratelimit
+github.com/conductorone/baton-sdk/pkg/sdk
+github.com/conductorone/baton-sdk/pkg/sync
+github.com/conductorone/baton-sdk/pkg/types
+github.com/conductorone/baton-sdk/pkg/ugrpc
+github.com/conductorone/baton-sdk/pkg/uhttp
+github.com/conductorone/baton-sdk/pkg/us3
+github.com/conductorone/baton-sdk/pkg/utls
 # github.com/doug-martin/goqu/v9 v9.18.0
 ## explicit; go 1.12
 github.com/doug-martin/goqu/v9
@@ -127,33 +154,6 @@ github.com/doug-martin/goqu/v9/internal/sb
 github.com/doug-martin/goqu/v9/internal/tag
 github.com/doug-martin/goqu/v9/internal/util
 github.com/doug-martin/goqu/v9/sqlgen
-# github.com/ductone/connector-sdk v0.1.8
-## explicit; go 1.19
-github.com/ductone/connector-sdk/internal/connector
-github.com/ductone/connector-sdk/internal/dotc1z
-github.com/ductone/connector-sdk/internal/prototools
-github.com/ductone/connector-sdk/pb/c1/connector/v2
-github.com/ductone/connector-sdk/pb/c1/connector_wrapper/v1
-github.com/ductone/connector-sdk/pb/c1/ratelimit/v1
-github.com/ductone/connector-sdk/pb/c1/reader/v2
-github.com/ductone/connector-sdk/pb/c1/utls/v1
-github.com/ductone/connector-sdk/pkg/annotations
-github.com/ductone/connector-sdk/pkg/cli
-github.com/ductone/connector-sdk/pkg/connectorbuilder
-github.com/ductone/connector-sdk/pkg/connectorstore
-github.com/ductone/connector-sdk/pkg/dotc1z/manager
-github.com/ductone/connector-sdk/pkg/dotc1z/manager/local
-github.com/ductone/connector-sdk/pkg/dotc1z/manager/s3
-github.com/ductone/connector-sdk/pkg/logging
-github.com/ductone/connector-sdk/pkg/pagination
-github.com/ductone/connector-sdk/pkg/ratelimit
-github.com/ductone/connector-sdk/pkg/sdk
-github.com/ductone/connector-sdk/pkg/sync
-github.com/ductone/connector-sdk/pkg/types
-github.com/ductone/connector-sdk/pkg/ugrpc
-github.com/ductone/connector-sdk/pkg/uhttp
-github.com/ductone/connector-sdk/pkg/us3
-github.com/ductone/connector-sdk/pkg/utls
 # github.com/envoyproxy/protoc-gen-validate v0.6.13
 ## explicit; go 1.12
 github.com/envoyproxy/protoc-gen-validate/validate
@@ -208,7 +208,7 @@ github.com/inconshreveable/mousetrap
 # github.com/jmespath/go-jmespath v0.4.0
 ## explicit; go 1.14
 github.com/jmespath/go-jmespath
-# github.com/klauspost/compress v1.15.12
+# github.com/klauspost/compress v1.15.11
 ## explicit; go 1.17
 github.com/klauspost/compress
 github.com/klauspost/compress/fse
@@ -290,7 +290,7 @@ go.uber.org/zap/internal/bufferpool
 go.uber.org/zap/internal/color
 go.uber.org/zap/internal/exit
 go.uber.org/zap/zapcore
-# golang.org/x/crypto v0.1.0
+# golang.org/x/crypto v0.0.0-20221012134737-56aed061732a
 ## explicit; go 1.17
 golang.org/x/crypto/cast5
 golang.org/x/crypto/openpgp
@@ -299,7 +299,7 @@ golang.org/x/crypto/openpgp/elgamal
 golang.org/x/crypto/openpgp/errors
 golang.org/x/crypto/openpgp/packet
 golang.org/x/crypto/openpgp/s2k
-# golang.org/x/net v0.1.0
+# golang.org/x/net v0.2.0
 ## explicit; go 1.17
 golang.org/x/net/context
 golang.org/x/net/context/ctxhttp
@@ -309,11 +309,11 @@ golang.org/x/net/http2/hpack
 golang.org/x/net/idna
 golang.org/x/net/internal/timeseries
 golang.org/x/net/trace
-# golang.org/x/oauth2 v0.1.0
+# golang.org/x/oauth2 v0.2.0
 ## explicit; go 1.17
 golang.org/x/oauth2
 golang.org/x/oauth2/internal
-# golang.org/x/sys v0.1.0
+# golang.org/x/sys v0.2.0
 ## explicit; go 1.17
 golang.org/x/sys/internal/unsafeheader
 golang.org/x/sys/unix
@@ -340,7 +340,7 @@ google.golang.org/appengine/internal/log
 google.golang.org/appengine/internal/remote_api
 google.golang.org/appengine/internal/urlfetch
 google.golang.org/appengine/urlfetch
-# google.golang.org/genproto v0.0.0-20221027153422-115e99e71e1c
+# google.golang.org/genproto v0.0.0-20221018160656-63c7b68cfc55
 ## explicit; go 1.19
 google.golang.org/genproto/googleapis/rpc/status
 # google.golang.org/grpc v1.50.1
@@ -438,7 +438,7 @@ gopkg.in/yaml.v2
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# modernc.org/libc v1.21.4
+# modernc.org/libc v1.21.0
 ## explicit; go 1.17
 modernc.org/libc
 modernc.org/libc/errno
@@ -472,6 +472,6 @@ modernc.org/mathutil
 # modernc.org/memory v1.4.0
 ## explicit; go 1.18
 modernc.org/memory
-# modernc.org/sqlite v1.19.3
+# modernc.org/sqlite v1.19.2
 ## explicit; go 1.17
 modernc.org/sqlite/lib
