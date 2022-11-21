@@ -117,11 +117,10 @@ github.com/aws/smithy-go/time
 github.com/aws/smithy-go/transport/http
 github.com/aws/smithy-go/transport/http/internal/io
 github.com/aws/smithy-go/waiter
-# github.com/conductorone/baton-sdk v0.0.2
+# github.com/conductorone/baton-sdk v0.0.4
 ## explicit; go 1.19
 github.com/conductorone/baton-sdk/internal/connector
 github.com/conductorone/baton-sdk/internal/dotc1z
-github.com/conductorone/baton-sdk/internal/prototools
 github.com/conductorone/baton-sdk/pb/c1/connector/v2
 github.com/conductorone/baton-sdk/pb/c1/connector_wrapper/v1
 github.com/conductorone/baton-sdk/pb/c1/ratelimit/v1

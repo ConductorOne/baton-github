@@ -1,6 +1,6 @@
 {
   "source": ["./dist/macos-amd64_darwin_amd64_v1/baton-github"],
-  "bundle_id": "com.conductorone.connector-github",
+  "bundle_id": "com.conductorone.baton.github",
   "apple_id": {
     "username" : "justin.gallardo@conductorone.com",
     "password":  "@env:AC_PASSWORD"
