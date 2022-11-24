@@ -9,6 +9,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/sdk"
 	"github.com/google/go-github/v41/github"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -35,11 +36,13 @@ func userResource(ctx context.Context, user *github.User) (*v2.Resource, error) 
 		Id: strconv.FormatInt(user.GetID(), 10),
 	})
 
+	resourceID, err := sdk.NewResourceID(resourceTypeUser, nil, user.GetID())
+	if err != nil {
+		return nil, err
+	}
+
 	return &v2.Resource{
-		Id: &v2.ResourceId{
-			ResourceType: resourceTypeUser.Id,
-			Resource:     fmt.Sprintf("%d", user.GetID()),
-		},
+		Id:          resourceID,
 		DisplayName: displayName,
 		Annotations: annos,
 	}, nil

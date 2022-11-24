@@ -16,38 +16,9 @@ import (
 
 var titleCaser = cases.Title(language.English)
 
-// fmtResourceId returns a new v2.ResourceID given a resource type and resource ID.
-func fmtResourceId(rTypeID string, orgName string, id int64) *v2.ResourceId {
-	return &v2.ResourceId{
-		ResourceType: rTypeID,
-		Resource:     fmt.Sprintf("%s:%d", orgName, id),
-	}
-}
-
 func getOrgName(rID *v2.ResourceId) string {
 	ret, _, _ := strings.Cut(rID.Resource, ":")
 	return ret
-}
-
-// fmtResourceRole returns a formatted string that represents a unique ID for an entitlement.
-func fmtResourceRole(resourceID *v2.ResourceId, role string) string {
-	return fmt.Sprintf(
-		"%s:%s:role:%s",
-		resourceID.ResourceType,
-		resourceID.Resource,
-		role,
-	)
-}
-
-func fmtResourceGrant(resourceID *v2.ResourceId, principalId *v2.ResourceId, permission string) string {
-	return fmt.Sprintf(
-		"%s-grant:%s:%s:%s:%s",
-		resourceID.ResourceType,
-		resourceID.Resource,
-		principalId.ResourceType,
-		principalId.Resource,
-		permission,
-	)
 }
 
 func v1AnnotationsForResourceType(resourceTypeID string) annotations.Annotations {
@@ -59,12 +30,11 @@ func v1AnnotationsForResourceType(resourceTypeID string) annotations.Annotations
 	return annos
 }
 
-// parseResourceToGithub returns the resource type and upstream object ID for a given v2.ResourceID.
+// parseResourceToGithub returns the upstream API ID by looking at the last 'part' of the resource ID.
 func parseResourceToGithub(id *v2.ResourceId) (int64, error) {
-	if _, rID, found := strings.Cut(id.Resource, ":"); found {
-		return strconv.ParseInt(rID, 10, 64)
-	}
-	return 0, fmt.Errorf("github-connector: invalid internal id: '%s'", id.Resource)
+	idParts := strings.Split(id.Resource, ":")
+
+	return strconv.ParseInt(idParts[len(idParts)-1], 10, 64)
 }
 
 func parsePageToken(i string, resourceID *v2.ResourceId) (*pagination.Bag, int, error) {
