@@ -8,6 +8,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/sdk"
 	"github.com/google/go-github/v41/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
@@ -35,7 +36,7 @@ func (o *orgResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 func (o *orgResourceType) List(
 	ctx context.Context,
-	_ *v2.ResourceId,
+	parentResourceID *v2.ResourceId,
 	pToken *pagination.Token,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
 	bag, page, err := parsePageToken(pToken.Token, &v2.ResourceId{ResourceType: resourceTypeOrg.Id})
@@ -89,11 +90,13 @@ func (o *orgResourceType) List(
 		annos.Append(&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id})
 		annos.Append(&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id})
 
+		resourceID, err := sdk.NewResourceID(resourceTypeOrg, parentResourceID, org.GetLogin())
+		if err != nil {
+			return nil, "", nil, err
+		}
+
 		ret = append(ret, &v2.Resource{
-			Id: &v2.ResourceId{
-				ResourceType: resourceTypeOrg.Id,
-				Resource:     org.GetLogin(),
-			},
+			Id:          resourceID,
 			DisplayName: org.GetLogin(),
 			Annotations: annos,
 		})
@@ -114,7 +117,7 @@ func (o *orgResourceType) Entitlements(
 			Id: fmt.Sprintf("org:%s:role:%s", resource.Id, level),
 		})
 		rv = append(rv, &v2.Entitlement{
-			Id:          fmtResourceRole(resource.Id, level),
+			Id:          sdk.NewEntitlementID(resource, level),
 			Resource:    resource,
 			DisplayName: fmt.Sprintf("%s Org %s", resource.DisplayName, titleCaser.String(level)),
 			Description: fmt.Sprintf("Access to %s org in Github", resource.DisplayName),
@@ -184,12 +187,15 @@ func (o *orgResourceType) Grants(
 			annos.Append(&v2.V1Identifier{
 				Id: fmt.Sprintf("org-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), roleName),
 			})
+
+			en := &v2.Entitlement{
+				Id:       sdk.NewEntitlementID(resource, roleName),
+				Resource: resource,
+			}
+
 			rv = append(rv, &v2.Grant{
-				Id: fmtResourceGrant(resource.Id, ur.Id, roleName),
-				Entitlement: &v2.Entitlement{
-					Id:       fmtResourceRole(resource.Id, roleName),
-					Resource: resource,
-				},
+				Id:          sdk.NewGrantID(en, ur),
+				Entitlement: en,
 				Annotations: annos,
 				Principal:   ur,
 			})

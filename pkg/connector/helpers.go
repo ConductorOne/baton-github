@@ -59,12 +59,11 @@ func v1AnnotationsForResourceType(resourceTypeID string) annotations.Annotations
 	return annos
 }
 
-// parseResourceToGithub returns the resource type and upstream object ID for a given v2.ResourceID.
+// parseResourceToGithub returns the upstream API ID by looking at the last 'part' of the resource ID
 func parseResourceToGithub(id *v2.ResourceId) (int64, error) {
-	if _, rID, found := strings.Cut(id.Resource, ":"); found {
-		return strconv.ParseInt(rID, 10, 64)
-	}
-	return 0, fmt.Errorf("github-connector: invalid internal id: '%s'", id.Resource)
+	idParts := strings.Split(id.Resource, ":")
+
+	return strconv.ParseInt(idParts[len(idParts)-1], 10, 64)
 }
 
 func parsePageToken(i string, resourceID *v2.ResourceId) (*pagination.Bag, int, error) {

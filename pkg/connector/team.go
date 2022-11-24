@@ -7,6 +7,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/sdk"
 	"github.com/google/go-github/v41/github"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -39,8 +40,13 @@ func teamResource(ctx context.Context, orgName string, team *github.Team, parent
 	})
 	annos.Append(&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id})
 
+	resourceID, err := sdk.NewResourceID(resourceTypeTeam, parentResourceID, team.GetID())
+	if err != nil {
+		return nil, err
+	}
+
 	return &v2.Resource{
-		Id:               fmtResourceId(resourceTypeTeam.Id, orgName, team.GetID()),
+		Id:               resourceID,
 		DisplayName:      team.GetName(),
 		Annotations:      annos,
 		ParentResourceId: parentResourceID,
@@ -151,7 +157,7 @@ func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource
 			Id: fmt.Sprintf("team:%s:role:%s", resource.Id, level),
 		})
 		rv = append(rv, &v2.Entitlement{
-			Id:          fmtResourceRole(resource.Id, level),
+			Id:          sdk.NewEntitlementID(resource, level),
 			Resource:    resource,
 			DisplayName: fmt.Sprintf("%s Team %s", resource.DisplayName, titleCaser.String(level)),
 			Description: fmt.Sprintf("Access to %s team in Github", resource.DisplayName),
@@ -218,12 +224,14 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 			return nil, "", nil, err
 		}
 
+		en := &v2.Entitlement{
+			Id:       sdk.NewEntitlementID(resource, membership.GetRole()),
+			Resource: resource,
+		}
+
 		rv = append(rv, &v2.Grant{
-			Entitlement: &v2.Entitlement{
-				Id:       fmtResourceRole(resource.Id, membership.GetRole()),
-				Resource: resource,
-			},
-			Id:          fmtResourceGrant(resource.Id, ur.Id, membership.GetRole()),
+			Entitlement: en,
+			Id:          sdk.NewGrantID(en, ur),
 			Principal:   ur,
 			Annotations: annos,
 		})
