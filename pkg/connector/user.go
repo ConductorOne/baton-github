@@ -11,7 +11,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/sdk"
 	"github.com/google/go-github/v41/github"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // Create a new connector resource for a github user.
@@ -23,42 +22,13 @@ func userResource(ctx context.Context, user *github.User) (*v2.Resource, error) 
 		displayName = user.GetLogin()
 	}
 
-	ut, err := userTrait(ctx, user)
-	if err != nil {
-		return nil, err
-	}
 	var annos annotations.Annotations
-	annos.Append(ut)
 	annos.Append(&v2.ExternalLink{
 		Url: user.GetHTMLURL(),
 	})
 	annos.Append(&v2.V1Identifier{
 		Id: strconv.FormatInt(user.GetID(), 10),
 	})
-
-	resourceID, err := sdk.NewResourceID(resourceTypeUser, nil, user.GetID())
-	if err != nil {
-		return nil, err
-	}
-
-	return &v2.Resource{
-		Id:          resourceID,
-		DisplayName: displayName,
-		Annotations: annos,
-	}, nil
-}
-
-// Create and return a User trait for a github user.
-func userTrait(ctx context.Context, user *github.User) (*v2.UserTrait, error) {
-	ret := &v2.UserTrait{
-		Status: &v2.UserTrait_Status{
-			Status: v2.UserTrait_Status_STATUS_ENABLED,
-		},
-	}
-
-	if user.GetAvatarURL() != "" {
-		ret.Icon = &v2.AssetRef{Id: user.GetAvatarURL()}
-	}
 
 	names := strings.SplitN(user.GetName(), " ", 2)
 	var firstName, lastName string
@@ -70,30 +40,18 @@ func userTrait(ctx context.Context, user *github.User) (*v2.UserTrait, error) {
 		lastName = names[1]
 	}
 
-	profile, err := structpb.NewStruct(map[string]interface{}{
+	profile := map[string]interface{}{
 		"first_name": firstName,
 		"last_name":  lastName,
 		"login":      user.GetLogin(),
 		"user_id":    strconv.Itoa(int(user.GetID())),
-	})
+	}
+
+	ret, err := sdk.NewUserResource(displayName, resourceTypeUser, nil, user.GetID(), user.GetEmail(), profile)
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to construct user profile for user trait: %w", err)
+		return nil, err
 	}
-	ret.Profile = profile
-
-	if user.GetEmail() != "" {
-		ret.Emails = []*v2.UserTrait_Email{
-			{
-				Address:   user.GetEmail(),
-				IsPrimary: true,
-			},
-		}
-	}
-
-	// TODO(jirwin): We can maybe fetch the gravatar ID here. What is the asset server story?
-	if user.GetGravatarID() != "" {
-		ret.Icon = &v2.AssetRef{Id: fmt.Sprintf("user:gravatar:%s", user.GetGravatarID())}
-	}
+	ret.Annotations = append(ret.Annotations, annos...)
 
 	return ret, nil
 }
@@ -117,7 +75,10 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		return nil, "", nil, err
 	}
 
-	orgName := getOrgName(parentID)
+	orgName, err := getOrgName(ctx, o.client, parentID)
+	if err != nil {
+		return nil, "", nil, err
+	}
 
 	opts := github.ListMembersOptions{
 		ListOptions: github.ListOptions{Page: page, PerPage: pt.Size},

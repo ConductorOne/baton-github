@@ -3,13 +3,13 @@ package connector
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/sdk"
 	"github.com/google/go-github/v41/github"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 const (
@@ -23,14 +23,8 @@ var teamAccessLevels = []string{
 }
 
 // teamResource creates a new connector resource for a GitHub Team. It is possible that the team has a parent resource.
-func teamResource(ctx context.Context, orgName string, team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
-	t, err := teamTrait(ctx, team)
-	if err != nil {
-		return nil, err
-	}
-
+func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	var annos annotations.Annotations
-	annos.Append(t)
 	annos.Append(&v2.ExternalLink{
 		// The GitHub client doesn't return HTMLURL() for some reason
 		Url: team.GetURL(),
@@ -38,33 +32,20 @@ func teamResource(ctx context.Context, orgName string, team *github.Team, parent
 	annos.Append(&v2.V1Identifier{
 		Id: fmt.Sprintf("team:%d", team.GetID()),
 	})
-	annos.Append(&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id})
 
-	resourceID, err := sdk.NewResourceID(resourceTypeTeam, parentResourceID, team.GetID())
+	profile := map[string]interface{}{
+		"members_count": team.GetMembersCount(),
+		"repos_count":   team.GetReposCount(),
+		// Store the org ID in the profile so that we can reference it when calculating grants
+		"orgID": team.GetOrganization().GetID(),
+	}
+
+	ret, err := sdk.NewGroupResource(team.GetName(), resourceTypeTeam, parentResourceID, team.GetID(), profile)
 	if err != nil {
 		return nil, err
 	}
 
-	return &v2.Resource{
-		Id:               resourceID,
-		DisplayName:      team.GetName(),
-		Annotations:      annos,
-		ParentResourceId: parentResourceID,
-	}, nil
-}
-
-// teamTrait creates a new GroupTrait for a github team.
-func teamTrait(ctx context.Context, team *github.Team) (*v2.GroupTrait, error) {
-	ret := &v2.GroupTrait{}
-	profile, err := structpb.NewStruct(map[string]interface{}{
-		"members_count": team.GetMembersCount(),
-		"repos_count":   team.GetReposCount(),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to construct user profile for user trait: %w", err)
-	}
-
-	ret.Profile = profile
+	ret.Annotations = append(ret.Annotations, annos...)
 
 	return ret, nil
 }
@@ -88,35 +69,57 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		return nil, "", nil, err
 	}
 
-	orgName := getOrgName(parentID)
-
-	org, _, err := o.client.Organizations.Get(ctx, orgName)
-	if err != nil {
-		return nil, "", nil, err
-	}
-
 	opts := &github.ListOptions{
 		Page:    page,
 		PerPage: pt.Size,
 	}
 
+	teamParent := parentID
+
+	orgID, err := parseResourceToGithub(parentID)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
 	var teams []*github.Team
 	var resp *github.Response
+	var rv []*v2.Resource
 
-	switch parentID.ResourceType {
-	case resourceTypeOrg.Id:
+	switch bag.ResourceID() {
+	// No resource ID set, so just list teams and push an action for each that we see
+	case "":
+		bag.Pop()
+		orgName, err := getOrgName(ctx, o.client, parentID)
+		if err != nil {
+			return nil, "", nil, err
+		}
+
 		teams, resp, err = o.client.Teams.ListTeams(ctx, orgName, opts)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list teams: %w", err)
 		}
 
-	case resourceTypeTeam.Id:
-		parentTeamID, err := parseResourceToGithub(parentID)
+		for _, t := range teams {
+			bag.Push(pagination.PageState{
+				ResourceTypeID: resourceTypeTeam.Id,
+				ResourceID:     strconv.FormatInt(t.GetID(), 10),
+			})
+		}
+
+	// We have a resource ID set, so we should check to see if the specific team has any children
+	default:
+		// Override the parent for the team because are looking at nested teams
+		teamParent = &v2.ResourceId{
+			ResourceType: bag.ResourceTypeID(),
+			Resource:     bag.ResourceID(),
+		}
+
+		teamID, err := parseResourceToGithub(teamParent)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("github-connector: failed to convert parent resource ID to int64: %w", err)
 		}
 
-		teams, resp, err = o.client.Teams.ListChildTeamsByParentID(ctx, org.GetID(), parentTeamID, opts)
+		teams, resp, err = o.client.Teams.ListChildTeamsByParentID(ctx, orgID, teamID, opts)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list child teams: %w", err)
 		}
@@ -132,13 +135,12 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		return nil, "", nil, err
 	}
 
-	rv := make([]*v2.Resource, 0, len(teams))
 	for _, team := range teams {
-		fullTeam, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), team.GetID())
+		fullTeam, _, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID())
 		if err != nil {
 			return nil, "", nil, err
 		}
-		tr, err := teamResource(ctx, orgName, fullTeam, parentID)
+		tr, err := teamResource(fullTeam, teamParent)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -156,16 +158,12 @@ func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource
 		annos.Append(&v2.V1Identifier{
 			Id: fmt.Sprintf("team:%s:role:%s", resource.Id, level),
 		})
-		rv = append(rv, &v2.Entitlement{
-			Id:          sdk.NewEntitlementID(resource, level),
-			Resource:    resource,
-			DisplayName: fmt.Sprintf("%s Team %s", resource.DisplayName, titleCaser.String(level)),
-			Description: fmt.Sprintf("Access to %s team in Github", resource.DisplayName),
-			Annotations: annos,
-			GrantableTo: []*v2.ResourceType{resourceTypeUser},
-			Purpose:     v2.Entitlement_PURPOSE_VALUE_PERMISSION,
-			Slug:        level,
-		})
+
+		en := sdk.NewPermissionEntitlement(resource, level, resourceTypeUser)
+		en.DisplayName = fmt.Sprintf("%s Team %s", resource.DisplayName, titleCaser.String(level))
+		en.Description = fmt.Sprintf("Access to %s team in Github", resource.DisplayName)
+		en.Annotations = annos
+		rv = append(rv, en)
 	}
 
 	return rv, "", nil, nil
@@ -177,8 +175,17 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 		return nil, "", nil, err
 	}
 
-	orgName := getOrgName(resource.ParentResourceId)
-	org, _, err := o.client.Organizations.Get(ctx, orgName)
+	teamTrait, err := sdk.GetGroupTrait(resource)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	orgID, ok := sdk.GetProfileInt64Value(teamTrait.Profile, "orgID")
+	if !ok {
+		return nil, "", nil, fmt.Errorf("error fetching orgID from team profile")
+	}
+
+	org, _, err := o.client.Organizations.GetByID(ctx, orgID)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -224,17 +231,10 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 			return nil, "", nil, err
 		}
 
-		en := &v2.Entitlement{
-			Id:       sdk.NewEntitlementID(resource, membership.GetRole()),
-			Resource: resource,
-		}
+		grant := sdk.NewGrant(resource, membership.GetRole(), ur.Id)
+		grant.Annotations = annos
 
-		rv = append(rv, &v2.Grant{
-			Entitlement: en,
-			Id:          sdk.NewGrantID(en, ur),
-			Principal:   ur,
-			Annotations: annos,
-		})
+		rv = append(rv, grant)
 	}
 
 	return rv, pageToken, reqAnnos, nil

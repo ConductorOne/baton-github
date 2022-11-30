@@ -79,6 +79,11 @@ func (o *orgResourceType) List(
 			continue
 		}
 
+		orgResource, err := sdk.NewResource(org.GetLogin(), resourceTypeOrg, parentResourceID, org.GetID())
+		if err != nil {
+			return nil, "", nil, err
+		}
+
 		var annos annotations.Annotations
 		annos.Append(&v2.ExternalLink{
 			Url: org.GetHTMLURL(),
@@ -90,16 +95,9 @@ func (o *orgResourceType) List(
 		annos.Append(&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id})
 		annos.Append(&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id})
 
-		resourceID, err := sdk.NewResourceID(resourceTypeOrg, parentResourceID, org.GetLogin())
-		if err != nil {
-			return nil, "", nil, err
-		}
+		orgResource.Annotations = annos
 
-		ret = append(ret, &v2.Resource{
-			Id:          resourceID,
-			DisplayName: org.GetLogin(),
-			Annotations: annos,
-		})
+		ret = append(ret, orgResource)
 	}
 
 	return ret, pageToken, reqAnnos, nil
@@ -116,16 +114,13 @@ func (o *orgResourceType) Entitlements(
 		annos.Append(&v2.V1Identifier{
 			Id: fmt.Sprintf("org:%s:role:%s", resource.Id, level),
 		})
-		rv = append(rv, &v2.Entitlement{
-			Id:          sdk.NewEntitlementID(resource, level),
-			Resource:    resource,
-			DisplayName: fmt.Sprintf("%s Org %s", resource.DisplayName, titleCaser.String(level)),
-			Description: fmt.Sprintf("Access to %s org in Github", resource.DisplayName),
-			Annotations: annos,
-			GrantableTo: []*v2.ResourceType{resourceTypeUser},
-			Purpose:     v2.Entitlement_PURPOSE_VALUE_PERMISSION,
-			Slug:        level,
-		})
+
+		en := sdk.NewPermissionEntitlement(resource, level, resourceTypeUser)
+		en.DisplayName = fmt.Sprintf("%s Org %s", resource.DisplayName, titleCaser.String(level))
+		en.Description = fmt.Sprintf("Access to %s org in Github", resource.DisplayName)
+		en.Annotations = annos
+
+		rv = append(rv, en)
 	}
 
 	return rv, "", nil, nil
@@ -148,7 +143,10 @@ func (o *orgResourceType) Grants(
 		},
 	}
 
-	orgName := getOrgName(resource.Id)
+	orgName, err := getOrgName(ctx, o.client, resource.Id)
+	if err != nil {
+		return nil, "", nil, err
+	}
 
 	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &opts)
 	if err != nil {
@@ -188,17 +186,9 @@ func (o *orgResourceType) Grants(
 				Id: fmt.Sprintf("org-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), roleName),
 			})
 
-			en := &v2.Entitlement{
-				Id:       sdk.NewEntitlementID(resource, roleName),
-				Resource: resource,
-			}
-
-			rv = append(rv, &v2.Grant{
-				Id:          sdk.NewGrantID(en, ur),
-				Entitlement: en,
-				Annotations: annos,
-				Principal:   ur,
-			})
+			grant := sdk.NewGrant(resource, roleName, ur.Id)
+			grant.Annotations = annos
+			rv = append(rv, grant)
 		default:
 			ctxzap.Extract(ctx).Warn("Unknown Github Role Name",
 				zap.String("role_name", roleName),

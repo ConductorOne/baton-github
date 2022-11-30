@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -16,9 +17,18 @@ import (
 
 var titleCaser = cases.Title(language.English)
 
-func getOrgName(rID *v2.ResourceId) string {
-	ret, _, _ := strings.Cut(rID.Resource, ":")
-	return ret
+func getOrgName(ctx context.Context, c *github.Client, orgID *v2.ResourceId) (string, error) {
+	oID, err := strconv.ParseInt(orgID.Resource, 10, 64)
+	if err != nil {
+		return "", err
+	}
+
+	org, _, err := c.Organizations.GetByID(ctx, oID)
+	if err != nil {
+		return "", err
+	}
+
+	return org.GetLogin(), nil
 }
 
 func v1AnnotationsForResourceType(resourceTypeID string) annotations.Annotations {

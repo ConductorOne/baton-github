@@ -3,9 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -61,65 +59,6 @@ func (gh *Github) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 		userBuilder(gh.client),
 		repositoryBuilder(gh.client),
 	}
-}
-
-// validateAssetUrl takes an input URL and validates that it is a URL that we are permitted to fetch assets from/
-// It enforces https and that the URL hostname is.
-func (gh *Github) validateAssetUrl(assetUrl string) error {
-	if assetUrl == "" {
-		return fmt.Errorf("asset url must be set")
-	}
-
-	parsedUrl, err := url.Parse(assetUrl)
-	if err != nil {
-		return err
-	}
-
-	if parsedUrl.Scheme != "https" {
-		return fmt.Errorf("asset url must be https")
-	}
-
-	if gh.instanceURL == "" {
-		for _, domain := range ValidAssetDomains {
-			if strings.HasPrefix(parsedUrl.Hostname(), domain) {
-				return nil
-			}
-		}
-	} else {
-		parsedInstance, err := url.Parse(gh.instanceURL)
-		if err != nil {
-			return err
-		}
-
-		if strings.HasSuffix(parsedUrl.Hostname(), parsedInstance.Hostname()) {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("invalid asset url")
-}
-
-// GetAsset takes an input AssetRef and attempts to fetch it using the connector's authenticated http client
-// It streams a response, always starting with a metadata object, following by chunked payloads for the asset.
-func (gh *Github) Asset(ctx context.Context, asset *v2.AssetRef) (string, io.ReadCloser, error) {
-	if asset == nil {
-		return "", nil, fmt.Errorf("asset must be provided")
-	}
-	err := gh.validateAssetUrl(asset.Id)
-	if err != nil {
-		return "", nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, asset.GetId(), nil)
-	if err != nil {
-		return "", nil, err
-	}
-	resp, err := gh.client.Client().Do(req)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return resp.Header.Get("Content-Type"), resp.Body, nil
 }
 
 // Metadata returns metadata about the connector.
@@ -207,7 +146,7 @@ func newGithubClient(ctx context.Context, instanceURL string, accessToken string
 	return github.NewClient(tc), nil
 }
 
-// New returns the v2 version of the github connector.
+// New returns the GitHub connector
 func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken string) (*Github, error) {
 	client, err := newGithubClient(ctx, instanceURL, accessToken)
 	if err != nil {
