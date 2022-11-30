@@ -74,8 +74,6 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		PerPage: pt.Size,
 	}
 
-	teamParent := parentID
-
 	orgID, err := parseResourceToGithub(parentID)
 	if err != nil {
 		return nil, "", nil, err
@@ -109,7 +107,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	// We have a resource ID set, so we should check to see if the specific team has any children
 	default:
 		// Override the parent for the team because are looking at nested teams
-		teamParent = &v2.ResourceId{
+		teamParent := &v2.ResourceId{
 			ResourceType: bag.ResourceTypeID(),
 			Resource:     bag.ResourceID(),
 		}
@@ -140,6 +138,15 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		if err != nil {
 			return nil, "", nil, err
 		}
+
+		teamParent := parentID
+		if fullTeam.GetParent() != nil {
+			teamParent, err = sdk.NewResourceID(resourceTypeTeam, fullTeam.GetParent().GetID())
+			if err != nil {
+				return nil, "", nil, err
+			}
+		}
+
 		tr, err := teamResource(fullTeam, teamParent)
 		if err != nil {
 			return nil, "", nil, err
