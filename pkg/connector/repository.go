@@ -29,7 +29,7 @@ var repoAccessLevels = []string{
 }
 
 // repositoryResource returns a new connector resource for a Github repository.
-func repositoryResource(ctx context.Context, orgName string, repo *github.Repository, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+func repositoryResource(ctx context.Context, repo *github.Repository, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	var annos annotations.Annotations
 	annos.Append(&v2.ExternalLink{
 		Url: repo.GetHTMLURL(),
@@ -38,17 +38,14 @@ func repositoryResource(ctx context.Context, orgName string, repo *github.Reposi
 		Id: fmt.Sprintf("repo:%d", repo.GetID()),
 	})
 
-	resourceID, err := sdk.NewResourceID(resourceTypeRepository, parentResourceID, repo.GetID())
+	ret, err := sdk.NewResource(repo.GetName(), resourceTypeRepository, parentResourceID, repo.GetID())
 	if err != nil {
 		return nil, err
 	}
 
-	return &v2.Resource{
-		Id:               resourceID,
-		DisplayName:      repo.GetName(),
-		ParentResourceId: parentResourceID,
-		Annotations:      annos,
-	}, nil
+	ret.Annotations = annos
+
+	return ret, nil
 }
 
 type repositoryResourceType struct {
@@ -70,7 +67,10 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 		return nil, "", nil, err
 	}
 
-	orgName := getOrgName(parentID)
+	orgName, err := getOrgName(ctx, o.client, parentID)
+	if err != nil {
+		return nil, "", nil, err
+	}
 
 	opts := &github.RepositoryListByOrgOptions{
 		ListOptions: github.ListOptions{
@@ -96,7 +96,7 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 
 	rv := make([]*v2.Resource, 0, len(repos))
 	for _, repo := range repos {
-		rr, err := repositoryResource(ctx, orgName, repo, parentID)
+		rr, err := repositoryResource(ctx, repo, parentID)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -113,16 +113,13 @@ func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Re
 		annos.Append(&v2.V1Identifier{
 			Id: fmt.Sprintf("repo:%s:role:%s", resource.Id, level),
 		})
-		rv = append(rv, &v2.Entitlement{
-			Id:          sdk.NewEntitlementID(resource, level),
-			Resource:    resource,
-			DisplayName: fmt.Sprintf("%s Repo %s", resource.DisplayName, titleCaser.String(level)),
-			Description: fmt.Sprintf("Access to %s repository in Github", resource.DisplayName),
-			Annotations: annos,
-			GrantableTo: []*v2.ResourceType{resourceTypeUser, resourceTypeTeam},
-			Purpose:     v2.Entitlement_PURPOSE_VALUE_PERMISSION,
-			Slug:        level,
-		})
+
+		en := sdk.NewPermissionEntitlement(resource, level, resourceTypeUser, resourceTypeTeam)
+		en.DisplayName = fmt.Sprintf("%s Repo %s", resource.DisplayName, titleCaser.String(level))
+		en.Description = fmt.Sprintf("Access to %s repository in Github", resource.DisplayName)
+		en.Annotations = annos
+
+		rv = append(rv, en)
 	}
 
 	return rv, "", nil, nil
@@ -138,7 +135,10 @@ func (o *repositoryResourceType) Grants(
 		return nil, "", nil, err
 	}
 
-	orgName := getOrgName(resource.Id)
+	orgName, err := getOrgName(ctx, o.client, resource.ParentResourceId)
+	if err != nil {
+		return nil, "", nil, err
+	}
 
 	var rv []*v2.Grant
 	var reqAnnos annotations.Annotations
@@ -191,17 +191,10 @@ func (o *repositoryResourceType) Grants(
 					return nil, "", nil, err
 				}
 
-				en := &v2.Entitlement{
-					Id:       sdk.NewEntitlementID(resource, permission),
-					Resource: resource,
-				}
+				grant := sdk.NewGrant(resource, permission, ur.Id)
+				grant.Annotations = annos
 
-				rv = append(rv, &v2.Grant{
-					Entitlement: en,
-					Id:          sdk.NewGrantID(en, ur),
-					Principal:   ur,
-					Annotations: annos,
-				})
+				rv = append(rv, grant)
 			}
 		}
 
@@ -237,22 +230,15 @@ func (o *repositoryResourceType) Grants(
 					Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, team.GetID(), permission),
 				})
 
-				tr, err := teamResource(ctx, orgName, team, resource.ParentResourceId)
+				tr, err := teamResource(team, resource.ParentResourceId)
 				if err != nil {
 					return nil, "", nil, err
 				}
 
-				en := &v2.Entitlement{
-					Id:       sdk.NewEntitlementID(resource, permission),
-					Resource: resource,
-				}
+				grant := sdk.NewGrant(resource, permission, tr.Id)
+				grant.Annotations = annos
 
-				rv = append(rv, &v2.Grant{
-					Entitlement: en,
-					Id:          sdk.NewGrantID(en, tr),
-					Principal:   tr,
-					Annotations: annos,
-				})
+				rv = append(rv, grant)
 			}
 		}
 	default:
