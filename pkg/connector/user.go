@@ -116,6 +116,14 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	return rv, pageToken, reqAnnos, nil
 }
 
+func (o *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+	return nil, "", nil, nil
+}
+
+func (o *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+	return nil, "", nil, nil
+}
+
 func userBuilder(client *github.Client) *userResourceType {
 	return &userResourceType{
 		resourceType: resourceTypeUser,
