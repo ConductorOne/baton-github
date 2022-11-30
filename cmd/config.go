@@ -28,7 +28,7 @@ func validateConfig(ctx context.Context, cfg *config) error {
 
 // cmdFlags sets the cmdFlags required for the connector.
 func cmdFlags(cmd *cobra.Command) {
-	cmd.PersistentFlags().String("token", "", "The GitHub access token used to connect to the Github API. ($C1_TOKEN)")
-	cmd.PersistentFlags().StringSlice("orgs", []string{}, "Limit syncing to specific organizations. ($C1_ORGS)")
-	cmd.PersistentFlags().String("instance-url", "", `The GitHub instance URL to connect to. ($C1_INSTANCE_URL) (default "https://github.com")`)
+	cmd.PersistentFlags().String("token", "", "The GitHub access token used to connect to the Github API. ($BATON_TOKEN)")
+	cmd.PersistentFlags().StringSlice("orgs", []string{}, "Limit syncing to specific organizations. ($BATON_ORGS)")
+	cmd.PersistentFlags().String("instance-url", "", `The GitHub instance URL to connect to. ($BATON_INSTANCE_URL) (default "https://github.com")`)
 }

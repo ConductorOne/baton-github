@@ -62,7 +62,7 @@ func run(ctx context.Context, cfg *config) error {
 		return err
 	}
 
-	r, err := sdk.NewConnectorRunner(ctx, c, cfg.C1zPath, sdk.WithSlidingMemoryLimiter(50))
+	r, err := sdk.NewConnectorRunner(ctx, c, cfg.C1zPath)
 	if err != nil {
 		l.Error("error creating connector runner", zap.Error(err))
 		return err
