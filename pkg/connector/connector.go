@@ -146,7 +146,7 @@ func newGithubClient(ctx context.Context, instanceURL string, accessToken string
 	return github.NewClient(tc), nil
 }
 
-// New returns the GitHub connector
+// New returns the GitHub connector configured to sync against the instance URL.
 func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken string) (*Github, error) {
 	client, err := newGithubClient(ctx, instanceURL, accessToken)
 	if err != nil {
