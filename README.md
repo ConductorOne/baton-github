@@ -4,6 +4,9 @@
 
 `baton-github` is a connector for GitHub built using the [Baton SDK](https://github.com/conductorone/baton-sdk). It communicates with the GitHub API to sync data about which teams and users have access to various repositories within an organization.
 
+Check out [Baton](https://github.com/conductorone/baton) to learn more about Baton.
+
+
 # Getting Started
 ## brew
 ```
@@ -28,7 +31,7 @@ BATON_TOKEN=githubAccessToken baton-github
 baton resources
 ```
 
-# Data Model
+# 
 `baton-github` is will pull down information about the following GitHub resources:
 - Organizations
 - Users
@@ -37,9 +40,8 @@ baton resources
 
 By default, `baton-github` will sync information from any organizations that the provided credential has Administrator permissions on. You can specify exactly which organizations you would like to sync using the `--orgs` flag.
 
-# Baton
+# What is Baton?
 
-Check out [Baton](https://github.com/conductorone/baton) to learn more about Baton's mission.
 
 # Contributing, Support and Issues
 
