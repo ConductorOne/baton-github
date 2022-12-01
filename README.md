@@ -45,7 +45,7 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more about Bat
 
 We started Baton because we were tired of taking screenshots and manually building spreadsheets.  We welcome contributions, and ideas, no matter how small -- our goal is to make identity and permissions sprawl less painful for everyone.  If you have questions, problems, or ideas: Please open a Github Issue!
 
-See [CONTRIBUTING.md](https://github.com/conductorone/baton/main/CONTRIBUTING.md) for more details.
+See [CONTRIBUTING.md](https://github.com/ConductorOne/baton/blob/main/CONTRIBUTING.md) for more details.
 
 # `baton-github` Command Line Usage
 
