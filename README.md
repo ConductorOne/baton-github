@@ -32,7 +32,7 @@ baton resources
 ```
 
 # 
-`baton-github` is will pull down information about the following GitHub resources:
+`baton-github` will pull down information about the following GitHub resources:
 - Organizations
 - Users
 - Teams
