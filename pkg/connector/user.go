@@ -23,10 +23,10 @@ func userResource(ctx context.Context, user *github.User) (*v2.Resource, error) 
 	}
 
 	var annos annotations.Annotations
-	annos.Append(&v2.ExternalLink{
+	annos.Update(&v2.ExternalLink{
 		Url: user.GetHTMLURL(),
 	})
-	annos.Append(&v2.V1Identifier{
+	annos.Update(&v2.V1Identifier{
 		Id: strconv.FormatInt(user.GetID(), 10),
 	})
 

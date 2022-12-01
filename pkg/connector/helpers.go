@@ -33,7 +33,7 @@ func getOrgName(ctx context.Context, c *github.Client, orgID *v2.ResourceId) (st
 
 func v1AnnotationsForResourceType(resourceTypeID string) annotations.Annotations {
 	annos := annotations.Annotations{}
-	annos.Append(&v2.V1Identifier{
+	annos.Update(&v2.V1Identifier{
 		Id: resourceTypeID,
 	})
 

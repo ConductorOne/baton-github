@@ -85,10 +85,10 @@ func (o *orgResourceType) List(
 		}
 
 		var annos annotations.Annotations
-		annos.Append(&v2.ExternalLink{
+		annos.Update(&v2.ExternalLink{
 			Url: org.GetHTMLURL(),
 		})
-		annos.Append(&v2.V1Identifier{
+		annos.Update(&v2.V1Identifier{
 			Id: fmt.Sprintf("org:%d", org.GetID()),
 		})
 		annos.Append(&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id})
@@ -111,7 +111,7 @@ func (o *orgResourceType) Entitlements(
 	rv := make([]*v2.Entitlement, 0, len(orgAccessLevels))
 	for _, level := range orgAccessLevels {
 		var annos annotations.Annotations
-		annos.Append(&v2.V1Identifier{
+		annos.Update(&v2.V1Identifier{
 			Id: fmt.Sprintf("org:%s:role:%s", resource.Id, level),
 		})
 
@@ -182,7 +182,7 @@ func (o *orgResourceType) Grants(
 		switch roleName {
 		case orgRoleAdmin, orgRoleMember:
 			var annos annotations.Annotations
-			annos.Append(&v2.V1Identifier{
+			annos.Update(&v2.V1Identifier{
 				Id: fmt.Sprintf("org-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), roleName),
 			})
 
