@@ -3,7 +3,7 @@ module github.com/conductorone/baton-github
 go 1.19
 
 require (
-	github.com/conductorone/baton-sdk v0.0.14
+	github.com/conductorone/baton-sdk v0.0.15
 	github.com/google/go-github/v41 v41.0.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/spf13/cobra v1.6.1
@@ -66,7 +66,7 @@ require (
 	golang.org/x/net v0.2.0 // indirect
 	golang.org/x/sys v0.2.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20221130183247-a2ec334bae6f // indirect
+	google.golang.org/genproto v0.0.0-20221201164419-0e50fba7f41c // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
