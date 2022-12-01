@@ -1,6 +1,6 @@
 ![Baton Logo](./docs/images/baton-logo.png)
 
-# `baton-github` [Go Reference](https://pkg.go.dev/badge/github.com/conductorone/baton-sdk.svg)](https://pkg.go.dev/github.com/conductorone/baton-sdk) ![ci](https://github.com/conductorone/baton-sdk/actions/workflows/main.yaml/badge.svg)
+# `baton-github` ![Go Reference](https://pkg.go.dev/badge/github.com/conductorone/baton-sdk.svg)](https://pkg.go.dev/github.com/conductorone/baton-sdk) ![ci](https://github.com/conductorone/baton-sdk/actions/workflows/main.yaml/badge.svg)
 
 `baton-github` is a connector for GitHub built using the [Baton SDK](https://github.com/conductorone/baton-sdk). It communicates with the GitHub API to sync data about which teams and users have access to various repositories within an organization.
 
@@ -38,7 +38,7 @@ By default, `baton-github` will sync information from any organizations that the
 
 # Baton
 
-Check out [Baton](https://github.com/conductorone/baton) to learn more about
+Check out [Baton](https://github.com/conductorone/baton) to learn more about Baton's mission.
 
 # Contributing, Support and Issues
 
