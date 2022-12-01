@@ -25,11 +25,11 @@ var teamAccessLevels = []string{
 // teamResource creates a new connector resource for a GitHub Team. It is possible that the team has a parent resource.
 func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	var annos annotations.Annotations
-	annos.Append(&v2.ExternalLink{
+	annos.Update(&v2.ExternalLink{
 		// The GitHub client doesn't return HTMLURL() for some reason
 		Url: team.GetURL(),
 	})
-	annos.Append(&v2.V1Identifier{
+	annos.Update(&v2.V1Identifier{
 		Id: fmt.Sprintf("team:%d", team.GetID()),
 	})
 
@@ -162,7 +162,7 @@ func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource
 	rv := make([]*v2.Entitlement, 0, len(teamAccessLevels))
 	for _, level := range teamAccessLevels {
 		var annos annotations.Annotations
-		annos.Append(&v2.V1Identifier{
+		annos.Update(&v2.V1Identifier{
 			Id: fmt.Sprintf("team:%s:role:%s", resource.Id, level),
 		})
 
@@ -229,7 +229,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to get team membership for user: %w", err)
 		}
 
-		annos.Append(&v2.V1Identifier{
+		annos.Update(&v2.V1Identifier{
 			Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), membership.GetRole()),
 		})
 

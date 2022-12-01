@@ -31,10 +31,10 @@ var repoAccessLevels = []string{
 // repositoryResource returns a new connector resource for a Github repository.
 func repositoryResource(ctx context.Context, repo *github.Repository, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	var annos annotations.Annotations
-	annos.Append(&v2.ExternalLink{
+	annos.Update(&v2.ExternalLink{
 		Url: repo.GetHTMLURL(),
 	})
-	annos.Append(&v2.V1Identifier{
+	annos.Update(&v2.V1Identifier{
 		Id: fmt.Sprintf("repo:%d", repo.GetID()),
 	})
 
@@ -110,7 +110,7 @@ func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Re
 	rv := make([]*v2.Entitlement, 0, len(repoAccessLevels))
 	for _, level := range repoAccessLevels {
 		var annos annotations.Annotations
-		annos.Append(&v2.V1Identifier{
+		annos.Update(&v2.V1Identifier{
 			Id: fmt.Sprintf("repo:%s:role:%s", resource.Id, level),
 		})
 
@@ -182,7 +182,7 @@ func (o *repositoryResourceType) Grants(
 					continue
 				}
 
-				annos.Append(&v2.V1Identifier{
+				annos.Update(&v2.V1Identifier{
 					Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), permission),
 				})
 
@@ -226,7 +226,7 @@ func (o *repositoryResourceType) Grants(
 					continue
 				}
 
-				annos.Append(&v2.V1Identifier{
+				annos.Update(&v2.V1Identifier{
 					Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, team.GetID(), permission),
 				})
 
