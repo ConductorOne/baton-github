@@ -6,33 +6,38 @@
 
 Check out [Baton](https://github.com/conductorone/baton) to learn more about the project in general.
 
-
 # Getting Started
+
 ## brew
+
 ```
-brew install conductor/baton/baton conductor/baton/baton-github
+brew install conductorone/baton/baton conductorone/baton/baton-github
 
 BATON_TOKEN=githubAccessToken baton-github
 baton resources
 ```
 
 ## docker
+
 ```
 docker run --rm -v $(pwd):/out -e BATON_TOKEN=githubAccessToken ghcr.io/conductorone/baton-github:latest -f "/out/sync.c1z"
 docker run --rm -v $(pwd):/out ghcr.io/conductorone/baton:latest -f "/out/sync.c1z" resources
 ```
 
 ## source
+
 ```
 go install github.com/conductorone/baton/cmd/baton@main
 go install github.com/conductorone/baton-github/cmd/baton-github@main
 
-BATON_TOKEN=githubAccessToken baton-github 
+BATON_TOKEN=githubAccessToken baton-github
 baton resources
 ```
 
-# 
+#
+
 `baton-github` will pull down information about the following GitHub resources:
+
 - Organizations
 - Users
 - Teams
@@ -42,7 +47,7 @@ By default, `baton-github` will sync information from any organizations that the
 
 # Contributing, Support and Issues
 
-We started Baton because we were tired of taking screenshots and manually building spreadsheets.  We welcome contributions, and ideas, no matter how small -- our goal is to make identity and permissions sprawl less painful for everyone.  If you have questions, problems, or ideas: Please open a Github Issue!
+We started Baton because we were tired of taking screenshots and manually building spreadsheets. We welcome contributions, and ideas, no matter how small -- our goal is to make identity and permissions sprawl less painful for everyone. If you have questions, problems, or ideas: Please open a Github Issue!
 
 See [CONTRIBUTING.md](https://github.com/ConductorOne/baton/blob/main/CONTRIBUTING.md) for more details.
 
@@ -70,3 +75,4 @@ Flags:
   -v, --version               version for baton-github
 
 Use "baton-github [command] --help" for more information about a command.
+```
