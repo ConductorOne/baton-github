@@ -24,15 +24,6 @@ var teamAccessLevels = []string{
 
 // teamResource creates a new connector resource for a GitHub Team. It is possible that the team has a parent resource.
 func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
-	var annos annotations.Annotations
-	annos.Update(&v2.ExternalLink{
-		// The GitHub client doesn't return HTMLURL() for some reason
-		Url: team.GetURL(),
-	})
-	annos.Update(&v2.V1Identifier{
-		Id: fmt.Sprintf("team:%d", team.GetID()),
-	})
-
 	profile := map[string]interface{}{
 		"members_count": team.GetMembersCount(),
 		"repos_count":   team.GetReposCount(),
@@ -40,12 +31,18 @@ func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resou
 		"orgID": team.GetOrganization().GetID(),
 	}
 
-	ret, err := sdk.NewGroupResource(team.GetName(), resourceTypeTeam, parentResourceID, team.GetID(), profile)
+	ret, err := sdk.NewGroupResource(
+		team.GetName(),
+		resourceTypeTeam,
+		parentResourceID,
+		team.GetID(),
+		profile,
+		&v2.ExternalLink{Url: team.GetURL()},
+		&v2.V1Identifier{Id: fmt.Sprintf("team:%d", team.GetID())},
+	)
 	if err != nil {
 		return nil, err
 	}
-
-	ret.Annotations = append(ret.Annotations, annos...)
 
 	return ret, nil
 }

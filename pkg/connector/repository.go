@@ -30,20 +30,17 @@ var repoAccessLevels = []string{
 
 // repositoryResource returns a new connector resource for a Github repository.
 func repositoryResource(ctx context.Context, repo *github.Repository, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
-	var annos annotations.Annotations
-	annos.Update(&v2.ExternalLink{
-		Url: repo.GetHTMLURL(),
-	})
-	annos.Update(&v2.V1Identifier{
-		Id: fmt.Sprintf("repo:%d", repo.GetID()),
-	})
-
-	ret, err := sdk.NewResource(repo.GetName(), resourceTypeRepository, parentResourceID, repo.GetID())
+	ret, err := sdk.NewResource(
+		repo.GetName(),
+		resourceTypeRepository,
+		parentResourceID,
+		repo.GetID(),
+		&v2.ExternalLink{Url: repo.GetHTMLURL()},
+		&v2.V1Identifier{Id: fmt.Sprintf("repo:%d", repo.GetID())},
+	)
 	if err != nil {
 		return nil, err
 	}
-
-	ret.Annotations = annos
 
 	return ret, nil
 }
