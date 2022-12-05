@@ -22,14 +22,6 @@ func userResource(ctx context.Context, user *github.User) (*v2.Resource, error) 
 		displayName = user.GetLogin()
 	}
 
-	var annos annotations.Annotations
-	annos.Update(&v2.ExternalLink{
-		Url: user.GetHTMLURL(),
-	})
-	annos.Update(&v2.V1Identifier{
-		Id: strconv.FormatInt(user.GetID(), 10),
-	})
-
 	names := strings.SplitN(user.GetName(), " ", 2)
 	var firstName, lastName string
 	switch len(names) {
@@ -47,11 +39,19 @@ func userResource(ctx context.Context, user *github.User) (*v2.Resource, error) 
 		"user_id":    strconv.Itoa(int(user.GetID())),
 	}
 
-	ret, err := sdk.NewUserResource(displayName, resourceTypeUser, nil, user.GetID(), user.GetEmail(), profile)
+	ret, err := sdk.NewUserResource(
+		displayName,
+		resourceTypeUser,
+		nil,
+		user.GetID(),
+		user.GetEmail(),
+		profile,
+		&v2.ExternalLink{Url: user.GetHTMLURL()},
+		&v2.V1Identifier{Id: strconv.FormatInt(user.GetID(), 10)},
+	)
 	if err != nil {
 		return nil, err
 	}
-	ret.Annotations = append(ret.Annotations, annos...)
 
 	return ret, nil
 }

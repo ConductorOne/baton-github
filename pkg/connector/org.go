@@ -79,23 +79,20 @@ func (o *orgResourceType) List(
 			continue
 		}
 
-		orgResource, err := sdk.NewResource(org.GetLogin(), resourceTypeOrg, parentResourceID, org.GetID())
+		orgResource, err := sdk.NewResource(
+			org.GetLogin(),
+			resourceTypeOrg,
+			parentResourceID,
+			org.GetID(),
+			&v2.ExternalLink{Url: org.GetHTMLURL()},
+			&v2.V1Identifier{Id: fmt.Sprintf("org:%d", org.GetID())},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
+		)
 		if err != nil {
 			return nil, "", nil, err
 		}
-
-		var annos annotations.Annotations
-		annos.Update(&v2.ExternalLink{
-			Url: org.GetHTMLURL(),
-		})
-		annos.Update(&v2.V1Identifier{
-			Id: fmt.Sprintf("org:%d", org.GetID()),
-		})
-		annos.Append(&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id})
-		annos.Append(&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id})
-		annos.Append(&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id})
-
-		orgResource.Annotations = annos
 
 		ret = append(ret, orgResource)
 	}
