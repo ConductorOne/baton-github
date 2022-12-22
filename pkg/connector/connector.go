@@ -17,6 +17,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const githubDotCom = "https://github.com"
+
 var ValidAssetDomains = []string{"avatars.githubusercontent.com"}
 
 var (
@@ -139,7 +141,8 @@ func newGithubClient(ctx context.Context, instanceURL string, accessToken string
 	)
 	tc := oauth2.NewClient(ctx, ts)
 
-	if instanceURL != "" {
+	instanceURL = strings.TrimSuffix(instanceURL, "/")
+	if instanceURL != "" && instanceURL != githubDotCom {
 		return github.NewEnterpriseClient(instanceURL, instanceURL, tc)
 	}
 
