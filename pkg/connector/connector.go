@@ -142,7 +142,7 @@ func newGithubClient(ctx context.Context, instanceURL string, accessToken string
 	tc := oauth2.NewClient(ctx, ts)
 
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
-	if instanceURL != "" && instanceURL != "https://github.com" {
+	if instanceURL != "" && instanceURL != githubDotCom {
 		return github.NewEnterpriseClient(instanceURL, instanceURL, tc)
 	}
 
