@@ -34,7 +34,7 @@ BATON_TOKEN=githubAccessToken baton-github
 baton resources
 ```
 
-#
+# Data Model
 
 `baton-github` will pull down information about the following GitHub resources:
 
