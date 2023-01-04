@@ -10,6 +10,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/google/go-github/v41/github"
+	"github.com/shurcooL/githubv4"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -139,4 +140,38 @@ func extractRateLimitData(response *github.Response) (*v2.RateLimitDescription, 
 		Remaining: r,
 		ResetAt:   ra,
 	}, nil
+}
+
+type listUsersQuery struct {
+	Organization struct {
+		SamlIdentityProvider struct {
+			SsoUrl             githubv4.String
+			ExternalIdentities struct {
+				Edges []struct {
+					Node struct {
+						SamlIdentity struct {
+							NameId string
+						}
+						User struct {
+							Login string
+						}
+					}
+				}
+			} `graphql:"externalIdentities(first: 1, login: $userName)"`
+		}
+	} `graphql:"organization(login: $orgLoginName)"`
+	RateLimit struct {
+		Limit     int
+		Cost      int
+		Remaining int
+		ResetAt   githubv4.DateTime
+	}
+}
+
+type hasSAMLQuery struct {
+	Organization struct {
+		SamlIdentityProvider struct {
+			Id string
+		}
+	} `graphql:"organization(login: $orgLoginName)"`
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v41/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -49,16 +50,18 @@ var (
 )
 
 type Github struct {
-	orgs        []string
-	client      *github.Client
-	instanceURL string
+	orgs           []string
+	client         *github.Client
+	instanceURL    string
+	graphqlClient  *githubv4.Client
+	hasSAMLEnabled *bool
 }
 
 func (gh *Github) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
 	return []connectorbuilder.ResourceSyncer{
 		orgBuilder(gh.client, gh.orgs),
 		teamBuilder(gh.client),
-		userBuilder(gh.client),
+		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient),
 		repositoryBuilder(gh.client),
 	}
 }
@@ -155,11 +158,31 @@ func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken stri
 	if err != nil {
 		return nil, err
 	}
+	graphqlClient, err := newGithubGraphqlClient(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
 	gh := &Github{
-		client:      client,
-		instanceURL: instanceURL,
-		orgs:        githubOrgs,
+		client:        client,
+		instanceURL:   instanceURL,
+		orgs:          githubOrgs,
+		graphqlClient: graphqlClient,
 	}
 
 	return gh, nil
+}
+
+func newGithubGraphqlClient(ctx context.Context, accessToken string) (*githubv4.Client, error) {
+	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
+	if err != nil {
+		return nil, err
+	}
+
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
+
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: accessToken},
+	)
+	tc := oauth2.NewClient(ctx, ts)
+	return githubv4.NewClient(tc), nil
 }

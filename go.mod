@@ -6,6 +6,7 @@ require (
 	github.com/conductorone/baton-sdk v0.0.17
 	github.com/google/go-github/v41 v41.0.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
+	github.com/shurcooL/githubv4 v0.0.0-20221229060216-a8d4a561cc93
 	github.com/spf13/cobra v1.6.1
 	go.uber.org/zap v1.24.0
 	golang.org/x/oauth2 v0.2.0
@@ -53,6 +54,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.0.6 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20220927061507-ef77025ab5aa // indirect
 	github.com/segmentio/ksuid v1.0.4 // indirect
+	github.com/shurcooL/graphql v0.0.0-20220606043923-3cf50f8a0a29 // indirect
 	github.com/spf13/afero v1.9.3 // indirect
 	github.com/spf13/cast v1.5.0 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
