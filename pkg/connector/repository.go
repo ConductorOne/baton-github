@@ -183,7 +183,7 @@ func (o *repositoryResourceType) Grants(
 					Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), permission),
 				})
 
-				ur, err := userResource(ctx, user)
+				ur, err := userResource(ctx, user, user.GetEmail())
 				if err != nil {
 					return nil, "", nil, err
 				}

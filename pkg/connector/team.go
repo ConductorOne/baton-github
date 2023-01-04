@@ -83,7 +83,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	switch bag.ResourceID() {
 	// No resource ID set, so just list teams and push an action for each that we see
 	case "":
-		bag.Pop()
+		pageState := bag.Pop()
 		orgName, err := getOrgName(ctx, o.client, parentID)
 		if err != nil {
 			return nil, "", nil, err
@@ -94,6 +94,9 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list teams: %w", err)
 		}
 
+		if len(teams) == 0 {
+			bag.Push(*pageState)
+		}
 		for _, t := range teams {
 			bag.Push(pagination.PageState{
 				ResourceTypeID: resourceTypeTeam.Id,
@@ -230,7 +233,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 			Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), membership.GetRole()),
 		})
 
-		ur, err := userResource(ctx, user)
+		ur, err := userResource(ctx, user, user.GetEmail())
 		if err != nil {
 			return nil, "", nil, err
 		}

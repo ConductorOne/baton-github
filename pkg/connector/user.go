@@ -11,10 +11,12 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/sdk"
 	"github.com/google/go-github/v41/github"
+	"github.com/shurcooL/githubv4"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Create a new connector resource for a github user.
-func userResource(ctx context.Context, user *github.User) (*v2.Resource, error) {
+func userResource(ctx context.Context, user *github.User, userEmail string) (*v2.Resource, error) {
 	displayName := user.GetName()
 	if displayName == "" {
 		// users do not always specify a name and we only get public email from
@@ -44,7 +46,7 @@ func userResource(ctx context.Context, user *github.User) (*v2.Resource, error) 
 		resourceTypeUser,
 		nil,
 		user.GetID(),
-		user.GetEmail(),
+		userEmail,
 		profile,
 		&v2.ExternalLink{Url: user.GetHTMLURL()},
 		&v2.V1Identifier{Id: strconv.FormatInt(user.GetID(), 10)},
@@ -57,8 +59,10 @@ func userResource(ctx context.Context, user *github.User) (*v2.Resource, error) 
 }
 
 type userResourceType struct {
-	resourceType *v2.ResourceType
-	client       *github.Client
+	resourceType   *v2.ResourceType
+	client         *github.Client
+	graphqlClient  *githubv4.Client
+	hasSAMLEnabled *bool
 }
 
 func (o *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -66,6 +70,7 @@ func (o *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 }
 
 func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+	var annotations annotations.Annotations
 	if parentID == nil {
 		return nil, "", nil, nil
 	}
@@ -80,6 +85,13 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		return nil, "", nil, err
 	}
 
+	hasSamlBool, err := o.hasSAML(ctx, orgName)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	q := listUsersQuery{}
+	var restApiRateLimit *v2.RateLimitDescription
+
 	opts := github.ListMembersOptions{
 		ListOptions: github.ListOptions{Page: page, PerPage: pt.Size},
 	}
@@ -89,7 +101,12 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		return nil, "", nil, fmt.Errorf("github-connector: ListMembers failed: %w", err)
 	}
 
-	nextPage, reqAnnos, err := parseResp(resp)
+	restApiRateLimit, err = extractRateLimitData(resp)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	nextPage, _, err := parseResp(resp)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -105,15 +122,39 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		if err != nil {
 			return nil, "", nil, err
 		}
-		ur, err := userResource(ctx, u)
+		userEmail := u.GetEmail()
+		if hasSamlBool {
+			q = listUsersQuery{}
+			variables := map[string]interface{}{
+				"orgLoginName": githubv4.String(orgName),
+				"userName":     githubv4.String(u.GetLogin()),
+			}
+			err = o.graphqlClient.Query(ctx, &q, variables)
+			if err != nil {
+				return nil, "", nil, err
+			}
+			if len(q.Organization.SamlIdentityProvider.ExternalIdentities.Edges) == 1 {
+				userEmail = q.Organization.SamlIdentityProvider.ExternalIdentities.Edges[0].Node.SamlIdentity.NameId
+			}
+		}
+		ur, err := userResource(ctx, u, userEmail)
 		if err != nil {
 			return nil, "", nil, err
 		}
 
 		rv = append(rv, ur)
 	}
+	annotations.WithRateLimiting(restApiRateLimit)
+	if *o.hasSAMLEnabled && int64(q.RateLimit.Remaining) < restApiRateLimit.Remaining {
+		graphqlRateLimit := &v2.RateLimitDescription{
+			Limit:     int64(q.RateLimit.Limit),
+			Remaining: int64(q.RateLimit.Remaining),
+			ResetAt:   timestamppb.New(q.RateLimit.ResetAt.Time),
+		}
+		annotations.WithRateLimiting(graphqlRateLimit)
+	}
 
-	return rv, pageToken, reqAnnos, nil
+	return rv, pageToken, annotations, nil
 }
 
 func (o *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
@@ -124,9 +165,32 @@ func (o *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ *paginati
 	return nil, "", nil, nil
 }
 
-func userBuilder(client *github.Client) *userResourceType {
+func userBuilder(client *github.Client, hasSAMLEnabled *bool, graphqlClient *githubv4.Client) *userResourceType {
 	return &userResourceType{
-		resourceType: resourceTypeUser,
-		client:       client,
+		resourceType:   resourceTypeUser,
+		client:         client,
+		graphqlClient:  graphqlClient,
+		hasSAMLEnabled: hasSAMLEnabled,
 	}
+}
+
+func (o *userResourceType) hasSAML(ctx context.Context, orgName string) (bool, error) {
+	if o.hasSAMLEnabled != nil {
+		return *o.hasSAMLEnabled, nil
+	}
+
+	samlBool := false
+	q := hasSAMLQuery{}
+	variables := map[string]interface{}{
+		"orgLoginName": githubv4.String(orgName),
+	}
+	err := o.graphqlClient.Query(ctx, &q, variables)
+	if err != nil {
+		return false, err
+	}
+	if q.Organization.SamlIdentityProvider.Id != "" {
+		samlBool = true
+	}
+	o.hasSAMLEnabled = &samlBool
+	return *o.hasSAMLEnabled, nil
 }
