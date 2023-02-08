@@ -9,7 +9,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
-	"github.com/conductorone/baton-sdk/pkg/sdk"
+	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v41/github"
 	"github.com/shurcooL/githubv4"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -41,15 +41,18 @@ func userResource(ctx context.Context, user *github.User, userEmail string) (*v2
 		"user_id":    strconv.Itoa(int(user.GetID())),
 	}
 
-	ret, err := sdk.NewUserResource(
+	ret, err := resource.NewUserResource(
 		displayName,
 		resourceTypeUser,
-		nil,
 		user.GetID(),
-		userEmail,
-		profile,
-		&v2.ExternalLink{Url: user.GetHTMLURL()},
-		&v2.V1Identifier{Id: strconv.FormatInt(user.GetID(), 10)},
+		[]resource.UserTraitOption{
+			resource.WithEmail(userEmail, true),
+			resource.WithUserProfile(profile),
+		},
+		resource.WithAnnotation(
+			&v2.ExternalLink{Url: user.GetHTMLURL()},
+			&v2.V1Identifier{Id: strconv.FormatInt(user.GetID(), 10)},
+		),
 	)
 	if err != nil {
 		return nil, err

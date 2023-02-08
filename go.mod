@@ -77,3 +77,5 @@ require (
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/sqlite v1.20.0 // indirect
 )
+
+replace github.com/conductorone/baton-sdk => /Users/jirwin/projects/baton-sdk
