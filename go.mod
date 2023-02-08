@@ -3,7 +3,7 @@ module github.com/conductorone/baton-github
 go 1.19
 
 require (
-	github.com/conductorone/baton-sdk v0.0.21
+	github.com/conductorone/baton-sdk v0.0.22
 	github.com/google/go-github/v41 v41.0.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/shurcooL/githubv4 v0.0.0-20221229060216-a8d4a561cc93
@@ -77,5 +77,3 @@ require (
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/sqlite v1.20.0 // indirect
 )
-
-replace github.com/conductorone/baton-sdk => /Users/jirwin/projects/baton-sdk
