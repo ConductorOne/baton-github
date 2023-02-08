@@ -8,7 +8,9 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
-	"github.com/conductorone/baton-sdk/pkg/sdk"
+	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
+	"github.com/conductorone/baton-sdk/pkg/types/grant"
+	rType "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v41/github"
 )
 
@@ -31,14 +33,16 @@ func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resou
 		"orgID": team.GetOrganization().GetID(),
 	}
 
-	ret, err := sdk.NewGroupResource(
+	ret, err := rType.NewGroupResource(
 		team.GetName(),
 		resourceTypeTeam,
-		parentResourceID,
 		team.GetID(),
-		profile,
-		&v2.ExternalLink{Url: team.GetURL()},
-		&v2.V1Identifier{Id: fmt.Sprintf("team:%d", team.GetID())},
+		[]rType.GroupTraitOption{rType.WithGroupProfile(profile)},
+		rType.WithAnnotation(
+			&v2.ExternalLink{Url: team.GetURL()},
+			&v2.V1Identifier{Id: fmt.Sprintf("team:%d", team.GetID())},
+		),
+		rType.WithParentResourceID(parentResourceID),
 	)
 	if err != nil {
 		return nil, err
@@ -141,7 +145,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 
 		teamParent := parentID
 		if fullTeam.GetParent() != nil {
-			teamParent, err = sdk.NewResourceID(resourceTypeTeam, fullTeam.GetParent().GetID())
+			teamParent, err = rType.NewResourceID(resourceTypeTeam, fullTeam.GetParent().GetID())
 			if err != nil {
 				return nil, "", nil, err
 			}
@@ -161,16 +165,16 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
 	rv := make([]*v2.Entitlement, 0, len(teamAccessLevels))
 	for _, level := range teamAccessLevels {
-		var annos annotations.Annotations
-		annos.Update(&v2.V1Identifier{
-			Id: fmt.Sprintf("team:%s:role:%s", resource.Id, level),
-		})
-
-		en := sdk.NewPermissionEntitlement(resource, level, resourceTypeUser)
-		en.DisplayName = fmt.Sprintf("%s Team %s", resource.DisplayName, titleCaser.String(level))
-		en.Description = fmt.Sprintf("Access to %s team in Github", resource.DisplayName)
-		en.Annotations = annos
-		rv = append(rv, en)
+		rv = append(rv, entitlement.NewPermissionEntitlement(resource, level,
+			entitlement.WithAnnotation(
+				&v2.V1Identifier{
+					Id: fmt.Sprintf("team:%s:role:%s", resource.Id.Resource, level),
+				},
+			),
+			entitlement.WithDisplayName(fmt.Sprintf("%s Team %s", resource.DisplayName, titleCaser.String(level))),
+			entitlement.WithDescription(fmt.Sprintf("Access to %s team in Github", resource.DisplayName)),
+			entitlement.WithGrantableTo(resourceTypeUser),
+		))
 	}
 
 	return rv, "", nil, nil
@@ -182,12 +186,12 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 		return nil, "", nil, err
 	}
 
-	teamTrait, err := sdk.GetGroupTrait(resource)
+	teamTrait, err := rType.GetGroupTrait(resource)
 	if err != nil {
 		return nil, "", nil, err
 	}
 
-	orgID, ok := sdk.GetProfileInt64Value(teamTrait.Profile, "orgID")
+	orgID, ok := rType.GetProfileInt64Value(teamTrait.Profile, "orgID")
 	if !ok {
 		return nil, "", nil, fmt.Errorf("error fetching orgID from team profile")
 	}
@@ -223,25 +227,21 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 
 	var rv []*v2.Grant
 	for _, user := range users {
-		var annos annotations.Annotations
 		membership, _, err := o.client.Teams.GetTeamMembershipByID(ctx, org.GetID(), githubID, user.GetLogin())
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to get team membership for user: %w", err)
 		}
-
-		annos.Update(&v2.V1Identifier{
-			Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), membership.GetRole()),
-		})
 
 		ur, err := userResource(ctx, user, user.GetEmail())
 		if err != nil {
 			return nil, "", nil, err
 		}
 
-		grant := sdk.NewGrant(resource, membership.GetRole(), ur.Id)
-		grant.Annotations = annos
-
-		rv = append(rv, grant)
+		rv = append(rv, grant.NewGrant(resource, membership.GetRole(), ur.Id,
+			grant.WithAnnotation(&v2.V1Identifier{
+				Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), membership.GetRole()),
+			}),
+		))
 	}
 
 	return rv, pageToken, reqAnnos, nil

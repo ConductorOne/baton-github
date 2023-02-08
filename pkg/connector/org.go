@@ -8,7 +8,9 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
-	"github.com/conductorone/baton-sdk/pkg/sdk"
+	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
+	"github.com/conductorone/baton-sdk/pkg/types/grant"
+	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v41/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
@@ -79,16 +81,18 @@ func (o *orgResourceType) List(
 			continue
 		}
 
-		orgResource, err := sdk.NewResource(
+		orgResource, err := resource.NewResource(
 			org.GetLogin(),
 			resourceTypeOrg,
-			parentResourceID,
 			org.GetID(),
-			&v2.ExternalLink{Url: org.GetHTMLURL()},
-			&v2.V1Identifier{Id: fmt.Sprintf("org:%d", org.GetID())},
-			&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
-			&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
-			&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
+			resource.WithParentResourceID(parentResourceID),
+			resource.WithAnnotation(
+				&v2.ExternalLink{Url: org.GetHTMLURL()},
+				&v2.V1Identifier{Id: fmt.Sprintf("org:%d", org.GetID())},
+				&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
+				&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
+				&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
+			),
 		)
 		if err != nil {
 			return nil, "", nil, err
@@ -107,17 +111,14 @@ func (o *orgResourceType) Entitlements(
 ) ([]*v2.Entitlement, string, annotations.Annotations, error) {
 	rv := make([]*v2.Entitlement, 0, len(orgAccessLevels))
 	for _, level := range orgAccessLevels {
-		var annos annotations.Annotations
-		annos.Update(&v2.V1Identifier{
-			Id: fmt.Sprintf("org:%s:role:%s", resource.Id, level),
-		})
-
-		en := sdk.NewPermissionEntitlement(resource, level, resourceTypeUser)
-		en.DisplayName = fmt.Sprintf("%s Org %s", resource.DisplayName, titleCaser.String(level))
-		en.Description = fmt.Sprintf("Access to %s org in Github", resource.DisplayName)
-		en.Annotations = annos
-
-		rv = append(rv, en)
+		rv = append(rv, entitlement.NewPermissionEntitlement(resource, level,
+			entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCaser.String(level))),
+			entitlement.WithDescription(fmt.Sprintf("Access to %s org in Github", resource.DisplayName)),
+			entitlement.WithAnnotation(&v2.V1Identifier{
+				Id: fmt.Sprintf("org:%s:role:%s", resource.Id.Resource, level),
+			}),
+			entitlement.WithGrantableTo(resourceTypeUser),
+		))
 	}
 
 	return rv, "", nil, nil
@@ -178,14 +179,9 @@ func (o *orgResourceType) Grants(
 		roleName := strings.ToLower(membership.GetRole())
 		switch roleName {
 		case orgRoleAdmin, orgRoleMember:
-			var annos annotations.Annotations
-			annos.Update(&v2.V1Identifier{
+			rv = append(rv, grant.NewGrant(resource, roleName, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
 				Id: fmt.Sprintf("org-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), roleName),
-			})
-
-			grant := sdk.NewGrant(resource, roleName, ur.Id)
-			grant.Annotations = annos
-			rv = append(rv, grant)
+			})))
 		default:
 			ctxzap.Extract(ctx).Warn("Unknown Github Role Name",
 				zap.String("role_name", roleName),
