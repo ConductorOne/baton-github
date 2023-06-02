@@ -5,13 +5,13 @@ import (
 	"io"
 	"strings"
 
-	"github.com/conductorone/baton-sdk/internal/dotc1z"
+	"github.com/conductorone/baton-sdk/pkg/dotc1z"
 	"github.com/conductorone/baton-sdk/pkg/dotc1z/manager/local"
 	"github.com/conductorone/baton-sdk/pkg/dotc1z/manager/s3"
 )
 
 type Manager interface {
-	LoadRaw(ctx context.Context) (io.Reader, error)
+	LoadRaw(ctx context.Context) (io.ReadCloser, error)
 	LoadC1Z(ctx context.Context) (*dotc1z.C1File, error)
 	SaveC1Z(ctx context.Context) error
 	Close(ctx context.Context) error
