@@ -44,7 +44,7 @@ func userResource(ctx context.Context, user *github.User, userEmail string) (*v2
 	ret, err := resource.NewUserResource(
 		displayName,
 		resourceTypeUser,
-		user.GetID(),
+		user.GetLogin(),
 		[]resource.UserTraitOption{
 			resource.WithEmail(userEmail, true),
 			resource.WithUserProfile(profile),
