@@ -158,7 +158,7 @@ func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken stri
 	if err != nil {
 		return nil, err
 	}
-	graphqlClient, err := newGithubGraphqlClient(ctx, accessToken)
+	graphqlClient, err := newGithubGraphqlClient(ctx, instanceURL, accessToken)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +172,7 @@ func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken stri
 	return gh, nil
 }
 
-func newGithubGraphqlClient(ctx context.Context, accessToken string) (*githubv4.Client, error) {
+func newGithubGraphqlClient(ctx context.Context, instanceURL string, accessToken string) (*githubv4.Client, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
 		return nil, err
@@ -184,5 +184,11 @@ func newGithubGraphqlClient(ctx context.Context, accessToken string) (*githubv4.
 		&oauth2.Token{AccessToken: accessToken},
 	)
 	tc := oauth2.NewClient(ctx, ts)
+
+	instanceURL = strings.TrimSuffix(instanceURL, "/")
+	if instanceURL != "" && instanceURL != githubDotCom {
+		return githubv4.NewEnterpriseClient(instanceURL, httpClient), nil
+	}
+
 	return githubv4.NewClient(tc), nil
 }
