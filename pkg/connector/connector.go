@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -187,7 +188,14 @@ func newGithubGraphqlClient(ctx context.Context, instanceURL string, accessToken
 
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
 	if instanceURL != "" && instanceURL != githubDotCom {
-		return githubv4.NewEnterpriseClient(instanceURL, httpClient), nil
+		gqlURL, err := url.Parse(instanceURL)
+		if err != nil {
+			return nil, err
+		}
+
+		gqlURL.Path = "/api/graphql"
+
+		return githubv4.NewEnterpriseClient(gqlURL.String(), tc), nil
 	}
 
 	return githubv4.NewClient(tc), nil
