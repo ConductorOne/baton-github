@@ -112,7 +112,7 @@ func (o *orgResourceType) Entitlements(
 	rv := make([]*v2.Entitlement, 0, len(orgAccessLevels))
 	for _, level := range orgAccessLevels {
 		rv = append(rv, entitlement.NewPermissionEntitlement(resource, level,
-			entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCaser.String(level))),
+			entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCase(level))),
 			entitlement.WithDescription(fmt.Sprintf("Access to %s org in Github", resource.DisplayName)),
 			entitlement.WithAnnotation(&v2.V1Identifier{
 				Id: fmt.Sprintf("org:%s:role:%s", resource.Id.Resource, level),

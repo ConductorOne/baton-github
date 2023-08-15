@@ -173,7 +173,7 @@ func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource
 					Id: fmt.Sprintf("team:%s:role:%s", resource.Id.Resource, level),
 				},
 			),
-			entitlement.WithDisplayName(fmt.Sprintf("%s Team %s", resource.DisplayName, titleCaser.String(level))),
+			entitlement.WithDisplayName(fmt.Sprintf("%s Team %s", resource.DisplayName, titleCase(level))),
 			entitlement.WithDescription(fmt.Sprintf("Access to %s team in Github", resource.DisplayName)),
 			entitlement.WithGrantableTo(resourceTypeUser),
 		))
