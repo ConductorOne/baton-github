@@ -258,7 +258,7 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
-		return nil, fmt.Errorf("github-connectorv2: only users can be granted group membership")
+		return nil, fmt.Errorf("github-connectorv2: only users can be granted team membership")
 	}
 
 	teamId, err := strconv.ParseInt(entitlement.Resource.Id.Resource, 10, 64)
