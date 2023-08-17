@@ -258,6 +258,7 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
+		return nil, fmt.Errorf("github-connectorv2: only users can be granted group membership")
 	}
 
 	teamId, err := strconv.ParseInt(entitlement.Resource.Id.Resource, 10, 64)
@@ -302,6 +303,7 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
+		return nil, fmt.Errorf("github-connectorv2: only users can have team membership revoked")
 	}
 
 	teamId, err := strconv.ParseInt(entitlement.Resource.Id.Resource, 10, 64)
