@@ -111,7 +111,7 @@ func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Re
 	rv := make([]*v2.Entitlement, 0, len(repoAccessLevels))
 	for _, level := range repoAccessLevels {
 		rv = append(rv, entitlement.NewPermissionEntitlement(resource, level,
-			entitlement.WithDisplayName(fmt.Sprintf("%s Repo %s", resource.DisplayName, titleCaser.String(level))),
+			entitlement.WithDisplayName(fmt.Sprintf("%s Repo %s", resource.DisplayName, titleCase(level))),
 			entitlement.WithDescription(fmt.Sprintf("Access to %s repository in Github", resource.DisplayName)),
 			entitlement.WithAnnotation(&v2.V1Identifier{
 				Id: fmt.Sprintf("repo:%s:role:%s", resource.Id.Resource, level),

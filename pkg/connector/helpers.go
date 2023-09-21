@@ -16,7 +16,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-var titleCaser = cases.Title(language.English)
+func titleCase(s string) string {
+	titleCaser := cases.Title(language.English)
+
+	return titleCaser.String(s)
+}
 
 func getOrgName(ctx context.Context, c *github.Client, orgID *v2.ResourceId) (string, error) {
 	oID, err := strconv.ParseInt(orgID.Resource, 10, 64)

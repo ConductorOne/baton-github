@@ -48,6 +48,7 @@ func userResource(ctx context.Context, user *github.User, userEmail string) (*v2
 		[]resource.UserTraitOption{
 			resource.WithEmail(userEmail, true),
 			resource.WithUserProfile(profile),
+			resource.WithStatus(v2.UserTrait_Status_STATUS_ENABLED),
 		},
 		resource.WithAnnotation(
 			&v2.ExternalLink{Url: user.GetHTMLURL()},

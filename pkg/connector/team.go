@@ -12,6 +12,8 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	rType "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v41/github"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 )
 
 const (
@@ -171,7 +173,7 @@ func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource
 					Id: fmt.Sprintf("team:%s:role:%s", resource.Id.Resource, level),
 				},
 			),
-			entitlement.WithDisplayName(fmt.Sprintf("%s Team %s", resource.DisplayName, titleCaser.String(level))),
+			entitlement.WithDisplayName(fmt.Sprintf("%s Team %s", resource.DisplayName, titleCase(level))),
 			entitlement.WithDescription(fmt.Sprintf("Access to %s team in Github", resource.DisplayName)),
 			entitlement.WithGrantableTo(resourceTypeUser),
 		))
@@ -245,6 +247,91 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 	}
 
 	return rv, pageToken, reqAnnos, nil
+}
+
+func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	if principal.Id.ResourceType != resourceTypeUser.Id {
+		l.Warn(
+			"github-connectorv2: only users can be granted team membership",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+		return nil, fmt.Errorf("github-connectorv2: only users can be granted team membership")
+	}
+
+	teamId, err := strconv.ParseInt(entitlement.Resource.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	orgId, err := strconv.ParseInt(entitlement.Resource.ParentResourceId.Resource, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	userTrait, err := rType.GetUserTrait(principal)
+	if err != nil {
+		return nil, err
+	}
+
+	userLogin, ok := rType.GetProfileStringValue(userTrait.Profile, "login")
+	if !ok {
+		return nil, err
+	}
+
+	_, _, e := o.client.Teams.AddTeamMembershipByID(ctx, orgId, teamId, userLogin, &github.TeamAddTeamMembershipOptions{
+		Role: entitlement.Slug,
+	})
+	if e != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to add user to a team: %w", e)
+	}
+
+	return nil, nil
+}
+
+func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	entitlement := grant.Entitlement
+	principal := grant.Principal
+
+	if principal.Id.ResourceType != resourceTypeUser.Id {
+		l.Warn(
+			"github-connectorv2: only users can have team membership revoked",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+		return nil, fmt.Errorf("github-connectorv2: only users can have team membership revoked")
+	}
+
+	teamId, err := strconv.ParseInt(entitlement.Resource.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	orgId, err := strconv.ParseInt(entitlement.Resource.ParentResourceId.Resource, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	userTrait, err := rType.GetUserTrait(principal)
+	if err != nil {
+		return nil, err
+	}
+
+	userLogin, ok := rType.GetProfileStringValue(userTrait.Profile, "login")
+	if !ok {
+		return nil, err
+	}
+
+	_, e := o.client.Teams.RemoveTeamMembershipByID(ctx, orgId, teamId, userLogin)
+	if e != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to revoke user team membership: %w", e)
+	}
+
+	return nil, nil
 }
 
 func teamBuilder(client *github.Client) *teamResourceType {
