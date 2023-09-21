@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/conductorone/baton-sdk/internal/connector"
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	v1 "github.com/conductorone/baton-sdk/pb/c1/connector_wrapper/v1"
 	"github.com/conductorone/baton-sdk/pkg/connectorrunner"
 	"github.com/conductorone/baton-sdk/pkg/logging"
@@ -15,6 +16,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -79,7 +81,7 @@ func NewCmd[T any, PtrT *T](
 				return err
 			}
 
-			daemonMode := v.GetBool("daemon-mode") || v.GetString("client-id") != "" || isService()
+			daemonMode := v.GetString("client-id") != "" || isService()
 			if daemonMode {
 				opts = append(opts, connectorrunner.WithClientCredentials(v.GetString("client-id"), v.GetString("client-secret")))
 			} else {
@@ -206,7 +208,55 @@ func NewCmd[T any, PtrT *T](
 		},
 	}
 
+	capabilitiesCmd := &cobra.Command{
+		Use:   "capabilities",
+		Short: "Get connector capabilities",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			v, err := loadConfig(cmd, cfg)
+			if err != nil {
+				return err
+			}
+
+			runCtx, err := initLogger(
+				ctx,
+				name,
+				logging.WithLogFormat(v.GetString("log-format")),
+				logging.WithLogLevel(v.GetString("log-level")),
+			)
+			if err != nil {
+				return err
+			}
+
+			c, err := getConnector(runCtx, cfg)
+			if err != nil {
+				return err
+			}
+
+			md, err := c.GetMetadata(runCtx, &v2.ConnectorServiceGetMetadataRequest{})
+			if err != nil {
+				return err
+			}
+
+			if md.Metadata.Capabilities == nil {
+				return fmt.Errorf("connector does not support capabilities")
+			}
+
+			outBytes, err := protojson.Marshal(md.Metadata.Capabilities)
+			if err != nil {
+				return err
+			}
+
+			_, err = fmt.Fprint(os.Stdout, string(outBytes))
+			if err != nil {
+				return err
+			}
+
+			return nil
+		},
+	}
+
 	cmd.AddCommand(grpcServerCmd)
+	cmd.AddCommand(capabilitiesCmd)
 
 	// Flags for logging configuration
 	cmd.PersistentFlags().String("log-level", defaultLogLevel, "The log level: debug, info, warn, error ($BATON_LOG_LEVEL)")
@@ -220,22 +270,29 @@ func NewCmd[T any, PtrT *T](
 	cmd.MarkFlagsRequiredTogether("grant-entitlement", "grant-principal", "grant-principal-type")
 	cmd.PersistentFlags().String("revoke-grant", "", "The grant to revoke ($BATON_REVOKE_GRANT)")
 	cmd.MarkFlagsMutuallyExclusive("grant-entitlement", "revoke-grant")
+	err = cmd.PersistentFlags().MarkHidden("grant-entitlement")
+	if err != nil {
+		return nil, err
+	}
+	err = cmd.PersistentFlags().MarkHidden("grant-principal")
+	if err != nil {
+		return nil, err
+	}
+	err = cmd.PersistentFlags().MarkHidden("grant-principal-type")
+	if err != nil {
+		return nil, err
+	}
+	err = cmd.PersistentFlags().MarkHidden("revoke-grant")
+	if err != nil {
+		return nil, err
+	}
 
 	// Flags for daemon mode
-	cmd.PersistentFlags().BoolP("daemon-mode", "d", false, "Run in daemon mode ($BATON_DAEMON_MODE)")
 	cmd.PersistentFlags().String("client-id", "", "The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)")
 	cmd.PersistentFlags().String("client-secret", "", "The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)")
 	cmd.PersistentFlags().BoolP("provisioning", "p", false, "This must be set in order for provisioning actions to be enabled. ($BATON_PROVISIONING)")
 	cmd.MarkFlagsRequiredTogether("client-id", "client-secret")
-	err = cmd.PersistentFlags().MarkHidden("daemon-mode")
-	if err != nil {
-		return nil, err
-	}
-	err = cmd.PersistentFlags().MarkHidden("provisioning")
-	if err != nil {
-		return nil, err
-	}
-	cmd.MarkFlagsMutuallyExclusive("file", "daemon-mode")
+	cmd.MarkFlagsMutuallyExclusive("file", "client-id")
 
 	// Add a hook for additional commands to be added to the root command.
 	// We use this for OS specific commands.
