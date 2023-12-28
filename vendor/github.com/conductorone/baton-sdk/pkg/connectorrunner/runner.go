@@ -55,11 +55,6 @@ func (c *connectorRunner) Run(ctx context.Context) error {
 		return err
 	}
 
-	err = c.Close(ctx)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -185,7 +180,13 @@ func (c *connectorRunner) run(ctx context.Context) error {
 }
 
 func (c *connectorRunner) Close(ctx context.Context) error {
-	return nil
+	var retErr error
+
+	if err := c.cw.Close(); err != nil {
+		retErr = errors.Join(retErr, err)
+	}
+
+	return retErr
 }
 
 type Option func(ctx context.Context, cfg *runnerConfig) error
@@ -211,6 +212,7 @@ type runnerConfig struct {
 	provisioningEnabled bool
 	grantConfig         *grantConfig
 	revokeConfig        *revokeConfig
+	tempDir             string
 }
 
 // WithRateLimiterConfig sets the RateLimiterConfig for a runner.
@@ -335,6 +337,13 @@ func WithProvisioningEnabled() Option {
 	}
 }
 
+func WithTempDir(tempDir string) Option {
+	return func(ctx context.Context, cfg *runnerConfig) error {
+		cfg.tempDir = tempDir
+		return nil
+	}
+}
+
 // NewConnectorRunner creates a new connector runner.
 func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Option) (*connectorRunner, error) {
 	runner := &connectorRunner{}
@@ -385,7 +394,7 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 			tm = local.NewRevoker(ctx, cfg.c1zPath, cfg.revokeConfig.grantID)
 
 		default:
-			tm, err = local.NewSyncer(ctx, cfg.c1zPath)
+			tm, err = local.NewSyncer(ctx, cfg.c1zPath, local.WithTmpDir(cfg.tempDir))
 			if err != nil {
 				return nil, err
 			}
@@ -397,7 +406,7 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 		return runner, nil
 	}
 
-	tm, err := c1api.NewC1TaskManager(ctx, cfg.clientID, cfg.clientSecret)
+	tm, err := c1api.NewC1TaskManager(ctx, cfg.clientID, cfg.clientSecret, cfg.tempDir)
 	if err != nil {
 		return nil, err
 	}
