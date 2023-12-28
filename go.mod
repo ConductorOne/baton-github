@@ -4,7 +4,6 @@ go 1.20
 
 require (
 	github.com/conductorone/baton-sdk v0.1.14
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 	github.com/google/go-github/v41 v41.0.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/shurcooL/githubv4 v0.0.0-20231126234147-1cffa1f02456
