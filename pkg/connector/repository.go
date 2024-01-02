@@ -329,7 +329,7 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 
 		_, e := o.client.Repositories.RemoveCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin())
 		if e != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to add user to a team: %w", e)
+			return nil, fmt.Errorf("github-connectorv2: failed to remove user from repo: %w", e)
 		}
 	case resourceTypeTeam.Id:
 		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID)
@@ -339,7 +339,7 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 
 		_, err = o.client.Teams.RemoveTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName())
 		if err != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to add team to a repo: %w", err)
+			return nil, fmt.Errorf("github-connectorv2: failed to remove team from repo: %w", err)
 		}
 	default:
 		l.Error(
