@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -11,6 +12,8 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v41/github"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 )
 
 // outside collaborators are given one of these roles too.
@@ -235,6 +238,119 @@ func (o *repositoryResourceType) Grants(
 	}
 
 	return rv, pageToken, reqAnnos, nil
+}
+
+func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resource, en *v2.Entitlement) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	repoID, err := strconv.ParseInt(en.Resource.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	repo, _, err := o.client.Repositories.GetByID(ctx, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to get repository: %w", err)
+	}
+
+	org := repo.GetOrganization()
+
+	principalID, err := strconv.ParseInt(principal.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	switch principal.Id.ResourceType {
+	case resourceTypeUser.Id:
+		user, _, err := o.client.Users.GetByID(ctx, principalID)
+		if err != nil {
+			return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
+		}
+
+		_, _, e := o.client.Repositories.AddCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin(), &github.RepositoryAddCollaboratorOptions{
+			Permission: en.Slug,
+		})
+		if e != nil {
+			return nil, fmt.Errorf("github-connectorv2: failed to add user to a team: %w", e)
+		}
+	case resourceTypeTeam.Id:
+		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID)
+		if err != nil {
+			return nil, fmt.Errorf("github-connectorv2: failed to get team: %w", err)
+		}
+
+		_, err = o.client.Teams.AddTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName(), &github.TeamAddTeamRepoOptions{
+			Permission: en.Slug,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("github-connectorv2: failed to add team to a repo: %w", err)
+		}
+	default:
+		l.Error(
+			"github-connectorv2: only users and teams can be granted repository membership",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+		return nil, fmt.Errorf("github-connectorv2: only users and teams can be granted team membership")
+	}
+
+	return nil, nil
+}
+
+func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	en := grant.Entitlement
+	principal := grant.Principal
+
+	repoID, err := strconv.ParseInt(en.Resource.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	repo, _, err := o.client.Repositories.GetByID(ctx, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to get repository: %w", err)
+	}
+
+	org := repo.GetOrganization()
+
+	principalID, err := strconv.ParseInt(principal.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	switch principal.Id.ResourceType {
+	case resourceTypeUser.Id:
+		user, _, err := o.client.Users.GetByID(ctx, principalID)
+		if err != nil {
+			return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
+		}
+
+		_, e := o.client.Repositories.RemoveCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin())
+		if e != nil {
+			return nil, fmt.Errorf("github-connectorv2: failed to remove user from repo: %w", e)
+		}
+	case resourceTypeTeam.Id:
+		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID)
+		if err != nil {
+			return nil, fmt.Errorf("github-connectorv2: failed to get team: %w", err)
+		}
+
+		_, err = o.client.Teams.RemoveTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName())
+		if err != nil {
+			return nil, fmt.Errorf("github-connectorv2: failed to remove team from repo: %w", err)
+		}
+	default:
+		l.Error(
+			"github-connectorv2: only users and teams can have repository membership revoked",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+		return nil, fmt.Errorf("github-connectorv2: only users and teams can be granted team membership")
+	}
+
+	return nil, nil
 }
 
 func repositoryBuilder(client *github.Client) *repositoryResourceType {
