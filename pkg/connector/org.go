@@ -41,6 +41,8 @@ func (o *orgResourceType) List(
 	parentResourceID *v2.ResourceId,
 	pToken *pagination.Token,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
 	bag, page, err := parsePageToken(pToken.Token, &v2.ResourceId{ResourceType: resourceTypeOrg.Id})
 	if err != nil {
 		return nil, "", nil, err
@@ -71,8 +73,12 @@ func (o *orgResourceType) List(
 		if _, ok := o.orgs[org.GetLogin()]; !ok && len(o.orgs) > 0 {
 			continue
 		}
-		membership, _, err := o.client.Organizations.GetOrgMembership(ctx, "", org.GetLogin())
+		membership, resp, err := o.client.Organizations.GetOrgMembership(ctx, "", org.GetLogin())
 		if err != nil {
+			if resp.StatusCode == 403 {
+				l.Warn("insufficient access to list org membership, skipping org", zap.String("org", org.GetLogin()))
+				continue
+			}
 			return nil, "", nil, err
 		}
 
