@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -75,7 +76,7 @@ func (o *orgResourceType) List(
 		}
 		membership, resp, err := o.client.Organizations.GetOrgMembership(ctx, "", org.GetLogin())
 		if err != nil {
-			if resp.StatusCode == 403 {
+			if resp.StatusCode == http.StatusForbidden {
 				l.Warn("insufficient access to list org membership, skipping org", zap.String("org", org.GetLogin()))
 				continue
 			}
