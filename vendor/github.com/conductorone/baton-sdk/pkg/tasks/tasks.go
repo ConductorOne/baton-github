@@ -29,8 +29,18 @@ func (tt TaskType) String() string {
 		return "revoke"
 	case HelloType:
 		return "hello"
+	case EventFeedType:
+		return "event_feed"
 	case NoneType:
 		return "none"
+	case CreateAccountType:
+		return "create_account"
+	case CreateResourceType:
+		return "create_resource"
+	case DeleteResourceType:
+		return "delete_resource"
+	case RotateCredentialsType:
+		return "rotate_credential"
 	default:
 		return "unknown"
 	}
@@ -43,6 +53,11 @@ const (
 	GrantType
 	RevokeType
 	HelloType
+	CreateAccountType
+	CreateResourceType
+	DeleteResourceType
+	RotateCredentialsType
+	EventFeedType
 )
 
 func Is(task *v1.Task, target TaskType) bool {
@@ -61,8 +76,18 @@ func Is(task *v1.Task, target TaskType) bool {
 		_, ok = task.GetTaskType().(*v1.Task_Revoke)
 	case HelloType:
 		_, ok = task.GetTaskType().(*v1.Task_Hello)
+	case EventFeedType:
+		_, ok = task.GetTaskType().(*v1.Task_EventFeed)
 	case NoneType:
 		_, ok = task.GetTaskType().(*v1.Task_None)
+	case CreateAccountType:
+		_, ok = task.GetTaskType().(*v1.Task_CreateAccount)
+	case CreateResourceType:
+		_, ok = task.GetTaskType().(*v1.Task_CreateResource)
+	case DeleteResourceType:
+		_, ok = task.GetTaskType().(*v1.Task_DeleteResource)
+	case RotateCredentialsType:
+		_, ok = task.GetTaskType().(*v1.Task_RotateCredentials)
 	default:
 		return false
 	}
@@ -84,8 +109,18 @@ func GetType(task *v1.Task) TaskType {
 		return RevokeType
 	case *v1.Task_Hello:
 		return HelloType
+	case *v1.Task_EventFeed:
+		return EventFeedType
 	case *v1.Task_None:
 		return NoneType
+	case *v1.Task_CreateAccount:
+		return CreateAccountType
+	case *v1.Task_CreateResource:
+		return CreateResourceType
+	case *v1.Task_DeleteResource:
+		return DeleteResourceType
+	case *v1.Task_RotateCredentials:
+		return RotateCredentialsType
 	default:
 		return UnknownType
 	}
