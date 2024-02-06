@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -117,16 +118,22 @@ func (o *orgResourceType) Entitlements(
 	_ *pagination.Token,
 ) ([]*v2.Entitlement, string, annotations.Annotations, error) {
 	rv := make([]*v2.Entitlement, 0, len(orgAccessLevels))
-	for _, level := range orgAccessLevels {
-		rv = append(rv, entitlement.NewPermissionEntitlement(resource, level,
-			entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCase(level))),
-			entitlement.WithDescription(fmt.Sprintf("Access to %s org in Github", resource.DisplayName)),
-			entitlement.WithAnnotation(&v2.V1Identifier{
-				Id: fmt.Sprintf("org:%s:role:%s", resource.Id.Resource, level),
-			}),
-			entitlement.WithGrantableTo(resourceTypeUser),
-		))
-	}
+	rv = append(rv, entitlement.NewAssignmentEntitlement(resource, orgRoleMember,
+		entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCase(orgRoleMember))),
+		entitlement.WithDescription(fmt.Sprintf("Access to %s org in Github", resource.DisplayName)),
+		entitlement.WithAnnotation(&v2.V1Identifier{
+			Id: fmt.Sprintf("org:%s:role:%s", resource.Id.Resource, orgRoleMember),
+		}),
+		entitlement.WithGrantableTo(resourceTypeUser),
+	))
+	rv = append(rv, entitlement.NewPermissionEntitlement(resource, orgRoleAdmin,
+		entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCase(orgRoleAdmin))),
+		entitlement.WithDescription(fmt.Sprintf("Access to %s org in Github", resource.DisplayName)),
+		entitlement.WithAnnotation(&v2.V1Identifier{
+			Id: fmt.Sprintf("org:%s:role:%s", resource.Id.Resource, orgRoleAdmin),
+		}),
+		entitlement.WithGrantableTo(resourceTypeUser),
+	))
 
 	return rv, "", nil, nil
 }
@@ -207,6 +214,115 @@ func (o *orgResourceType) Grants(
 	}
 
 	return rv, pageToken, reqAnnos, nil
+}
+
+func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en *v2.Entitlement) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	if principal.Id.ResourceType != resourceTypeUser.Id {
+		l.Error(
+			"github-connectorv2: only users can be granted org admin",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+		return nil, fmt.Errorf("github-connectorv2: only users can be granted org membership")
+	}
+
+	if en.Id != entitlement.NewEntitlementID(en.Resource, orgRoleAdmin) {
+		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
+	}
+
+	orgName, err := getOrgName(ctx, o.client, en.Resource.Id)
+	if err != nil {
+		return nil, err
+	}
+
+	principalID, err := strconv.ParseInt(principal.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	user, _, err := o.client.Users.GetByID(ctx, principalID)
+	if err != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
+	}
+
+	membership, _, err := o.client.Organizations.GetOrgMembership(ctx, user.GetLogin(), orgName)
+	if err != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to get org membership: %w", err)
+	}
+
+	if membership.GetRole() == orgRoleAdmin {
+		l.Debug("githubv2-connector: user is already an admin of the org")
+		return nil, nil
+	}
+
+	if membership.GetState() != "active" {
+		return nil, fmt.Errorf("github-connectorv2: user is not an active member of the org")
+	}
+
+	_, _, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.String(orgRoleAdmin)})
+	if err != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to make user an admin : %w", err)
+	}
+
+	return nil, nil
+}
+
+func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	en := grant.Entitlement
+	principal := grant.Principal
+
+	if principal.Id.ResourceType != resourceTypeUser.Id {
+		l.Error(
+			"github-connectorv2: org admin can only be revoked from users",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+		return nil, fmt.Errorf("github-connectorv2: org admin can only be revoked from users")
+	}
+
+	if en.Id != entitlement.NewEntitlementID(en.Resource, orgRoleAdmin) {
+		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
+	}
+
+	orgName, err := getOrgName(ctx, o.client, en.Resource.Id)
+	if err != nil {
+		return nil, err
+	}
+
+	principalID, err := strconv.ParseInt(principal.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	user, _, err := o.client.Users.GetByID(ctx, principalID)
+	if err != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
+	}
+
+	membership, _, err := o.client.Organizations.GetOrgMembership(ctx, user.GetLogin(), orgName)
+	if err != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to get org membership: %w", err)
+	}
+
+	if membership.GetRole() == orgRoleMember {
+		l.Debug("githubv2-connector: user is not an admin of the org")
+		return nil, nil
+	}
+
+	if membership.GetState() != "active" {
+		return nil, fmt.Errorf("github-connectorv2: user is not an active member of the org")
+	}
+
+	_, _, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.String(orgRoleMember)})
+	if err != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to revoke org admin from user : %w", err)
+	}
+
+	return nil, nil
 }
 
 func orgBuilder(client *github.Client, orgs []string) *orgResourceType {
