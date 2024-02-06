@@ -201,18 +201,40 @@ type revokeConfig struct {
 	grantID string
 }
 
+type createAccountConfig struct {
+	login string
+	email string
+}
+
+type deleteResourceConfig struct {
+	resourceId   string
+	resourceType string
+}
+
+type rotateCredentialsConfig struct {
+	resourceId   string
+	resourceType string
+}
+
+type eventStreamConfig struct {
+}
+
 type runnerConfig struct {
-	rlCfg               *ratelimitV1.RateLimiterConfig
-	rlDescriptors       []*ratelimitV1.RateLimitDescriptors_Entry
-	onDemand            bool
-	c1zPath             string
-	clientAuth          bool
-	clientID            string
-	clientSecret        string
-	provisioningEnabled bool
-	grantConfig         *grantConfig
-	revokeConfig        *revokeConfig
-	tempDir             string
+	rlCfg                   *ratelimitV1.RateLimiterConfig
+	rlDescriptors           []*ratelimitV1.RateLimitDescriptors_Entry
+	onDemand                bool
+	c1zPath                 string
+	clientAuth              bool
+	clientID                string
+	clientSecret            string
+	provisioningEnabled     bool
+	grantConfig             *grantConfig
+	revokeConfig            *revokeConfig
+	eventFeedConfig         *eventStreamConfig
+	tempDir                 string
+	createAccountConfig     *createAccountConfig
+	deleteResourceConfig    *deleteResourceConfig
+	rotateCredentialsConfig *rotateCredentialsConfig
 }
 
 // WithRateLimiterConfig sets the RateLimiterConfig for a runner.
@@ -322,10 +344,53 @@ func WithOnDemandRevoke(c1zPath string, grantID string) Option {
 	}
 }
 
+func WithOnDemandCreateAccount(c1zPath string, login string, email string) Option {
+	return func(ctx context.Context, cfg *runnerConfig) error {
+		cfg.onDemand = true
+		cfg.c1zPath = c1zPath
+		cfg.createAccountConfig = &createAccountConfig{
+			login: login,
+			email: email,
+		}
+		return nil
+	}
+}
+
+func WithOnDemandDeleteResource(c1zPath string, resourceId string, resourceType string) Option {
+	return func(ctx context.Context, cfg *runnerConfig) error {
+		cfg.onDemand = true
+		cfg.c1zPath = c1zPath
+		cfg.deleteResourceConfig = &deleteResourceConfig{
+			resourceId:   resourceId,
+			resourceType: resourceType,
+		}
+		return nil
+	}
+}
+
+func WithOnDemandRotateCredentials(c1zPath string, resourceId string, resourceType string) Option {
+	return func(ctx context.Context, cfg *runnerConfig) error {
+		cfg.onDemand = true
+		cfg.c1zPath = c1zPath
+		cfg.rotateCredentialsConfig = &rotateCredentialsConfig{
+			resourceId:   resourceId,
+			resourceType: resourceType,
+		}
+		return nil
+	}
+}
+
 func WithOnDemandSync(c1zPath string) Option {
 	return func(ctx context.Context, cfg *runnerConfig) error {
 		cfg.onDemand = true
 		cfg.c1zPath = c1zPath
+		return nil
+	}
+}
+func WithOnDemandEventStream() Option {
+	return func(ctx context.Context, cfg *runnerConfig) error {
+		cfg.onDemand = true
+		cfg.eventFeedConfig = &eventStreamConfig{}
 		return nil
 	}
 }
@@ -375,7 +440,7 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 	runner.cw = cw
 
 	if cfg.onDemand {
-		if cfg.c1zPath == "" {
+		if cfg.c1zPath == "" && cfg.eventFeedConfig == nil {
 			return nil, errors.New("c1zPath must be set when in on-demand mode")
 		}
 
@@ -392,6 +457,18 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 
 		case cfg.revokeConfig != nil:
 			tm = local.NewRevoker(ctx, cfg.c1zPath, cfg.revokeConfig.grantID)
+
+		case cfg.createAccountConfig != nil:
+			tm = local.NewCreateAccountManager(ctx, cfg.c1zPath, cfg.createAccountConfig.login, cfg.createAccountConfig.email)
+
+		case cfg.deleteResourceConfig != nil:
+			tm = local.NewResourceDeleter(ctx, cfg.c1zPath, cfg.deleteResourceConfig.resourceId, cfg.deleteResourceConfig.resourceType)
+
+		case cfg.rotateCredentialsConfig != nil:
+			tm = local.NewCredentialRotator(ctx, cfg.c1zPath, cfg.rotateCredentialsConfig.resourceId, cfg.rotateCredentialsConfig.resourceType)
+
+		case cfg.eventFeedConfig != nil:
+			tm = local.NewEventFeed(ctx)
 
 		default:
 			tm, err = local.NewSyncer(ctx, cfg.c1zPath, local.WithTmpDir(cfg.tempDir))

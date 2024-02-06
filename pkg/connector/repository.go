@@ -186,9 +186,11 @@ func (o *repositoryResourceType) Grants(
 					return nil, "", nil, err
 				}
 
-				rv = append(rv, grant.NewGrant(resource, permission, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
+				grant := grant.NewGrant(resource, permission, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
 					Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), permission),
-				})))
+				}))
+				grant.Principal = ur
+				rv = append(rv, grant)
 			}
 		}
 
