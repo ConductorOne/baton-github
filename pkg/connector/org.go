@@ -131,6 +131,12 @@ func (o *orgResourceType) Entitlements(
 	return rv, "", nil, nil
 }
 
+func (o *orgResourceType) orgRoleGrant(roleName string, org *v2.Resource, principalID *v2.ResourceId, userID int64) *v2.Grant {
+	return grant.NewGrant(org, roleName, principalID, grant.WithAnnotation(&v2.V1Identifier{
+		Id: fmt.Sprintf("org-grant:%s:%d:%s", org.Id.Resource, userID, roleName),
+	}))
+}
+
 func (o *orgResourceType) Grants(
 	ctx context.Context,
 	resource *v2.Resource,
@@ -185,10 +191,13 @@ func (o *orgResourceType) Grants(
 
 		roleName := strings.ToLower(membership.GetRole())
 		switch roleName {
-		case orgRoleAdmin, orgRoleMember:
-			rv = append(rv, grant.NewGrant(resource, roleName, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
-				Id: fmt.Sprintf("org-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), roleName),
-			})))
+		case orgRoleAdmin:
+			rv = append(rv, o.orgRoleGrant(orgRoleAdmin, resource, ur.Id, user.GetID()))
+			rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, ur.Id, user.GetID()))
+
+		case orgRoleMember:
+			rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, ur.Id, user.GetID()))
+
 		default:
 			ctxzap.Extract(ctx).Warn("Unknown Github Role Name",
 				zap.String("role_name", roleName),
