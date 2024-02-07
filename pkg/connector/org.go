@@ -32,6 +32,7 @@ type orgResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
 	orgs         map[string]struct{}
+	orgCache     *orgNameCache
 }
 
 func (o *orgResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -161,7 +162,7 @@ func (o *orgResourceType) Grants(
 		},
 	}
 
-	orgName, err := getOrgName(ctx, o.client, resource.Id)
+	orgName, err := o.orgCache.GetOrgName(ctx, resource.Id)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -232,7 +233,7 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
 	}
 
-	orgName, err := getOrgName(ctx, o.client, en.Resource.Id)
+	orgName, err := o.orgCache.GetOrgName(ctx, en.Resource.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +289,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
 	}
 
-	orgName, err := getOrgName(ctx, o.client, en.Resource.Id)
+	orgName, err := o.orgCache.GetOrgName(ctx, en.Resource.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +326,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	return nil, nil
 }
 
-func orgBuilder(client *github.Client, orgs []string) *orgResourceType {
+func orgBuilder(client *github.Client, orgCache *orgNameCache, orgs []string) *orgResourceType {
 	orgMap := make(map[string]struct{})
 
 	for _, o := range orgs {
@@ -336,5 +337,6 @@ func orgBuilder(client *github.Client, orgs []string) *orgResourceType {
 		resourceType: resourceTypeOrg,
 		orgs:         orgMap,
 		client:       client,
+		orgCache:     orgCache,
 	}
 }

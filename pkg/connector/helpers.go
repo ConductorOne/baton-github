@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -22,18 +23,47 @@ func titleCase(s string) string {
 	return titleCaser.String(s)
 }
 
-func getOrgName(ctx context.Context, c *github.Client, orgID *v2.ResourceId) (string, error) {
+type orgNameCache struct {
+	sync.RWMutex
+	c        *github.Client
+	orgNames map[string]string
+}
+
+func (o *orgNameCache) GetOrgName(ctx context.Context, orgID *v2.ResourceId) (string, error) {
+	o.RLock()
+	if orgName, ok := o.orgNames[orgID.Resource]; ok {
+		o.RUnlock()
+		return orgName, nil
+	}
+	o.RUnlock()
+
+	o.Lock()
+	defer o.Unlock()
+
+	if orgName, ok := o.orgNames[orgID.Resource]; ok {
+		return orgName, nil
+	}
+
 	oID, err := strconv.ParseInt(orgID.Resource, 10, 64)
 	if err != nil {
 		return "", err
 	}
 
-	org, _, err := c.Organizations.GetByID(ctx, oID)
+	org, _, err := o.c.Organizations.GetByID(ctx, oID)
 	if err != nil {
 		return "", err
 	}
 
+	o.orgNames[orgID.Resource] = org.GetLogin()
+
 	return org.GetLogin(), nil
+}
+
+func newOrgNameCache(c *github.Client) *orgNameCache {
+	return &orgNameCache{
+		c:        c,
+		orgNames: make(map[string]string),
+	}
 }
 
 func v1AnnotationsForResourceType(resourceTypeID string) annotations.Annotations {

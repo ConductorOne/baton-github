@@ -56,6 +56,7 @@ func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resou
 type teamResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
+	orgCache     *orgNameCache
 }
 
 func (o *teamResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -90,7 +91,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	// No resource ID set, so just list teams and push an action for each that we see
 	case "":
 		pageState := bag.Pop()
-		orgName, err := getOrgName(ctx, o.client, parentID)
+		orgName, err := o.orgCache.GetOrgName(ctx, parentID)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -334,9 +335,10 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 	return nil, nil
 }
 
-func teamBuilder(client *github.Client) *teamResourceType {
+func teamBuilder(client *github.Client, orgCache *orgNameCache) *teamResourceType {
 	return &teamResourceType{
 		resourceType: resourceTypeTeam,
 		client:       client,
+		orgCache:     orgCache,
 	}
 }

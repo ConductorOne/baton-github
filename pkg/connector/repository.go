@@ -55,6 +55,7 @@ func repositoryResource(ctx context.Context, repo *github.Repository, parentReso
 type repositoryResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
+	orgCache     *orgNameCache
 }
 
 func (o *repositoryResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -71,7 +72,7 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 		return nil, "", nil, err
 	}
 
-	orgName, err := getOrgName(ctx, o.client, parentID)
+	orgName, err := o.orgCache.GetOrgName(ctx, parentID)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -136,7 +137,7 @@ func (o *repositoryResourceType) Grants(
 		return nil, "", nil, err
 	}
 
-	orgName, err := getOrgName(ctx, o.client, resource.ParentResourceId)
+	orgName, err := o.orgCache.GetOrgName(ctx, resource.ParentResourceId)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -355,9 +356,10 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 	return nil, nil
 }
 
-func repositoryBuilder(client *github.Client) *repositoryResourceType {
+func repositoryBuilder(client *github.Client, orgCache *orgNameCache) *repositoryResourceType {
 	return &repositoryResourceType{
 		resourceType: resourceTypeRepository,
 		client:       client,
+		orgCache:     orgCache,
 	}
 }
