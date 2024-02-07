@@ -276,17 +276,17 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, err
 	}
 
-	userTrait, err := rType.GetUserTrait(principal)
+	userId, err := strconv.ParseInt(principal.Id.Resource, 10, 64)
 	if err != nil {
 		return nil, err
 	}
 
-	userLogin, ok := rType.GetProfileStringValue(userTrait.Profile, "login")
-	if !ok {
-		return nil, err
+	user, _, err := o.client.Users.GetByID(ctx, userId)
+	if err != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to get user %d, err: %w", userId, err)
 	}
 
-	_, _, e := o.client.Teams.AddTeamMembershipByID(ctx, orgId, teamId, userLogin, &github.TeamAddTeamMembershipOptions{
+	_, _, e := o.client.Teams.AddTeamMembershipByID(ctx, orgId, teamId, user.GetLogin(), &github.TeamAddTeamMembershipOptions{
 		Role: entitlement.Slug,
 	})
 	if e != nil {
@@ -325,17 +325,16 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 		return nil, err
 	}
 
-	userTrait, err := rType.GetUserTrait(principal)
+	userId, err := strconv.ParseInt(principal.Id.Resource, 10, 64)
 	if err != nil {
 		return nil, err
 	}
 
-	userLogin, ok := rType.GetProfileStringValue(userTrait.Profile, "login")
-	if !ok {
-		return nil, err
+	user, _, err := o.client.Users.GetByID(ctx, userId)
+	if err != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to get user %d, err: %w", userId, err)
 	}
-
-	_, e := o.client.Teams.RemoveTeamMembershipByID(ctx, orgId, teamId, userLogin)
+	_, e := o.client.Teams.RemoveTeamMembershipByID(ctx, orgId, teamId, user.GetLogin())
 	if e != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to revoke user team membership: %w", e)
 	}
