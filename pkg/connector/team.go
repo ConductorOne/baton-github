@@ -266,6 +266,10 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, err
 	}
 
+	if entitlement.Resource.ParentResourceId == nil {
+		return nil, fmt.Errorf("github-connectorv2: parent resource is required to grant team membership")
+	}
+
 	orgId, err := strconv.ParseInt(entitlement.Resource.ParentResourceId.Resource, 10, 64)
 	if err != nil {
 		return nil, err
@@ -309,6 +313,10 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 	teamId, err := strconv.ParseInt(entitlement.Resource.Id.Resource, 10, 64)
 	if err != nil {
 		return nil, err
+	}
+
+	if entitlement.Resource.ParentResourceId == nil {
+		return nil, fmt.Errorf("github-connectorv2: parent resource is required to revoke team membership")
 	}
 
 	orgId, err := strconv.ParseInt(entitlement.Resource.ParentResourceId.Resource, 10, 64)
