@@ -266,7 +266,7 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, err
 	}
 
-	if entitlement.Resource.ParentResourceId == nil {
+	if entitlement.GetResource().ParentResourceId == nil {
 		return nil, fmt.Errorf("github-connectorv2: parent resource is required to grant team membership")
 	}
 
@@ -315,7 +315,7 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 		return nil, err
 	}
 
-	if entitlement.Resource.ParentResourceId == nil {
+	if entitlement.GetResource().ParentResourceId == nil {
 		return nil, fmt.Errorf("github-connectorv2: parent resource is required to revoke team membership")
 	}
 
