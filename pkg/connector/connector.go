@@ -56,14 +56,15 @@ type Github struct {
 	instanceURL    string
 	graphqlClient  *githubv4.Client
 	hasSAMLEnabled *bool
+	orgCache       *orgNameCache
 }
 
 func (gh *Github) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
 	return []connectorbuilder.ResourceSyncer{
-		orgBuilder(gh.client, gh.orgs),
-		teamBuilder(gh.client),
-		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient),
-		repositoryBuilder(gh.client),
+		orgBuilder(gh.client, gh.orgCache, gh.orgs),
+		teamBuilder(gh.client, gh.orgCache),
+		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache),
+		repositoryBuilder(gh.client, gh.orgCache),
 	}
 }
 
@@ -168,6 +169,7 @@ func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken stri
 		instanceURL:   instanceURL,
 		orgs:          githubOrgs,
 		graphqlClient: graphqlClient,
+		orgCache:      newOrgNameCache(client),
 	}
 
 	return gh, nil

@@ -67,6 +67,7 @@ type userResourceType struct {
 	client         *github.Client
 	graphqlClient  *githubv4.Client
 	hasSAMLEnabled *bool
+	orgCache       *orgNameCache
 }
 
 func (o *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -84,7 +85,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		return nil, "", nil, err
 	}
 
-	orgName, err := getOrgName(ctx, o.client, parentID)
+	orgName, err := o.orgCache.GetOrgName(ctx, parentID)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -169,12 +170,13 @@ func (o *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ *paginati
 	return nil, "", nil, nil
 }
 
-func userBuilder(client *github.Client, hasSAMLEnabled *bool, graphqlClient *githubv4.Client) *userResourceType {
+func userBuilder(client *github.Client, hasSAMLEnabled *bool, graphqlClient *githubv4.Client, orgCache *orgNameCache) *userResourceType {
 	return &userResourceType{
 		resourceType:   resourceTypeUser,
 		client:         client,
 		graphqlClient:  graphqlClient,
 		hasSAMLEnabled: hasSAMLEnabled,
+		orgCache:       orgCache,
 	}
 }
 
