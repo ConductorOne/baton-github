@@ -76,3 +76,14 @@ Flags:
 
 Use "baton-github [command] --help" for more information about a command.
 ```
+
+# Authentication
+
+To use this Baton connector, you need to create a GitHub organization access token with the following permissions:
+
+Org:
+- Member Read and Write
+
+Repo:
+- Administrator: Read and Write
+  - This permission implies Metadata: Read

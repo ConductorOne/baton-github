@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/mail"
 	"strconv"
 	"strings"
 
@@ -16,7 +17,7 @@ import (
 )
 
 // Create a new connector resource for a github user.
-func userResource(ctx context.Context, user *github.User, userEmail string) (*v2.Resource, error) {
+func userResource(ctx context.Context, user *github.User, userEmail string, extraEmails []string) (*v2.Resource, error) {
 	displayName := user.GetName()
 	if displayName == "" {
 		// users do not always specify a name and we only get public email from
@@ -41,15 +42,21 @@ func userResource(ctx context.Context, user *github.User, userEmail string) (*v2
 		"user_id":    strconv.Itoa(int(user.GetID())),
 	}
 
+	userTrait := []resource.UserTraitOption{
+		resource.WithEmail(userEmail, true),
+		resource.WithUserProfile(profile),
+		resource.WithStatus(v2.UserTrait_Status_STATUS_ENABLED),
+	}
+
+	for _, email := range extraEmails {
+		userTrait = append(userTrait, resource.WithEmail(email, false))
+	}
+
 	ret, err := resource.NewUserResource(
 		displayName,
 		resourceTypeUser,
 		user.GetID(),
-		[]resource.UserTraitOption{
-			resource.WithEmail(userEmail, true),
-			resource.WithUserProfile(profile),
-			resource.WithStatus(v2.UserTrait_Status_STATUS_ENABLED),
-		},
+		userTrait,
 		resource.WithAnnotation(
 			&v2.ExternalLink{Url: user.GetHTMLURL()},
 			&v2.V1Identifier{Id: strconv.FormatInt(user.GetID(), 10)},
@@ -94,7 +101,6 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	if err != nil {
 		return nil, "", nil, err
 	}
-	q := listUsersQuery{}
 	var restApiRateLimit *v2.RateLimitDescription
 
 	opts := github.ListMembersOptions{
@@ -121,6 +127,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		return nil, "", nil, err
 	}
 
+	q := listUsersQuery{}
 	rv := make([]*v2.Resource, 0, len(users))
 	for _, user := range users {
 		u, _, err := o.client.Users.GetByID(ctx, user.GetID())
@@ -128,8 +135,8 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 			return nil, "", nil, err
 		}
 		userEmail := u.GetEmail()
+		var extraEmails []string
 		if hasSamlBool {
-			q = listUsersQuery{}
 			variables := map[string]interface{}{
 				"orgLoginName": githubv4.String(orgName),
 				"userName":     githubv4.String(u.GetLogin()),
@@ -139,10 +146,29 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 				return nil, "", nil, err
 			}
 			if len(q.Organization.SamlIdentityProvider.ExternalIdentities.Edges) == 1 {
-				userEmail = q.Organization.SamlIdentityProvider.ExternalIdentities.Edges[0].Node.SamlIdentity.NameId
+				samlIdent := q.Organization.SamlIdentityProvider.ExternalIdentities.Edges[0].Node.SamlIdentity
+				userEmail = samlIdent.NameId
+				setUserEmail := false
+
+				if userEmail != "" {
+					setUserEmail = true
+				}
+				for _, email := range samlIdent.Emails {
+					ok := isEmail(email.Value)
+					if !ok {
+						continue
+					}
+
+					if !setUserEmail {
+						userEmail = email.Value
+						setUserEmail = true
+					} else {
+						extraEmails = append(extraEmails, email.Value)
+					}
+				}
 			}
 		}
-		ur, err := userResource(ctx, u, userEmail)
+		ur, err := userResource(ctx, u, userEmail, extraEmails)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -160,6 +186,11 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	}
 
 	return rv, pageToken, annotations, nil
+}
+
+func isEmail(email string) bool {
+	_, err := mail.ParseAddress(email)
+	return err == nil
 }
 
 func (o *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
