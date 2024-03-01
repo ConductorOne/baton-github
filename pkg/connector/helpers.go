@@ -185,6 +185,9 @@ type listUsersQuery struct {
 					Node struct {
 						SamlIdentity struct {
 							NameId string
+							Emails []struct {
+								Value string
+							}
 						}
 						User struct {
 							Login string

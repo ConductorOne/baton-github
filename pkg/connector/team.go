@@ -235,7 +235,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to get team membership for user: %w", err)
 		}
 
-		ur, err := userResource(ctx, user, user.GetEmail())
+		ur, err := userResource(ctx, user, user.GetEmail(), nil)
 		if err != nil {
 			return nil, "", nil, err
 		}
