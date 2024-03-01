@@ -271,9 +271,25 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, fmt.Errorf("github-connectorv2: parent resource is required to grant team membership")
 	}
 
-	orgId, err := strconv.ParseInt(entitlement.Resource.ParentResourceId.Resource, 10, 64)
-	if err != nil {
-		return nil, err
+	var orgId int64
+	if entitlement.Resource.ParentResourceId.ResourceType == resourceTypeOrg.Id {
+		var err error
+		orgId, err = strconv.ParseInt(entitlement.Resource.ParentResourceId.Resource, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+	} else if entitlement.Resource.ParentResourceId.ResourceType == resourceTypeTeam.Id {
+		groupTrait, err := rType.GetGroupTrait(entitlement.Resource)
+		if err != nil {
+			return nil, err
+		}
+
+		orgID, ok := rType.GetProfileInt64Value(groupTrait.Profile, "orgID")
+		if !ok {
+			return nil, fmt.Errorf("error fetching orgID from team profile")
+		}
+
+		orgId = orgID
 	}
 
 	userId, err := strconv.ParseInt(principal.Id.Resource, 10, 64)
