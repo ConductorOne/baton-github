@@ -83,59 +83,19 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		return nil, "", nil, err
 	}
 
-	var teams []*github.Team
-	var resp *github.Response
 	var rv []*v2.Resource
 
-	switch bag.ResourceID() {
-	// No resource ID set, so just list teams and push an action for each that we see
-	case "":
-		pageState := bag.Pop()
-		orgName, err := o.orgCache.GetOrgName(ctx, parentID)
-		if err != nil {
-			return nil, "", nil, err
-		}
-
-		teams, resp, err = o.client.Teams.ListTeams(ctx, orgName, opts)
-		if err != nil {
-			return nil, "", nil, fmt.Errorf("github-connector: failed to list teams: %w", err)
-		}
-
-		if len(teams) == 0 {
-			bag.Push(*pageState)
-		}
-		for _, t := range teams {
-			bag.Push(pagination.PageState{
-				ResourceTypeID: resourceTypeTeam.Id,
-				ResourceID:     strconv.FormatInt(t.GetID(), 10),
-			})
-		}
-
-	// We have a resource ID set, so we should check to see if the specific team has any children
-	default:
-		// Override the parent for the team because are looking at nested teams
-		teamParent := &v2.ResourceId{
-			ResourceType: bag.ResourceTypeID(),
-			Resource:     bag.ResourceID(),
-		}
-
-		teamID, err := parseResourceToGithub(teamParent)
-		if err != nil {
-			return nil, "", nil, fmt.Errorf("github-connector: failed to convert parent resource ID to int64: %w", err)
-		}
-
-		teams, resp, err = o.client.Teams.ListChildTeamsByParentID(ctx, orgID, teamID, opts)
-		if err != nil {
-			return nil, "", nil, fmt.Errorf("github-connector: failed to list child teams: %w", err)
-		}
-	}
-
-	nextPage, reqAnnos, err := parseResp(resp)
+	orgName, err := o.orgCache.GetOrgName(ctx, parentID)
 	if err != nil {
 		return nil, "", nil, err
 	}
 
-	pageToken, err := bag.NextToken(nextPage)
+	teams, resp, err := o.client.Teams.ListTeams(ctx, orgName, opts)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("github-connector: failed to list teams: %w", err)
+	}
+
+	nextPage, reqAnnos, err := parseResp(resp)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -160,6 +120,11 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		}
 
 		rv = append(rv, tr)
+	}
+
+	pageToken, err := bag.NextToken(nextPage)
+	if err != nil {
+		return nil, "", nil, err
 	}
 
 	return rv, pageToken, reqAnnos, nil
