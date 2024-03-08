@@ -106,15 +106,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 			return nil, "", nil, err
 		}
 
-		teamParent := parentID
-		if fullTeam.GetParent() != nil {
-			teamParent, err = rType.NewResourceID(resourceTypeTeam, fullTeam.GetParent().GetID())
-			if err != nil {
-				return nil, "", nil, err
-			}
-		}
-
-		tr, err := teamResource(fullTeam, teamParent)
+		tr, err := teamResource(fullTeam, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -236,6 +228,8 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, fmt.Errorf("github-connectorv2: parent resource is required to grant team membership")
 	}
 
+	// FIXME(jirwin): Now that we've flattened out the team hierarchy, we don't need to check the parent type.
+	// Leaving this check here for backwards compatability with the old model.
 	var orgId int64
 	if entitlement.Resource.ParentResourceId.ResourceType == resourceTypeOrg.Id {
 		var err error
