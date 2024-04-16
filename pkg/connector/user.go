@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/mail"
 	"strconv"
 	"strings"
@@ -12,7 +13,9 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v41/github"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -82,6 +85,7 @@ func (o *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 }
 
 func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
 	var annotations annotations.Annotations
 	if parentID == nil {
 		return nil, "", nil, nil
@@ -130,9 +134,14 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	q := listUsersQuery{}
 	rv := make([]*v2.Resource, 0, len(users))
 	for _, user := range users {
-		u, _, err := o.client.Users.GetByID(ctx, user.GetID())
+		u, res, err := o.client.Users.GetByID(ctx, user.GetID())
 		if err != nil {
-			return nil, "", nil, err
+			// This undocumented API can return 404 for some users. If this fails it means we won't get some of their details like email
+			if res.StatusCode != http.StatusNotFound {
+				return nil, "", nil, err
+			}
+			l.Error("error fetching user by id", zap.Error(err), zap.Int64("user_id", user.GetID()))
+			u = user
 		}
 		userEmail := u.GetEmail()
 		var extraEmails []string
