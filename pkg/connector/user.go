@@ -55,6 +55,20 @@ func userResource(ctx context.Context, user *github.User, userEmail string, extr
 		userTrait = append(userTrait, resource.WithEmail(email, false))
 	}
 
+	if user.GetAvatarURL() != "" {
+		userTrait = append(userTrait, resource.WithUserIcon(&v2.AssetRef{
+			Id: user.GetAvatarURL(),
+		}))
+	}
+	if user.GetLogin() != "" {
+		userTrait = append(userTrait, resource.WithUserLogin(user.GetLogin()))
+	}
+	if user.TwoFactorAuthentication != nil {
+		userTrait = append(userTrait, resource.WithMFAStatus(&v2.UserTrait_MFAStatus{
+			MfaEnabled: user.GetTwoFactorAuthentication(),
+		}))
+	}
+
 	ret, err := resource.NewUserResource(
 		displayName,
 		resourceTypeUser,
