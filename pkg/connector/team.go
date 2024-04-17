@@ -10,7 +10,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
-	rType "github.com/conductorone/baton-sdk/pkg/types/resource"
+	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v41/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
@@ -35,16 +35,16 @@ func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resou
 		"orgID": team.GetOrganization().GetID(),
 	}
 
-	ret, err := rType.NewGroupResource(
+	ret, err := rs.NewGroupResource(
 		team.GetName(),
 		resourceTypeTeam,
 		team.GetID(),
-		[]rType.GroupTraitOption{rType.WithGroupProfile(profile)},
-		rType.WithAnnotation(
+		[]rs.GroupTraitOption{rs.WithGroupProfile(profile)},
+		rs.WithAnnotation(
 			&v2.ExternalLink{Url: team.GetURL()},
 			&v2.V1Identifier{Id: fmt.Sprintf("team:%d", team.GetID())},
 		),
-		rType.WithParentResourceID(parentResourceID),
+		rs.WithParentResourceID(parentResourceID),
 	)
 	if err != nil {
 		return nil, err
@@ -146,12 +146,12 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 		return nil, "", nil, err
 	}
 
-	teamTrait, err := rType.GetGroupTrait(resource)
+	teamTrait, err := rs.GetGroupTrait(resource)
 	if err != nil {
 		return nil, "", nil, err
 	}
 
-	orgID, ok := rType.GetProfileInt64Value(teamTrait.Profile, "orgID")
+	orgID, ok := rs.GetProfileInt64Value(teamTrait.Profile, "orgID")
 	if !ok {
 		return nil, "", nil, fmt.Errorf("error fetching orgID from team profile")
 	}
@@ -192,12 +192,12 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to get team membership for user: %w", err)
 		}
 
-		ur, err := userResource(ctx, user, user.GetEmail(), nil)
+		uID, err := rs.NewResourceID(resourceTypeUser, user.GetID())
 		if err != nil {
 			return nil, "", nil, err
 		}
 
-		rv = append(rv, grant.NewGrant(resource, membership.GetRole(), ur.Id,
+		rv = append(rv, grant.NewGrant(resource, membership.GetRole(), uID,
 			grant.WithAnnotation(&v2.V1Identifier{
 				Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), membership.GetRole()),
 			}),
@@ -238,12 +238,12 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 			return nil, err
 		}
 	} else if entitlement.Resource.ParentResourceId.ResourceType == resourceTypeTeam.Id {
-		groupTrait, err := rType.GetGroupTrait(entitlement.Resource)
+		groupTrait, err := rs.GetGroupTrait(entitlement.Resource)
 		if err != nil {
 			return nil, err
 		}
 
-		orgID, ok := rType.GetProfileInt64Value(groupTrait.Profile, "orgID")
+		orgID, ok := rs.GetProfileInt64Value(groupTrait.Profile, "orgID")
 		if !ok {
 			return nil, fmt.Errorf("error fetching orgID from team profile")
 		}
