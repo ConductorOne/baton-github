@@ -17,7 +17,7 @@ import (
 )
 
 // Create a new connector resource for a github user.
-func userResource(ctx context.Context, user *github.User, userEmail string, extraEmails []string) (*v2.Resource, error) {
+func userResource(ctx context.Context, user *github.User, parentID *v2.ResourceId, userEmail string, extraEmails []string) (*v2.Resource, error) {
 	displayName := user.GetName()
 	if displayName == "" {
 		// users do not always specify a name and we only get public email from
@@ -61,6 +61,7 @@ func userResource(ctx context.Context, user *github.User, userEmail string, extr
 			&v2.ExternalLink{Url: user.GetHTMLURL()},
 			&v2.V1Identifier{Id: strconv.FormatInt(user.GetID(), 10)},
 		),
+		resource.WithParentResourceID(parentID),
 	)
 	if err != nil {
 		return nil, err
@@ -168,7 +169,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 				}
 			}
 		}
-		ur, err := userResource(ctx, u, userEmail, extraEmails)
+		ur, err := userResource(ctx, u, parentID, userEmail, extraEmails)
 		if err != nil {
 			return nil, "", nil, err
 		}
