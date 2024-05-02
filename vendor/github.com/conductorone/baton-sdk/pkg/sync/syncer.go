@@ -11,6 +11,8 @@ import (
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	c1zpb "github.com/conductorone/baton-sdk/pb/c1/c1z/v1"
@@ -69,6 +71,25 @@ func (s *syncer) handleInitialActionForStep(ctx context.Context, a Action) {
 func (s *syncer) handleProgress(ctx context.Context, a *Action, c int) {
 	if s.progressHandler != nil {
 		s.progressHandler(NewProgress(a, uint32(c)))
+	}
+}
+
+func shouldWaitAndRetry(ctx context.Context, err error) bool {
+	if status.Code(err) != codes.Unavailable {
+		return false
+	}
+
+	l := ctxzap.Extract(ctx)
+	l.Error("retrying operation", zap.Error(err))
+
+	for {
+		select {
+		// TODO: this should back off based on error counts
+		case <-time.After(1 * time.Second):
+			return true
+		case <-ctx.Done():
+			return false
+		}
 	}
 }
 
@@ -162,28 +183,28 @@ func (s *syncer) Sync(ctx context.Context) error {
 
 		case SyncResourceTypesOp:
 			err = s.SyncResourceTypes(ctx)
-			if err != nil {
+			if err != nil && !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
 
 		case SyncResourcesOp:
 			err = s.SyncResources(ctx)
-			if err != nil {
+			if err != nil && !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
 
 		case SyncEntitlementsOp:
 			err = s.SyncEntitlements(ctx)
-			if err != nil {
+			if err != nil && !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
 
 		case SyncGrantsOp:
 			err = s.SyncGrants(ctx)
-			if err != nil {
+			if err != nil && !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
@@ -203,7 +224,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 			}
 
 			err = s.SyncGrantExpansion(ctx)
-			if err != nil {
+			if err != nil && !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
@@ -1015,12 +1036,6 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, resourceID *v2.Resou
 	grants = append(grants, resp.List...)
 
 	for _, grant := range grants {
-		// Check if the principal of the grant already exists as a resource. If the principal resource does not exist, we should create it resource.
-		err := s.ensurePrincipalExistence(ctx, grant.Principal)
-		if err != nil {
-			return err
-		}
-
 		grantAnnos := annotations.Annotations(grant.GetAnnotations())
 		if grantAnnos.Contains(&v2.GrantExpandable{}) {
 			s.state.SetNeedsExpansion()
@@ -1425,32 +1440,4 @@ func NewSyncer(ctx context.Context, c types.ConnectorClient, opts ...SyncOpt) (S
 	}
 
 	return s, nil
-}
-
-// This method checks if the principal resource already exists. If it does not, we should put the principal.
-func (s *syncer) ensurePrincipalExistence(ctx context.Context, principal *v2.Resource) error {
-	l := ctxzap.Extract(ctx)
-	// Check if the principal of the grant already exists as a resource. If it does not, we should jit the resource.
-	_, err := s.store.GetResource(ctx, &reader_v2.ResourcesReaderServiceGetResourceRequest{
-		ResourceId: &v2.ResourceId{
-			ResourceType: principal.Id.ResourceType,
-			Resource:     principal.Id.Resource,
-		},
-	})
-	if err != nil && errors.Is(err, sql.ErrNoRows) {
-		// If the principal does not have a display name, we should set it to the resource ID
-		if principal.DisplayName == "" {
-			principal.DisplayName = fmt.Sprintf("%s:%s", principal.Id.ResourceType, principal.Id.Resource)
-		}
-		principal.CreationSource = v2.Resource_CREATION_SOURCE_CONNECTOR_LIST_GRANTS_PRINCIPAL_JIT
-		l.Debug("putting principal resource", zap.String("resource_id", principal.Id.Resource), zap.String("resource_type_id", principal.Id.ResourceType))
-		err = s.store.PutResource(ctx, principal)
-		if err != nil {
-			return err
-		}
-		return nil
-	} else if err != nil {
-		return err
-	}
-	return nil
 }

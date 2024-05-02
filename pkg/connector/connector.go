@@ -48,6 +48,13 @@ var (
 		},
 		Annotations: v1AnnotationsForResourceType("user"),
 	}
+	resourceTypeRole = &v2.ResourceType{
+		Id:          "role",
+		DisplayName: "Role",
+		Traits: []v2.ResourceType_Trait{
+			v2.ResourceType_TRAIT_ROLE,
+		},
+	}
 )
 
 type Github struct {
@@ -57,15 +64,24 @@ type Github struct {
 	graphqlClient  *githubv4.Client
 	hasSAMLEnabled *bool
 	orgCache       *orgNameCache
+	isEnterprise   bool
 }
 
 func (gh *Github) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
-	return []connectorbuilder.ResourceSyncer{
+	syncers := []connectorbuilder.ResourceSyncer{
 		orgBuilder(gh.client, gh.orgCache, gh.orgs),
 		teamBuilder(gh.client, gh.orgCache),
 		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache),
 		repositoryBuilder(gh.client, gh.orgCache),
 	}
+
+	// Add role builder for enterprise roles
+	if gh.isEnterprise {
+		// TODO: add new top resource - enterprise
+		syncers = append(syncers, roleBuilder(gh.client))
+	}
+
+	return syncers
 }
 
 // Metadata returns metadata about the connector.
@@ -145,8 +161,6 @@ func newGithubClient(ctx context.Context, instanceURL string, accessToken string
 		&oauth2.Token{AccessToken: accessToken},
 	)
 	tc := oauth2.NewClient(ctx, ts)
-
-	instanceURL = strings.TrimSuffix(instanceURL, "/")
 	if instanceURL != "" && instanceURL != githubDotCom {
 		return github.NewEnterpriseClient(instanceURL, instanceURL, tc)
 	}
@@ -156,6 +170,13 @@ func newGithubClient(ctx context.Context, instanceURL string, accessToken string
 
 // New returns the GitHub connector configured to sync against the instance URL.
 func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken string) (*Github, error) {
+	// TODO: add more robust way of handling enterprise environements (cloud enterprise have same URL as normal or team plan)
+	isEnterprise := false
+	instanceURL = strings.TrimSuffix(instanceURL, "/")
+	if instanceURL != "" && instanceURL != githubDotCom {
+		isEnterprise = true
+	}
+
 	client, err := newGithubClient(ctx, instanceURL, accessToken)
 	if err != nil {
 		return nil, err
@@ -170,6 +191,7 @@ func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken stri
 		orgs:          githubOrgs,
 		graphqlClient: graphqlClient,
 		orgCache:      newOrgNameCache(client),
+		isEnterprise:  isEnterprise,
 	}
 
 	return gh, nil
@@ -188,7 +210,6 @@ func newGithubGraphqlClient(ctx context.Context, instanceURL string, accessToken
 	)
 	tc := oauth2.NewClient(ctx, ts)
 
-	instanceURL = strings.TrimSuffix(instanceURL, "/")
 	if instanceURL != "" && instanceURL != githubDotCom {
 		gqlURL, err := url.Parse(instanceURL)
 		if err != nil {

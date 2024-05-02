@@ -13,6 +13,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v41/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
@@ -192,7 +193,7 @@ func (o *orgResourceType) Grants(
 			continue
 		}
 
-		ur, err := userResource(ctx, user, user.GetEmail(), nil)
+		uID, err := rs.NewResourceID(resourceTypeUser, user.GetID())
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -200,11 +201,11 @@ func (o *orgResourceType) Grants(
 		roleName := strings.ToLower(membership.GetRole())
 		switch roleName {
 		case orgRoleAdmin:
-			rv = append(rv, o.orgRoleGrant(orgRoleAdmin, resource, ur.Id, user.GetID()))
-			rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, ur.Id, user.GetID()))
+			rv = append(rv, o.orgRoleGrant(orgRoleAdmin, resource, uID, user.GetID()))
+			rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, uID, user.GetID()))
 
 		case orgRoleMember:
-			rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, ur.Id, user.GetID()))
+			rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, uID, user.GetID()))
 
 		default:
 			ctxzap.Extract(ctx).Warn("Unknown Github Role Name",

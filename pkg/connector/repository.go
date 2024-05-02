@@ -11,6 +11,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v41/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
@@ -182,15 +183,15 @@ func (o *repositoryResourceType) Grants(
 					continue
 				}
 
-				ur, err := userResource(ctx, user, user.GetEmail(), nil)
+				uID, err := rs.NewResourceID(resourceTypeUser, user.GetID())
 				if err != nil {
 					return nil, "", nil, err
 				}
 
-				grant := grant.NewGrant(resource, permission, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
+				grant := grant.NewGrant(resource, permission, uID, grant.WithAnnotation(&v2.V1Identifier{
 					Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), permission),
 				}))
-				grant.Principal = ur
+
 				rv = append(rv, grant)
 			}
 		}
