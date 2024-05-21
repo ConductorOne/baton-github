@@ -11,7 +11,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v41/github"
+	"github.com/google/go-github/v62/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
@@ -145,13 +145,14 @@ func newGithubClient(ctx context.Context, instanceURL string, accessToken string
 		&oauth2.Token{AccessToken: accessToken},
 	)
 	tc := oauth2.NewClient(ctx, ts)
+	gc := github.NewClient(tc)
 
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
 	if instanceURL != "" && instanceURL != githubDotCom {
-		return github.NewEnterpriseClient(instanceURL, instanceURL, tc)
+		return gc.WithEnterpriseURLs(instanceURL, instanceURL)
 	}
 
-	return github.NewClient(tc), nil
+	return gc, nil
 }
 
 // New returns the GitHub connector configured to sync against the instance URL.

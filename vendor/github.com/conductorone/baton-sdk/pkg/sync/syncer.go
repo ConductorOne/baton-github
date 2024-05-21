@@ -7,10 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	c1zpb "github.com/conductorone/baton-sdk/pb/c1/c1z/v1"
@@ -21,6 +25,10 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/dotc1z/manager"
 	"github.com/conductorone/baton-sdk/pkg/types"
 )
+
+const maxDepth = 8
+
+var dontFixCycles, _ = strconv.ParseBool(os.Getenv("BATON_DONT_FIX_CYCLES"))
 
 var (
 	ErrSyncNotComplete = fmt.Errorf("sync exited without finishing")
@@ -69,6 +77,25 @@ func (s *syncer) handleInitialActionForStep(ctx context.Context, a Action) {
 func (s *syncer) handleProgress(ctx context.Context, a *Action, c int) {
 	if s.progressHandler != nil {
 		s.progressHandler(NewProgress(a, uint32(c)))
+	}
+}
+
+func shouldWaitAndRetry(ctx context.Context, err error) bool {
+	if status.Code(err) != codes.Unavailable {
+		return false
+	}
+
+	l := ctxzap.Extract(ctx)
+	l.Error("retrying operation", zap.Error(err))
+
+	for {
+		select {
+		// TODO: this should back off based on error counts
+		case <-time.After(1 * time.Second):
+			return true
+		case <-ctx.Done():
+			return false
+		}
 	}
 }
 
@@ -162,28 +189,28 @@ func (s *syncer) Sync(ctx context.Context) error {
 
 		case SyncResourceTypesOp:
 			err = s.SyncResourceTypes(ctx)
-			if err != nil {
+			if err != nil && !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
 
 		case SyncResourcesOp:
 			err = s.SyncResources(ctx)
-			if err != nil {
+			if err != nil && !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
 
 		case SyncEntitlementsOp:
 			err = s.SyncEntitlements(ctx)
-			if err != nil {
+			if err != nil && !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
 
 		case SyncGrantsOp:
 			err = s.SyncGrants(ctx)
-			if err != nil {
+			if err != nil && !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
@@ -203,7 +230,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 			}
 
 			err = s.SyncGrantExpansion(ctx)
-			if err != nil {
+			if err != nil && !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
@@ -782,14 +809,18 @@ func (s *syncer) SyncGrantExpansion(ctx context.Context) error {
 		return nil
 	}
 
-	// Once we've loaded the graph, we can check for cycles
-	// TODO(mstanbCO): we should eventually add logic to handle cycles
 	if entitlementGraph.Loaded {
 		cycles, hasCycles := entitlementGraph.GetCycles()
 		if hasCycles {
-			s.state.FinishAction(ctx)
-			l.Error("cycles detected in entitlement graph", zap.Any("cycles", cycles))
-			return fmt.Errorf("SyncGrantExpansion: %d cycle(s) detected in entitlement graph", len(cycles))
+			l.Warn("cycles detected in entitlement graph", zap.Any("cycles", cycles))
+			if dontFixCycles {
+				return fmt.Errorf("cycles detected in entitlement graph")
+			}
+
+			err := entitlementGraph.FixCycles()
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -1015,12 +1046,6 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, resourceID *v2.Resou
 	grants = append(grants, resp.List...)
 
 	for _, grant := range grants {
-		// Check if the principal of the grant already exists as a resource. If the principal resource does not exist, we should create it resource.
-		err := s.ensurePrincipalExistence(ctx, grant.Principal)
-		if err != nil {
-			return err
-		}
-
 		grantAnnos := annotations.Annotations(grant.GetAnnotations())
 		if grantAnnos.Contains(&v2.GrantExpandable{}) {
 			s.state.SetNeedsExpansion()
@@ -1083,6 +1108,7 @@ func (s *syncer) runGrantExpandActions(ctx context.Context) (bool, error) {
 
 	// Peek the next action on the stack
 	if len(graph.Actions) == 0 {
+		l.Debug("runGrantExpandActions: no actions", zap.Any("graph", graph))
 		return true, nil
 	}
 	action := graph.Actions[0]
@@ -1273,15 +1299,15 @@ func (s *syncer) expandGrantsForEntitlements(ctx context.Context) error {
 		return nil
 	}
 
-	if graph.Depth > 8 {
-		l.Error("expandGrantsForEntitlements: exceeded max depth", zap.Any("graph", graph))
+	if graph.Depth > maxDepth {
+		l.Error("expandGrantsForEntitlements: exceeded max depth", zap.Any("graph", graph), zap.Int("max_depth", maxDepth))
 		s.state.FinishAction(ctx)
 		return fmt.Errorf("exceeded max depth")
 	}
-	graph.Depth++
 
 	// TOOD(morgabra) Yield here after some amount of work?
-	for sourceEntitlementID := range graph.Entitlements {
+	// traverse edges or call some sort of getentitlements
+	for _, sourceEntitlementID := range graph.GetEntitlements() {
 		// We've already expanded this entitlement, so skip it.
 		if graph.IsEntitlementExpanded(sourceEntitlementID) {
 			continue
@@ -1289,19 +1315,20 @@ func (s *syncer) expandGrantsForEntitlements(ctx context.Context) error {
 
 		// We have ancestors who have not been expanded yet, so we can't expand ourselves.
 		if graph.HasUnexpandedAncestors(sourceEntitlementID) {
+			l.Debug("expandGrantsForEntitlements: skipping source entitlement because it has unexpanded ancestors", zap.String("source_entitlement_id", sourceEntitlementID))
 			continue
 		}
 
-		for descendantEntitlementID, edgeInfo := range graph.GetDescendants(sourceEntitlementID) {
-			if edgeInfo.Expanded {
+		for descendantEntitlementID, grantInfo := range graph.GetDescendantEntitlements(sourceEntitlementID) {
+			if grantInfo.Expanded {
 				continue
 			}
 			graph.Actions = append(graph.Actions, EntitlementGraphAction{
 				SourceEntitlementID:     sourceEntitlementID,
 				DescendantEntitlementID: descendantEntitlementID,
 				PageToken:               "",
-				Shallow:                 edgeInfo.Shallow,
-				ResourceTypeIDs:         edgeInfo.ResourceTypeIDs,
+				Shallow:                 grantInfo.Shallow,
+				ResourceTypeIDs:         grantInfo.ResourceTypeIDs,
 			})
 		}
 	}
@@ -1312,6 +1339,7 @@ func (s *syncer) expandGrantsForEntitlements(ctx context.Context) error {
 		return nil
 	}
 
+	graph.Depth++
 	l.Debug("expandGrantsForEntitlements: graph is not expanded", zap.Any("graph", graph))
 	return nil
 }
@@ -1425,32 +1453,4 @@ func NewSyncer(ctx context.Context, c types.ConnectorClient, opts ...SyncOpt) (S
 	}
 
 	return s, nil
-}
-
-// This method checks if the principal resource already exists. If it does not, we should put the principal.
-func (s *syncer) ensurePrincipalExistence(ctx context.Context, principal *v2.Resource) error {
-	l := ctxzap.Extract(ctx)
-	// Check if the principal of the grant already exists as a resource. If it does not, we should jit the resource.
-	_, err := s.store.GetResource(ctx, &reader_v2.ResourcesReaderServiceGetResourceRequest{
-		ResourceId: &v2.ResourceId{
-			ResourceType: principal.Id.ResourceType,
-			Resource:     principal.Id.Resource,
-		},
-	})
-	if err != nil && errors.Is(err, sql.ErrNoRows) {
-		// If the principal does not have a display name, we should set it to the resource ID
-		if principal.DisplayName == "" {
-			principal.DisplayName = fmt.Sprintf("%s:%s", principal.Id.ResourceType, principal.Id.Resource)
-		}
-		principal.CreationSource = v2.Resource_CREATION_SOURCE_CONNECTOR_LIST_GRANTS_PRINCIPAL_JIT
-		l.Debug("putting principal resource", zap.String("resource_id", principal.Id.Resource), zap.String("resource_type_id", principal.Id.ResourceType))
-		err = s.store.PutResource(ctx, principal)
-		if err != nil {
-			return err
-		}
-		return nil
-	} else if err != nil {
-		return err
-	}
-	return nil
 }
