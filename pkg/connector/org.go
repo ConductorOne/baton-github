@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	orgRoleMember = "member"
-	orgRoleAdmin  = "admin"
+	orgRoleMember       = "member"
+	orgRoleDirectMember = "direct_member" // invite
+	orgRoleAdmin        = "admin"
 )
 
 var orgAccessLevels = []string{
@@ -252,7 +253,7 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 	case adminRoleID:
 		requestedRole = orgRoleAdmin
 	case memberRoleID:
-		requestedRole = "direct_member"
+		requestedRole = orgRoleDirectMember
 	default:
 		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
 	}
@@ -261,6 +262,8 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get org membership: %w", err)
 	}
+
+	// TODO: check existing invitations. Duplicate invitations aren't allowed, so this will fail with 4xx from github.
 
 	// If user isn't a member, invite them to the org with the requested role
 	if !isMember {
@@ -274,8 +277,9 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 		return nil, nil
 	}
 
-	if requestedRole == "direct_member" {
-
+	if requestedRole == orgRoleDirectMember {
+		l.Debug("githubv2-connector: requested org membership but is already a member")
+		return nil, nil
 	}
 
 	// If the user is a member, check to see what role they have
@@ -284,12 +288,13 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 		return nil, fmt.Errorf("github-connectorv2: failed to get org membership: %w", err)
 	}
 
-	// Skip if user is already an admin
-	if membership.GetRole() == "admin" {
+	// Skip if user already has requested role
+	if membership.GetRole() == orgRoleAdmin {
 		l.Debug("githubv2-connector: user is already an admin of the org")
 		return nil, nil
 	}
 
+	// User is a member but grant is for admin, so make them an admin.
 	_, _, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.String(orgRoleAdmin)})
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to make user an admin : %w", err)
@@ -312,6 +317,8 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 		)
 		return nil, fmt.Errorf("github-connectorv2: org admin can only be revoked from users")
 	}
+
+	// TODO: allow removing members from orgs
 
 	if en.Id != entitlement.NewEntitlementID(en.Resource, orgRoleAdmin) {
 		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
