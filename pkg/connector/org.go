@@ -318,9 +318,10 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 		return nil, fmt.Errorf("github-connectorv2: org admin can only be revoked from users")
 	}
 
-	// TODO: allow removing members from orgs
+	adminRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleAdmin)
+	memberRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleMember)
 
-	if en.Id != entitlement.NewEntitlementID(en.Resource, orgRoleAdmin) {
+	if en.Id != adminRoleID && en.Id != memberRoleID {
 		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
 	}
 
@@ -344,18 +345,21 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 		return nil, fmt.Errorf("github-connectorv2: failed to get org membership: %w", err)
 	}
 
-	if membership.GetRole() == orgRoleMember {
-		l.Debug("githubv2-connector: user is not an admin of the org")
-		return nil, nil
-	}
-
 	if membership.GetState() != "active" {
 		return nil, fmt.Errorf("github-connectorv2: user is not an active member of the org")
 	}
 
+	if en.Id == memberRoleID {
+		_, err = o.client.Organizations.RemoveOrgMembership(ctx, user.GetLogin(), orgName)
+		if err != nil {
+			return nil, fmt.Errorf("github-connectorv2: failed to revoke org membership from user: %w", err)
+		}
+		return nil, nil
+	}
+
 	_, _, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.String(orgRoleMember)})
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to revoke org admin from user : %w", err)
+		return nil, fmt.Errorf("github-connectorv2: failed to revoke org admin from user: %w", err)
 	}
 
 	return nil, nil
