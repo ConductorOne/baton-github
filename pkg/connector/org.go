@@ -229,9 +229,8 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 		return nil, fmt.Errorf("github-connectorv2: only users can be granted org membership")
 	}
 
-	if en.Id != entitlement.NewEntitlementID(en.Resource, orgRoleAdmin) {
-		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
-	}
+	adminRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleAdmin)
+	memberRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleMember)
 
 	orgName, err := o.orgCache.GetOrgName(ctx, en.Resource.Id)
 	if err != nil {
@@ -248,18 +247,47 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 		return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
 	}
 
+	requestedRole := ""
+	switch en.Id {
+	case adminRoleID:
+		requestedRole = orgRoleAdmin
+	case memberRoleID:
+		requestedRole = "direct_member"
+	default:
+		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
+	}
+
+	isMember, _, err := o.client.Organizations.IsMember(ctx, orgName, user.GetLogin())
+	if err != nil {
+		return nil, fmt.Errorf("github-connectorv2: failed to get org membership: %w", err)
+	}
+
+	// If user isn't a member, invite them to the org with the requested role
+	if !isMember {
+		_, _, err = o.client.Organizations.CreateOrgInvitation(ctx, orgName, &github.CreateOrgInvitationOptions{
+			InviteeID: user.ID,
+			Role:      &requestedRole,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("github-connectorv2: failed to invite user to org: %w", err)
+		}
+		return nil, nil
+	}
+
+	if requestedRole == "direct_member" {
+
+	}
+
+	// If the user is a member, check to see what role they have
 	membership, _, err := o.client.Organizations.GetOrgMembership(ctx, user.GetLogin(), orgName)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get org membership: %w", err)
 	}
 
-	if membership.GetRole() == orgRoleAdmin {
+	// Skip if user is already an admin
+	if membership.GetRole() == "admin" {
 		l.Debug("githubv2-connector: user is already an admin of the org")
 		return nil, nil
-	}
-
-	if membership.GetState() != "active" {
-		return nil, fmt.Errorf("github-connectorv2: user is not an active member of the org")
 	}
 
 	_, _, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.String(orgRoleAdmin)})
