@@ -1,3 +1,4 @@
+version: 2
 project_name: baton-github
 builds:
   - binary: baton-github
@@ -49,4 +50,4 @@ checksum:
 release:
   disable: true
 changelog:
-  skip: true
+  disable: true
