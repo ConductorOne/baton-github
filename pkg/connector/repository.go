@@ -274,7 +274,7 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			Permission: en.Slug,
 		})
 		if e != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to add user to a team: %w", e)
+			return nil, fmt.Errorf("github-connectorv2: failed to add user to a repository: %w", e)
 		}
 	case resourceTypeTeam.Id:
 		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID)
