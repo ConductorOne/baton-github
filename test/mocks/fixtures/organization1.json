@@ -1,0 +1,26 @@
+{
+  "organization": {
+    "samlIdentityProvider": {
+      "ssoUrl": "githubv4.String",
+      "externalIdentities": {
+        "edges": [
+          {
+            "node": {
+              "samlIdentity": {
+                "nameId": "string",
+                "emails": [
+                  {
+                    "value": "string"
+                  }
+                ]
+              },
+              "user": {
+                "login": "string"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
