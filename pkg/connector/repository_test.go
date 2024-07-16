@@ -12,32 +12,50 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTeam(t *testing.T) {
+func TestRepository(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("should grant and revoke entitlements", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
 
-		githubOrganization, _, githubTeam, githubUser, err := mgh.Seed()
+		githubOrganization, githubRepository, _, githubUser, err := mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
-		client := teamBuilder(githubClient, cache)
+		client := repositoryBuilder(githubClient, cache)
 
 		organization, err := organizationResource(ctx, githubOrganization, nil)
-		team, err := teamResource(githubTeam, organization.Id)
+		repository, err := repositoryResource(ctx, githubRepository, organization.Id)
 		user, err := userResource(ctx, githubUser, *githubUser.Email, nil)
 
-		entitlement := v2.Entitlement{Resource: team}
+		entitlement := v2.Entitlement{Resource: repository}
 
 		grantAnnotations, err := client.Grant(ctx, user, &entitlement)
 		require.Nil(t, err)
 		require.Empty(t, grantAnnotations)
 
-		grants, nextToken, grantsAnnotations, err := client.Grants(ctx, team, &pagination.Token{})
-		require.Nil(t, err)
-		test.AssertNoRatelimitAnnotations(t, grantsAnnotations)
-		require.Equal(t, "", nextToken)
+		grants := make([]*v2.Grant, 0)
+		bag := &pagination.Bag{}
+		for {
+			pToken := pagination.Token{}
+			state := bag.Current()
+			if state != nil {
+				token, _ := bag.Marshal()
+				pToken.Token = token
+			}
+
+			nextGrants, nextToken, grantsAnnotations, err := client.Grants(ctx, repository, &pToken)
+			grants = append(grants, nextGrants...)
+
+			require.Nil(t, err)
+			test.AssertNoRatelimitAnnotations(t, grantsAnnotations)
+			if nextToken == "" {
+				break
+			}
+
+			bag.Unmarshal(nextToken)
+		}
+
 		require.Len(t, grants, 1)
 
 		grant := v2.Grant{

@@ -8,37 +8,40 @@ import (
 	"github.com/conductorone/baton-github/test/mocks"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/google/go-github/v63/github"
 	"github.com/stretchr/testify/require"
 )
 
-func TestTeam(t *testing.T) {
+func TestOrganization(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("should grant and revoke entitlements", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
 
-		githubOrganization, _, githubTeam, githubUser, err := mgh.Seed()
+		githubOrganization, _, _, githubUser, err := mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
-		client := teamBuilder(githubClient, cache)
+		client := orgBuilder(githubClient, cache, nil)
 
 		organization, err := organizationResource(ctx, githubOrganization, nil)
-		team, err := teamResource(githubTeam, organization.Id)
 		user, err := userResource(ctx, githubUser, *githubUser.Email, nil)
 
-		entitlement := v2.Entitlement{Resource: team}
+		entitlement := v2.Entitlement{
+			Id:       entitlement.NewEntitlementID(organization, orgRoleMember),
+			Resource: organization,
+		}
 
 		grantAnnotations, err := client.Grant(ctx, user, &entitlement)
 		require.Nil(t, err)
 		require.Empty(t, grantAnnotations)
 
-		grants, nextToken, grantsAnnotations, err := client.Grants(ctx, team, &pagination.Token{})
+		grants, nextToken, grantsAnnotations, err := client.Grants(ctx, organization, &pagination.Token{})
 		require.Nil(t, err)
 		test.AssertNoRatelimitAnnotations(t, grantsAnnotations)
 		require.Equal(t, "", nextToken)
-		require.Len(t, grants, 1)
+		require.Len(t, grants, 2)
 
 		grant := v2.Grant{
 			Entitlement: &entitlement,
