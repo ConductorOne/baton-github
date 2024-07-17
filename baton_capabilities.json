@@ -1,72 +1,72 @@
 {
-  "@type":  "type.googleapis.com/c1.connector.v2.ConnectorCapabilities",
-  "resourceTypeCapabilities":  [
+  "@type": "type.googleapis.com/c1.connector.v2.ConnectorCapabilities",
+  "resourceTypeCapabilities": [
     {
-      "resourceType":  {
-        "id":  "org",
-        "displayName":  "Org",
-        "annotations":  [
+      "resourceType": {
+        "id": "org",
+        "displayName": "Org",
+        "annotations": [
           {
-            "@type":  "type.googleapis.com/c1.connector.v2.V1Identifier",
-            "id":  "org"
+            "@type": "type.googleapis.com/c1.connector.v2.V1Identifier",
+            "id": "org"
           }
         ]
       },
-      "capabilities":  [
+      "capabilities": [
         "CAPABILITY_SYNC",
         "CAPABILITY_PROVISION"
       ]
     },
     {
-      "resourceType":  {
-        "id":  "repository",
-        "displayName":  "Repository",
-        "annotations":  [
+      "resourceType": {
+        "id": "repository",
+        "displayName": "Repository",
+        "annotations": [
           {
-            "@type":  "type.googleapis.com/c1.connector.v2.V1Identifier",
-            "id":  "repository"
+            "@type": "type.googleapis.com/c1.connector.v2.V1Identifier",
+            "id": "repository"
           }
         ]
       },
-      "capabilities":  [
+      "capabilities": [
         "CAPABILITY_SYNC",
         "CAPABILITY_PROVISION"
       ]
     },
     {
-      "resourceType":  {
-        "id":  "team",
-        "displayName":  "Team",
-        "traits":  [
+      "resourceType": {
+        "id": "team",
+        "displayName": "Team",
+        "traits": [
           "TRAIT_GROUP"
         ],
-        "annotations":  [
+        "annotations": [
           {
-            "@type":  "type.googleapis.com/c1.connector.v2.V1Identifier",
-            "id":  "team"
+            "@type": "type.googleapis.com/c1.connector.v2.V1Identifier",
+            "id": "team"
           }
         ]
       },
-      "capabilities":  [
+      "capabilities": [
         "CAPABILITY_SYNC",
         "CAPABILITY_PROVISION"
       ]
     },
     {
-      "resourceType":  {
-        "id":  "user",
-        "displayName":  "User",
-        "traits":  [
+      "resourceType": {
+        "id": "user",
+        "displayName": "User",
+        "traits": [
           "TRAIT_USER"
         ],
-        "annotations":  [
+        "annotations": [
           {
-            "@type":  "type.googleapis.com/c1.connector.v2.V1Identifier",
-            "id":  "user"
+            "@type": "type.googleapis.com/c1.connector.v2.V1Identifier",
+            "id": "user"
           }
         ]
       },
-      "capabilities":  [
+      "capabilities": [
         "CAPABILITY_SYNC"
       ]
     }
