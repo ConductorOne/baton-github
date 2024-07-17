@@ -1,9 +1,7 @@
 package mocks
 
 import (
-	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,13 +18,7 @@ func MockGraphQL() *githubv4.Client {
 				b, _ := io.ReadAll(request.Body)
 
 				writer.Header().Set(uhttp.ContentType, "application/json")
-				writer.WriteHeader(200)
-
-				dir, err := os.Getwd()
-				if err != nil {
-					log.Fatal(err)
-				}
-				fmt.Println(dir)
+				writer.WriteHeader(http.StatusOK)
 
 				var filename string
 				if strings.Contains(string(b), "samlIdentityProvider{id}") {
@@ -35,7 +27,10 @@ func MockGraphQL() *githubv4.Client {
 					filename = "../../test/mocks/fixtures/organization1.json"
 				}
 				data, _ := os.ReadFile(filename)
-				writer.Write(data)
+				_, err := writer.Write(data)
+				if err != nil {
+					return
+				}
 			},
 		),
 	)

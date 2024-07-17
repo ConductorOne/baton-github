@@ -18,15 +18,15 @@ func TestTeam(t *testing.T) {
 	t.Run("should grant and revoke entitlements", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
 
-		githubOrganization, _, githubTeam, githubUser, err := mgh.Seed()
+		githubOrganization, _, githubTeam, githubUser, _ := mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
 		client := teamBuilder(githubClient, cache)
 
-		organization, err := organizationResource(ctx, githubOrganization, nil)
-		team, err := teamResource(githubTeam, organization.Id)
-		user, err := userResource(ctx, githubUser, *githubUser.Email, nil)
+		organization, _ := organizationResource(ctx, githubOrganization, nil)
+		team, _ := teamResource(githubTeam, organization.Id)
+		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)
 
 		entitlement := v2.Entitlement{Resource: team}
 

@@ -56,13 +56,19 @@ func parseBodyVariables(request *http.Request) map[string]string {
 
 	data, _ := io.ReadAll(request.Body)
 	result := make(map[string]interface{})
-	json.Unmarshal(data, &result)
+	err := json.Unmarshal(data, &result)
+	if err != nil {
+		return nil
+	}
 	for key, value := range result {
-		switch value.(type) {
+		switch castedValue := value.(type) {
 		case string:
-			output[key] = value.(string)
+			output[key] = castedValue
 		case float64:
-			output[key] = strconv.Itoa(int(value.(float64)))
+			output[key] = strconv.Itoa(int(castedValue))
+		default:
+			// Skip other types.
+			continue
 		}
 	}
 	return output
@@ -300,7 +306,7 @@ func getCrossTableId(
 	crossTableId, ok := variables[crossTableKey]
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
-		return 0, nil
+		return 0, fmt.Errorf("crossTableKey not found")
 	}
 
 	// HACK: pretend IDs and slugs are the same.
@@ -309,7 +315,7 @@ func getCrossTableId(
 	id, err := strconv.ParseInt(crossTableId, 10, 64)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		return 0, nil
+		return 0, fmt.Errorf("crossTableId malformed")
 	}
 	return id, nil
 }
@@ -519,6 +525,7 @@ func (mgh MockGitHub) Server() *http.Client {
 	routesMap := map[mock.EndpointPattern]handler{
 		GetOrganizationById:                                                 mgh.getOrganization,
 		GetOrganizationsTeamsMembersByTeamId:                                mgh.getMembers,
+		GetOrganizationsTeamByTeamId:                                        mgh.getTeam,
 		GetOrganizationsTeamsMembershipsByTeamIdByUsername:                  mgh.getTeamMembership,
 		GetRepositoryById:                                                   mgh.getRepository,
 		GetUserById:                                                         mgh.getUser,
@@ -527,6 +534,7 @@ func (mgh MockGitHub) Server() *http.Client {
 		mock.GetOrgsMembersByOrg:                                            mgh.getUsers,
 		mock.GetOrgsMembershipsByOrgByUsername:                              mgh.getMembership,
 		mock.GetReposCollaboratorsByOwnerByRepo:                             mgh.getRepositoryCollaborators,
+		mock.GetReposCollaboratorsByOwnerByRepoByUsername:                   mgh.getRepositoryCollaborator,
 		mock.GetReposTeamsByOwnerByRepo:                                     mgh.getRepositoryTeams,
 		mock.PostOrgsInvitationsByOrg:                                       mgh.addUser,
 		mock.PutReposCollaboratorsByOwnerByRepoByUsername:                   mgh.addRepositoryCollaborator,
@@ -539,5 +547,4 @@ func (mgh MockGitHub) Server() *http.Client {
 		options = append(options, addEndpointHandler(key, value))
 	}
 	return mock.NewMockedHTTPClient(options...)
-
 }

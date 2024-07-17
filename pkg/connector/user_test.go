@@ -29,13 +29,16 @@ func TestUsersList(t *testing.T) {
 		t.Run(fmt.Sprintf("should get a list of users (SAML:%s)", testCase.message), func(t *testing.T) {
 			mgh := mocks.NewMockGitHub()
 
-			githubOrganization, _, _, githubUser, err := mgh.Seed()
+			githubOrganization, _, _, githubUser, _ := mgh.Seed()
 
 			organization, err := organizationResource(
 				ctx,
 				githubOrganization,
 				nil,
 			)
+			if err != nil {
+				t.Error(err)
+			}
 
 			githubClient := github.NewClient(mgh.Server())
 			graphQLClient := mocks.MockGraphQL()

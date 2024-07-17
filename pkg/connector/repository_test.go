@@ -18,15 +18,15 @@ func TestRepository(t *testing.T) {
 	t.Run("should grant and revoke entitlements", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
 
-		githubOrganization, githubRepository, _, githubUser, err := mgh.Seed()
+		githubOrganization, githubRepository, _, githubUser, _ := mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
 		client := repositoryBuilder(githubClient, cache)
 
-		organization, err := organizationResource(ctx, githubOrganization, nil)
-		repository, err := repositoryResource(ctx, githubRepository, organization.Id)
-		user, err := userResource(ctx, githubUser, *githubUser.Email, nil)
+		organization, _ := organizationResource(ctx, githubOrganization, nil)
+		repository, _ := repositoryResource(ctx, githubRepository, organization.Id)
+		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)
 
 		entitlement := v2.Entitlement{Resource: repository}
 
@@ -53,7 +53,10 @@ func TestRepository(t *testing.T) {
 				break
 			}
 
-			bag.Unmarshal(nextToken)
+			err = bag.Unmarshal(nextToken)
+			if err != nil {
+				t.Error(err)
+			}
 		}
 
 		require.Len(t, grants, 1)
