@@ -151,7 +151,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		u, res, err := o.client.Users.GetByID(ctx, user.GetID())
 		if err != nil {
 			// This undocumented API can return 404 for some users. If this fails it means we won't get some of their details like email
-			if res.StatusCode != http.StatusNotFound {
+			if res == nil || res.StatusCode != http.StatusNotFound {
 				return nil, "", nil, err
 			}
 			l.Error("error fetching user by id", zap.Error(err), zap.Int64("user_id", user.GetID()))
