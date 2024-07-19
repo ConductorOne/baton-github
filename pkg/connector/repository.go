@@ -270,9 +270,13 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
 		}
 
-		_, _, e := o.client.Repositories.AddCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin(), &github.RepositoryAddCollaboratorOptions{
-			Permission: en.Slug,
-		})
+		_, _, e := o.client.Repositories.AddCollaborator(
+			ctx,
+			repo.GetOwner().GetLogin(),
+			repo.GetName(),
+			user.GetLogin(),
+			&github.RepositoryAddCollaboratorOptions{Permission: en.Slug},
+		)
 		if e != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to add user to a repository: %w", e)
 		}

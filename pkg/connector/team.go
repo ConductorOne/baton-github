@@ -125,16 +125,21 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
 	rv := make([]*v2.Entitlement, 0, len(teamAccessLevels))
 	for _, level := range teamAccessLevels {
-		rv = append(rv, entitlement.NewPermissionEntitlement(resource, level,
-			entitlement.WithAnnotation(
-				&v2.V1Identifier{
-					Id: fmt.Sprintf("team:%s:role:%s", resource.Id.Resource, level),
-				},
+		rv = append(
+			rv,
+			entitlement.NewPermissionEntitlement(
+				resource,
+				level,
+				entitlement.WithAnnotation(
+					&v2.V1Identifier{
+						Id: fmt.Sprintf("team:%s:role:%s", resource.Id.Resource, level),
+					},
+				),
+				entitlement.WithDisplayName(fmt.Sprintf("%s Team %s", resource.DisplayName, titleCase(level))),
+				entitlement.WithDescription(fmt.Sprintf("Access to %s team in GitHub", resource.DisplayName)),
+				entitlement.WithGrantableTo(resourceTypeUser),
 			),
-			entitlement.WithDisplayName(fmt.Sprintf("%s Team %s", resource.DisplayName, titleCase(level))),
-			entitlement.WithDescription(fmt.Sprintf("Access to %s team in Github", resource.DisplayName)),
-			entitlement.WithGrantableTo(resourceTypeUser),
-		))
+		)
 	}
 
 	return rv, "", nil, nil
@@ -261,9 +266,13 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, fmt.Errorf("github-connectorv2: failed to get user %d, err: %w", userId, err)
 	}
 
-	_, _, e := o.client.Teams.AddTeamMembershipByID(ctx, orgId, teamId, user.GetLogin(), &github.TeamAddTeamMembershipOptions{
-		Role: entitlement.Slug,
-	})
+	_, _, e := o.client.Teams.AddTeamMembershipByID(
+		ctx,
+		orgId,
+		teamId,
+		user.GetLogin(),
+		&github.TeamAddTeamMembershipOptions{Role: entitlement.Slug},
+	)
 	if e != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to add user to a team: %w", e)
 	}
