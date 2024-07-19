@@ -19,7 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// Create a new connector resource for a github user.
+// Create a new connector resource for a GitHub user.
 func userResource(ctx context.Context, user *github.User, userEmail string, extraEmails []string) (*v2.Resource, error) {
 	displayName := user.GetName()
 	if displayName == "" {

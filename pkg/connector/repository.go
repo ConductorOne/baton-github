@@ -33,7 +33,7 @@ var repoAccessLevels = []string{
 	repoPermissionAdmin,
 }
 
-// repositoryResource returns a new connector resource for a Github repository.
+// repositoryResource returns a new connector resource for a GitHub repository.
 func repositoryResource(ctx context.Context, repo *github.Repository, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	ret, err := resource.NewResource(
 		repo.GetName(),
@@ -116,7 +116,7 @@ func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Re
 	for _, level := range repoAccessLevels {
 		rv = append(rv, entitlement.NewPermissionEntitlement(resource, level,
 			entitlement.WithDisplayName(fmt.Sprintf("%s Repo %s", resource.DisplayName, titleCase(level))),
-			entitlement.WithDescription(fmt.Sprintf("Access to %s repository in Github", resource.DisplayName)),
+			entitlement.WithDescription(fmt.Sprintf("Access to %s repository in GitHub", resource.DisplayName)),
 			entitlement.WithAnnotation(&v2.V1Identifier{
 				Id: fmt.Sprintf("repo:%s:role:%s", resource.Id.Resource, level),
 			}),

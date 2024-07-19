@@ -78,7 +78,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		PerPage: pt.Size,
 	}
 
-	orgID, err := parseResourceToGithub(parentID)
+	orgID, err := parseResourceToGitHub(parentID)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -161,7 +161,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 		return nil, "", nil, err
 	}
 
-	githubID, err := parseResourceToGithub(resource.Id)
+	githubID, err := parseResourceToGitHub(resource.Id)
 	if err != nil {
 		return nil, "", nil, err
 	}

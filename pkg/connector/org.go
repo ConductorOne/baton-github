@@ -122,7 +122,7 @@ func (o *orgResourceType) Entitlements(
 	rv := make([]*v2.Entitlement, 0, len(orgAccessLevels))
 	rv = append(rv, entitlement.NewAssignmentEntitlement(resource, orgRoleMember,
 		entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCase(orgRoleMember))),
-		entitlement.WithDescription(fmt.Sprintf("Access to %s org in Github", resource.DisplayName)),
+		entitlement.WithDescription(fmt.Sprintf("Access to %s org in GitHub", resource.DisplayName)),
 		entitlement.WithAnnotation(&v2.V1Identifier{
 			Id: fmt.Sprintf("org:%s:role:%s", resource.Id.Resource, orgRoleMember),
 		}),
@@ -130,7 +130,7 @@ func (o *orgResourceType) Entitlements(
 	))
 	rv = append(rv, entitlement.NewPermissionEntitlement(resource, orgRoleAdmin,
 		entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCase(orgRoleAdmin))),
-		entitlement.WithDescription(fmt.Sprintf("Access to %s org in Github", resource.DisplayName)),
+		entitlement.WithDescription(fmt.Sprintf("Access to %s org in GitHub", resource.DisplayName)),
 		entitlement.WithAnnotation(&v2.V1Identifier{
 			Id: fmt.Sprintf("org:%s:role:%s", resource.Id.Resource, orgRoleAdmin),
 		}),
@@ -208,7 +208,7 @@ func (o *orgResourceType) Grants(
 			rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, ur.Id, user.GetID()))
 
 		default:
-			ctxzap.Extract(ctx).Warn("Unknown Github Role Name",
+			ctxzap.Extract(ctx).Warn("Unknown GitHub Role Name",
 				zap.String("role_name", roleName),
 				zap.String("github_username", user.GetLogin()),
 			)

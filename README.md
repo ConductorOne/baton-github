@@ -47,7 +47,7 @@ By default, `baton-github` will sync information from any organizations that the
 
 # Contributing, Support and Issues
 
-We started Baton because we were tired of taking screenshots and manually building spreadsheets. We welcome contributions, and ideas, no matter how small -- our goal is to make identity and permissions sprawl less painful for everyone. If you have questions, problems, or ideas: Please open a Github Issue!
+We started Baton because we were tired of taking screenshots and manually building spreadsheets. We welcome contributions, and ideas, no matter how small -- our goal is to make identity and permissions sprawl less painful for everyone. If you have questions, problems, or ideas: Please open a GitHub Issue!
 
 See [CONTRIBUTING.md](https://github.com/ConductorOne/baton/blob/main/CONTRIBUTING.md) for more details.
 
@@ -71,7 +71,7 @@ Flags:
       --log-format string     The output format for logs: json, console ($BATON_LOG_FORMAT) (default "json")
       --log-level string      The log level: debug, info, warn, error ($BATON_LOG_LEVEL) (default "info")
       --orgs strings          Limit syncing to specific organizations. ($BATON_ORGS)
-      --token string          The GitHub access token used to connect to the Github API. ($BATON_TOKEN)
+      --token string          The GitHub access token used to connect to the GitHub API. ($BATON_TOKEN)
   -v, --version               version for baton-github
 
 Use "baton-github [command] --help" for more information about a command.
