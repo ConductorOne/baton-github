@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/conductorone/baton-sdk/pkg/sync/expand"
+
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -80,18 +82,27 @@ func (s *syncer) handleProgress(ctx context.Context, a *Action, c int) {
 	}
 }
 
+var attempts = 0
+
 func shouldWaitAndRetry(ctx context.Context, err error) bool {
+	if err == nil {
+		attempts = 0
+		return true
+	}
 	if status.Code(err) != codes.Unavailable {
 		return false
 	}
 
+	attempts++
 	l := ctxzap.Extract(ctx)
-	l.Error("retrying operation", zap.Error(err))
+
+	var wait time.Duration = time.Duration(attempts) * time.Second
+
+	l.Error("retrying operation", zap.Error(err), zap.Duration("wait", wait))
 
 	for {
 		select {
-		// TODO: this should back off based on error counts
-		case <-time.After(1 * time.Second):
+		case <-time.After(wait):
 			return true
 		case <-ctx.Done():
 			return false
@@ -101,8 +112,8 @@ func shouldWaitAndRetry(ctx context.Context, err error) bool {
 
 // Sync starts the syncing process. The sync process is driven by the action stack that is part of the state object.
 // For each page of data that is required to be fetched from the connector, a new action is pushed on to the stack. Once
-// an action is completed, it is popped off of the queue. Before procesing each action, we checkpoint the state object
-// into the datasouce. This allows for graceful resumes if a sync is interrupted.
+// an action is completed, it is popped off of the queue. Before processing each action, we checkpoint the state object
+// into the datasource. This allows for graceful resumes if a sync is interrupted.
 func (s *syncer) Sync(ctx context.Context) error {
 	l := ctxzap.Extract(ctx)
 
@@ -189,28 +200,28 @@ func (s *syncer) Sync(ctx context.Context) error {
 
 		case SyncResourceTypesOp:
 			err = s.SyncResourceTypes(ctx)
-			if err != nil && !shouldWaitAndRetry(ctx, err) {
+			if !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
 
 		case SyncResourcesOp:
 			err = s.SyncResources(ctx)
-			if err != nil && !shouldWaitAndRetry(ctx, err) {
+			if !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
 
 		case SyncEntitlementsOp:
 			err = s.SyncEntitlements(ctx)
-			if err != nil && !shouldWaitAndRetry(ctx, err) {
+			if !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
 
 		case SyncGrantsOp:
 			err = s.SyncGrants(ctx)
-			if err != nil && !shouldWaitAndRetry(ctx, err) {
+			if !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
@@ -230,7 +241,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 			}
 
 			err = s.SyncGrantExpansion(ctx)
-			if err != nil && !shouldWaitAndRetry(ctx, err) {
+			if !shouldWaitAndRetry(ctx, err) {
 				return err
 			}
 			continue
@@ -273,11 +284,9 @@ func (s *syncer) SyncResourceTypes(ctx context.Context) error {
 		return err
 	}
 
-	for _, rt := range resp.List {
-		err = s.store.PutResourceType(ctx, rt)
-		if err != nil {
-			return err
-		}
+	err = s.store.PutResourceTypes(ctx, resp.List...)
+	if err != nil {
+		return err
 	}
 
 	s.handleProgress(ctx, s.state.Current(), len(resp.List))
@@ -382,6 +391,7 @@ func (s *syncer) syncResources(ctx context.Context) error {
 		}
 	}
 
+	bulkPutResoruces := []*v2.Resource{}
 	for _, r := range resp.List {
 		// Check if we've already synced this resource, skip it if we have
 		_, err = s.store.GetResource(ctx, &reader_v2.ResourcesReaderServiceGetResourceRequest{
@@ -403,12 +413,16 @@ func (s *syncer) syncResources(ctx context.Context) error {
 		// Set the resource creation source
 		r.CreationSource = v2.Resource_CREATION_SOURCE_CONNECTOR_LIST_RESOURCES
 
-		err = s.store.PutResource(ctx, r)
+		bulkPutResoruces = append(bulkPutResoruces, r)
+
+		err = s.getSubResources(ctx, r)
 		if err != nil {
 			return err
 		}
+	}
 
-		err = s.getSubResources(ctx, r)
+	if len(bulkPutResoruces) > 0 {
+		err = s.store.PutResources(ctx, bulkPutResoruces...)
 		if err != nil {
 			return err
 		}
@@ -480,7 +494,7 @@ func (s *syncer) shouldSkipEntitlementsAndGrants(ctx context.Context, r *v2.Reso
 }
 
 // SyncEntitlements fetches the entitlements from the connector. It first lists each resource from the datastore,
-// and pushes an action to fetch the entitelments for each resource.
+// and pushes an action to fetch the entitlements for each resource.
 func (s *syncer) SyncEntitlements(ctx context.Context) error {
 	if s.state.ResourceTypeID(ctx) == "" && s.state.ResourceID(ctx) == "" {
 		pageToken := s.state.PageToken(ctx)
@@ -548,11 +562,9 @@ func (s *syncer) syncEntitlementsForResource(ctx context.Context, resourceID *v2
 	if err != nil {
 		return err
 	}
-	for _, e := range resp.List {
-		err = s.store.PutEntitlement(ctx, e)
-		if err != nil {
-			return err
-		}
+	err = s.store.PutEntitlements(ctx, resp.List...)
+	if err != nil {
+		return err
 	}
 
 	s.handleProgress(ctx, s.state.Current(), len(resp.List))
@@ -795,7 +807,7 @@ func (s *syncer) SyncGrantExpansion(ctx context.Context) error {
 
 				entitlementGraph.AddEntitlement(grant.Entitlement)
 				entitlementGraph.AddEntitlement(srcEntitlement.GetEntitlement())
-				err = entitlementGraph.AddEdge(
+				err = entitlementGraph.AddEdge(ctx,
 					srcEntitlement.GetEntitlement().GetId(),
 					grant.GetEntitlement().GetId(),
 					expandable.Shallow,
@@ -810,9 +822,13 @@ func (s *syncer) SyncGrantExpansion(ctx context.Context) error {
 	}
 
 	if entitlementGraph.Loaded {
-		cycles, hasCycles := entitlementGraph.GetCycles()
-		if hasCycles {
-			l.Warn("cycles detected in entitlement graph", zap.Any("cycles", cycles))
+		cycle := entitlementGraph.GetFirstCycle()
+		if cycle != nil {
+			l.Warn(
+				"cycle detected in entitlement graph",
+				zap.Any("cycle", cycle),
+				zap.Any("initial graph", entitlementGraph),
+			)
 			if dontFixCycles {
 				return fmt.Errorf("cycles detected in entitlement graph")
 			}
@@ -883,7 +899,7 @@ func (s *syncer) SyncGrants(ctx context.Context) error {
 	return nil
 }
 
-type lastestSyncFetcher interface {
+type latestSyncFetcher interface {
 	LatestFinishedSync(ctx context.Context) (string, error)
 }
 
@@ -893,7 +909,7 @@ func (s *syncer) fetchResourceForPreviousSync(ctx context.Context, resourceID *v
 	var previousSyncID string
 	var err error
 
-	if psf, ok := s.store.(lastestSyncFetcher); ok {
+	if psf, ok := s.store.(latestSyncFetcher); ok {
 		previousSyncID, err = psf.LatestFinishedSync(ctx)
 		if err != nil {
 			return "", nil, err
@@ -1050,11 +1066,10 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, resourceID *v2.Resou
 		if grantAnnos.Contains(&v2.GrantExpandable{}) {
 			s.state.SetNeedsExpansion()
 		}
-
-		err = s.store.PutGrant(ctx, grant)
-		if err != nil {
-			return err
-		}
+	}
+	err = s.store.PutGrants(ctx, grants...)
+	if err != nil {
+		return err
 	}
 
 	s.handleProgress(ctx, s.state.Current(), len(grants))
@@ -1080,7 +1095,7 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, resourceID *v2.Resou
 	if updatedETag != nil {
 		resourceAnnos.Update(updatedETag)
 		resource.Annotations = resourceAnnos
-		err = s.store.PutResource(ctx, resource)
+		err = s.store.PutResources(ctx, resource)
 		if err != nil {
 			return err
 		}
@@ -1246,7 +1261,7 @@ func (s *syncer) runGrantExpandActions(ctx context.Context) (bool, error) {
 				zap.Any("sources", sources),
 			)
 
-			err = s.store.PutGrant(ctx, descendantGrant)
+			err = s.store.PutGrants(ctx, descendantGrant)
 			if err != nil {
 				l.Error("runGrantExpandActions: error updating descendant grant", zap.Error(err))
 				return false, fmt.Errorf("runGrantExpandActions: error updating descendant grant: %w", err)
@@ -1300,13 +1315,17 @@ func (s *syncer) expandGrantsForEntitlements(ctx context.Context) error {
 	}
 
 	if graph.Depth > maxDepth {
-		l.Error("expandGrantsForEntitlements: exceeded max depth", zap.Any("graph", graph), zap.Int("max_depth", maxDepth))
+		l.Error(
+			"expandGrantsForEntitlements: exceeded max depth",
+			zap.Any("graph", graph),
+			zap.Int("max_depth", maxDepth),
+		)
 		s.state.FinishAction(ctx)
 		return fmt.Errorf("exceeded max depth")
 	}
 
-	// TOOD(morgabra) Yield here after some amount of work?
-	// traverse edges or call some sort of getentitlements
+	// TODO(morgabra) Yield here after some amount of work?
+	// traverse edges or call some sort of getEntitlements
 	for _, sourceEntitlementID := range graph.GetEntitlements() {
 		// We've already expanded this entitlement, so skip it.
 		if graph.IsEntitlementExpanded(sourceEntitlementID) {
@@ -1320,14 +1339,14 @@ func (s *syncer) expandGrantsForEntitlements(ctx context.Context) error {
 		}
 
 		for descendantEntitlementID, grantInfo := range graph.GetDescendantEntitlements(sourceEntitlementID) {
-			if grantInfo.Expanded {
+			if grantInfo.IsExpanded {
 				continue
 			}
-			graph.Actions = append(graph.Actions, EntitlementGraphAction{
+			graph.Actions = append(graph.Actions, expand.EntitlementGraphAction{
 				SourceEntitlementID:     sourceEntitlementID,
 				DescendantEntitlementID: descendantEntitlementID,
 				PageToken:               "",
-				Shallow:                 grantInfo.Shallow,
+				Shallow:                 grantInfo.IsShallow,
 				ResourceTypeIDs:         grantInfo.ResourceTypeIDs,
 			})
 		}
