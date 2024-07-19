@@ -5,11 +5,14 @@ go 1.21
 toolchain go1.22.3
 
 require (
-	github.com/conductorone/baton-sdk v0.2.7
+	github.com/conductorone/baton-sdk v0.2.8
+	github.com/deckarep/golang-set/v2 v2.6.0
 	github.com/google/go-github/v63 v63.0.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
+	github.com/migueleliasweb/go-github-mock v0.0.23
 	github.com/shurcooL/githubv4 v0.0.0-20240120211514-18a1ae0e79dc
 	github.com/spf13/viper v1.18.2
+	github.com/stretchr/testify v1.9.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/oauth2 v0.20.0
 	golang.org/x/text v0.16.0
@@ -40,7 +43,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.28.6 // indirect
 	github.com/aws/smithy-go v1.20.2 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
-	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/doug-martin/goqu/v9 v9.19.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.0.4 // indirect
@@ -49,8 +52,10 @@ require (
 	github.com/go-jose/go-jose/v3 v3.0.3 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
+	github.com/google/go-github/v59 v59.0.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
@@ -61,6 +66,7 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/pquerna/xjwt v0.2.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -88,6 +94,7 @@ require (
 	golang.org/x/net v0.26.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/sys v0.21.0 // indirect
+	golang.org/x/time v0.5.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240506185236-b8a5c65736ae // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
