@@ -474,11 +474,11 @@ func (mgh MockGitHub) removeMembership(
 	w http.ResponseWriter,
 	variables map[string]string,
 ) {
-	mgh.addUserToCrossTable(
+	mgh.removeUserFromCrossTable(
 		w,
 		variables,
 		mgh.teamMemberships,
-		"team",
+		"team_id",
 	)
 }
 
@@ -486,7 +486,7 @@ func (mgh MockGitHub) removeRepositoryCollaborator(
 	w http.ResponseWriter,
 	variables map[string]string,
 ) {
-	mgh.addUserToCrossTable(
+	mgh.removeUserFromCrossTable(
 		w,
 		variables,
 		mgh.repositoryMemberships,
