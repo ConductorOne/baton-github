@@ -10,7 +10,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
-	"github.com/google/go-github/v62/github"
+	"github.com/google/go-github/v63/github"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -75,8 +75,8 @@ func v1AnnotationsForResourceType(resourceTypeID string) annotations.Annotations
 	return annos
 }
 
-// parseResourceToGithub returns the upstream API ID by looking at the last 'part' of the resource ID.
-func parseResourceToGithub(id *v2.ResourceId) (int64, error) {
+// parseResourceToGitHub returns the upstream API ID by looking at the last 'part' of the resource ID.
+func parseResourceToGitHub(id *v2.ResourceId) (int64, error) {
 	idParts := strings.Split(id.Resource, ":")
 
 	return strconv.ParseInt(idParts[len(idParts)-1], 10, 64)
@@ -112,8 +112,8 @@ func convertPageToken(token string) (int, error) {
 	return strconv.Atoi(token)
 }
 
-// fmtGithubPageToken return a formatted string for a github page token.
-func fmtGithubPageToken(pageToken int) string {
+// fmtGitHubPageToken return a formatted string for a github page token.
+func fmtGitHubPageToken(pageToken int) string {
 	if pageToken == 0 {
 		return ""
 	}
@@ -128,13 +128,13 @@ func parseResp(resp *github.Response) (string, annotations.Annotations, error) {
 		if desc, err := extractRateLimitData(resp); err == nil {
 			annos.WithRateLimiting(desc)
 		}
-		nextPage = fmtGithubPageToken(resp.NextPage)
+		nextPage = fmtGitHubPageToken(resp.NextPage)
 	}
 
 	return nextPage, annos, nil
 }
 
-// extractRateLimitData returns a set of annotations for rate limiting given the rate limit headers provided by Github.
+// extractRateLimitData returns a set of annotations for rate limiting given the rate limit headers provided by GitHub.
 func extractRateLimitData(response *github.Response) (*v2.RateLimitDescription, error) {
 	if response == nil {
 		return nil, fmt.Errorf("github-connector: passed nil response")

@@ -11,7 +11,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v62/github"
+	"github.com/google/go-github/v63/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
@@ -50,7 +50,7 @@ var (
 	}
 )
 
-type Github struct {
+type GitHub struct {
 	orgs           []string
 	client         *github.Client
 	instanceURL    string
@@ -59,7 +59,7 @@ type Github struct {
 	orgCache       *orgNameCache
 }
 
-func (gh *Github) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
+func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
 	return []connectorbuilder.ResourceSyncer{
 		orgBuilder(gh.client, gh.orgCache, gh.orgs),
 		teamBuilder(gh.client, gh.orgCache),
@@ -69,14 +69,14 @@ func (gh *Github) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 }
 
 // Metadata returns metadata about the connector.
-func (gh *Github) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
+func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 	return &v2.ConnectorMetadata{
-		DisplayName: "Github",
+		DisplayName: "GitHub",
 	}, nil
 }
 
-// Validate hits the Github API to validate that the configured credentials are still valid.
-func (gh *Github) Validate(ctx context.Context) (annotations.Annotations, error) {
+// Validate hits the GitHub API to validate that the configured credentials are still valid.
+func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error) {
 	page := 0
 	orgLogins := gh.orgs
 	filterOrgs := true
@@ -132,8 +132,8 @@ func (gh *Github) Validate(ctx context.Context) (annotations.Annotations, error)
 	return nil, nil
 }
 
-// newGithubClient returns a new github API client authenticated with an access token via oauth2.
-func newGithubClient(ctx context.Context, instanceURL string, accessToken string) (*github.Client, error) {
+// newGitHubClient returns a new GitHub API client authenticated with an access token via oauth2.
+func newGitHubClient(ctx context.Context, instanceURL string, accessToken string) (*github.Client, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
 		return nil, err
@@ -156,16 +156,16 @@ func newGithubClient(ctx context.Context, instanceURL string, accessToken string
 }
 
 // New returns the GitHub connector configured to sync against the instance URL.
-func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken string) (*Github, error) {
-	client, err := newGithubClient(ctx, instanceURL, accessToken)
+func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken string) (*GitHub, error) {
+	client, err := newGitHubClient(ctx, instanceURL, accessToken)
 	if err != nil {
 		return nil, err
 	}
-	graphqlClient, err := newGithubGraphqlClient(ctx, instanceURL, accessToken)
+	graphqlClient, err := newGitHubGraphqlClient(ctx, instanceURL, accessToken)
 	if err != nil {
 		return nil, err
 	}
-	gh := &Github{
+	gh := &GitHub{
 		client:        client,
 		instanceURL:   instanceURL,
 		orgs:          githubOrgs,
@@ -176,7 +176,7 @@ func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken stri
 	return gh, nil
 }
 
-func newGithubGraphqlClient(ctx context.Context, instanceURL string, accessToken string) (*githubv4.Client, error) {
+func newGitHubGraphqlClient(ctx context.Context, instanceURL string, accessToken string) (*githubv4.Client, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
 		return nil, err

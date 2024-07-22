@@ -11,7 +11,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/google/go-github/v62/github"
+	"github.com/google/go-github/v63/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 )
@@ -33,7 +33,7 @@ var repoAccessLevels = []string{
 	repoPermissionAdmin,
 }
 
-// repositoryResource returns a new connector resource for a Github repository.
+// repositoryResource returns a new connector resource for a GitHub repository.
 func repositoryResource(ctx context.Context, repo *github.Repository, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	ret, err := resource.NewResource(
 		repo.GetName(),
@@ -116,7 +116,7 @@ func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Re
 	for _, level := range repoAccessLevels {
 		rv = append(rv, entitlement.NewPermissionEntitlement(resource, level,
 			entitlement.WithDisplayName(fmt.Sprintf("%s Repo %s", resource.DisplayName, titleCase(level))),
-			entitlement.WithDescription(fmt.Sprintf("Access to %s repository in Github", resource.DisplayName)),
+			entitlement.WithDescription(fmt.Sprintf("Access to %s repository in GitHub", resource.DisplayName)),
 			entitlement.WithAnnotation(&v2.V1Identifier{
 				Id: fmt.Sprintf("repo:%s:role:%s", resource.Id.Resource, level),
 			}),
@@ -270,11 +270,15 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
 		}
 
-		_, _, e := o.client.Repositories.AddCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin(), &github.RepositoryAddCollaboratorOptions{
-			Permission: en.Slug,
-		})
+		_, _, e := o.client.Repositories.AddCollaborator(
+			ctx,
+			repo.GetOwner().GetLogin(),
+			repo.GetName(),
+			user.GetLogin(),
+			&github.RepositoryAddCollaboratorOptions{Permission: en.Slug},
+		)
 		if e != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to add user to a team: %w", e)
+			return nil, fmt.Errorf("github-connectorv2: failed to add user to a repository: %w", e)
 		}
 	case resourceTypeTeam.Id:
 		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID)
