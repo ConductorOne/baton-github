@@ -50,8 +50,8 @@ github.com/benbjohnson/clock v1.3.5/go.mod h1:J11/hYXuz8f4ySSvYwY0FKfm+ezbsZBKZx
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
 github.com/cncf/udpa/go v0.0.0-20191209042840-269d4d468f6f/go.mod h1:M8M6+tZqaGXZJjfX53e64911xZQV5JYwmTeXPW+k8Sc=
-github.com/conductorone/baton-sdk v0.2.6 h1:oPj93bKS0E0xpMjTzkH71X09s87trZwFnCX1yY1V63I=
-github.com/conductorone/baton-sdk v0.2.6/go.mod h1:cg5FyUcJnD7xK5SPbHe/KNpwUVVlpHJ9rnmd3UwxSkU=
+github.com/conductorone/baton-sdk v0.2.7 h1:mzp7H0zVeZLMvdGj3Yx31mpzM6ytNKI6QmpzRuiPlVE=
+github.com/conductorone/baton-sdk v0.2.7/go.mod h1:cg5FyUcJnD7xK5SPbHe/KNpwUVVlpHJ9rnmd3UwxSkU=
 github.com/cpuguy83/go-md2man/v2 v2.0.3/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
