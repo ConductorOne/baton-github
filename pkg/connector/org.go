@@ -36,6 +36,26 @@ type orgResourceType struct {
 	orgCache     *orgNameCache
 }
 
+func organizationResource(
+	ctx context.Context,
+	org *github.Organization,
+	parentResourceID *v2.ResourceId,
+) (*v2.Resource, error) {
+	return resource.NewResource(
+		org.GetLogin(),
+		resourceTypeOrg,
+		org.GetID(),
+		resource.WithParentResourceID(parentResourceID),
+		resource.WithAnnotation(
+			&v2.ExternalLink{Url: org.GetHTMLURL()},
+			&v2.V1Identifier{Id: fmt.Sprintf("org:%d", org.GetID())},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
+		),
+	)
+}
+
 func (o *orgResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return o.resourceType
 }
@@ -91,19 +111,7 @@ func (o *orgResourceType) List(
 			continue
 		}
 
-		orgResource, err := resource.NewResource(
-			org.GetLogin(),
-			resourceTypeOrg,
-			org.GetID(),
-			resource.WithParentResourceID(parentResourceID),
-			resource.WithAnnotation(
-				&v2.ExternalLink{Url: org.GetHTMLURL()},
-				&v2.V1Identifier{Id: fmt.Sprintf("org:%d", org.GetID())},
-				&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
-				&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
-				&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
-			),
-		)
+		orgResource, err := organizationResource(ctx, org, parentResourceID)
 		if err != nil {
 			return nil, "", nil, err
 		}
