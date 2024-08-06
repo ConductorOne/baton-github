@@ -61,18 +61,23 @@ Usage:
   baton-github [command]
 
 Available Commands:
+  capabilities       Get connector capabilities
   completion         Generate the autocompletion script for the specified shell
   help               Help about any command
 
 Flags:
-  -f, --file string           The path to the c1z file to sync with ($BATON_FILE) (default "sync.c1z")
-  -h, --help                  help for baton-github
-      --instance-url string   The GitHub instance URL to connect to. ($BATON_INSTANCE_URL) (default "https://github.com")
-      --log-format string     The output format for logs: json, console ($BATON_LOG_FORMAT) (default "json")
-      --log-level string      The log level: debug, info, warn, error ($BATON_LOG_LEVEL) (default "info")
-      --orgs strings          Limit syncing to specific organizations. ($BATON_ORGS)
-      --token string          The GitHub access token used to connect to the GitHub API. ($BATON_TOKEN)
-  -v, --version               version for baton-github
+      --client-id string       The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
+      --client-secret string   The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
+  -f, --file string            The path to the c1z file to sync with ($BATON_FILE) (default "sync.c1z")
+  -h, --help                   help for baton-github
+      --instance-url string    The GitHub instance URL to connect to. (default "https://github.com") ($BATON_INSTANCE_URL)
+      --log-format string      The output format for logs: json, console ($BATON_LOG_FORMAT) (default "json")
+      --log-level string       The log level: debug, info, warn, error ($BATON_LOG_LEVEL) (default "info")
+      --orgs stringArray       Limit syncing to specific organizations. ($BATON_ORGS)
+  -p, --provisioning           This must be set in order for provisioning actions to be enabled ($BATON_PROVISIONING)
+      --ticketing              This must be set to enable ticketing support ($BATON_TICKETING)
+      --token string           The GitHub access token used to connect to the GitHub API. ($BATON_TOKEN)
+  -v, --version                version for baton-github
 
 Use "baton-github [command] --help" for more information about a command.
 ```
