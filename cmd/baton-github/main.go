@@ -25,10 +25,7 @@ func main() {
 		ctx,
 		"baton-github",
 		getConnector,
-		field.Configuration{
-			Fields: configurationFields,
-		},
-		nil,
+		configuration,
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -46,7 +43,8 @@ func main() {
 func getConnector(ctx context.Context, v *viper.Viper) (types.ConnectorServer, error) {
 	l := ctxzap.Extract(ctx)
 
-	if err := validateConfig(ctx, v); err != nil {
+	err := field.Validate(configuration, v)
+	if err != nil {
 		return nil, err
 	}
 
