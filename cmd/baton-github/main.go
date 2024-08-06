@@ -26,7 +26,6 @@ func main() {
 		"baton-github",
 		getConnector,
 		configuration,
-		nil,
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
