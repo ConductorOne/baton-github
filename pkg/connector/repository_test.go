@@ -4,12 +4,14 @@ import (
 	"context"
 	"testing"
 
-	"github.com/conductorone/baton-github/test"
-	"github.com/conductorone/baton-github/test/mocks"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	entitlement2 "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/google/go-github/v63/github"
 	"github.com/stretchr/testify/require"
+
+	"github.com/conductorone/baton-github/test"
+	"github.com/conductorone/baton-github/test/mocks"
 )
 
 func TestRepository(t *testing.T) {
@@ -28,7 +30,10 @@ func TestRepository(t *testing.T) {
 		repository, _ := repositoryResource(ctx, githubRepository, organization.Id)
 		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)
 
-		entitlement := v2.Entitlement{Resource: repository}
+		entitlement := v2.Entitlement{
+			Id:       entitlement2.NewEntitlementID(repository, "admin"),
+			Resource: repository,
+		}
 
 		grantAnnotations, err := client.Grant(ctx, user, &entitlement)
 		require.Nil(t, err)

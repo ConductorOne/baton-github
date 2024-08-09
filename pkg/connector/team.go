@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -266,13 +267,20 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, fmt.Errorf("github-connectorv2: failed to get user %d, err: %w", userId, err)
 	}
 
+	enIDParts := strings.Split(entitlement.Id, ":")
+	if len(enIDParts) != 3 {
+		return nil, fmt.Errorf("github-connectorv2: invalid entitlement ID: %s", entitlement.Id)
+	}
+	permission := enIDParts[2]
+
 	_, _, e := o.client.Teams.AddTeamMembershipByID(
 		ctx,
 		orgId,
 		teamId,
 		user.GetLogin(),
-		&github.TeamAddTeamMembershipOptions{Role: entitlement.Slug},
+		&github.TeamAddTeamMembershipOptions{Role: permission},
 	)
+
 	if e != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to add user to a team: %w", e)
 	}

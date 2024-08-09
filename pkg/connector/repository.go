@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -263,6 +264,12 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 		return nil, err
 	}
 
+	enIDParts := strings.Split(en.Id, ":")
+	if len(enIDParts) != 3 {
+		return nil, fmt.Errorf("github-connectorv2: invalid entitlement ID: %s", en.Id)
+	}
+	permission := enIDParts[2]
+
 	switch principal.Id.ResourceType {
 	case resourceTypeUser.Id:
 		user, _, err := o.client.Users.GetByID(ctx, principalID)
@@ -275,8 +282,9 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			repo.GetOwner().GetLogin(),
 			repo.GetName(),
 			user.GetLogin(),
-			&github.RepositoryAddCollaboratorOptions{Permission: en.Slug},
+			&github.RepositoryAddCollaboratorOptions{Permission: permission},
 		)
+
 		if e != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to add user to a repository: %w", e)
 		}
@@ -287,7 +295,7 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 		}
 
 		_, err = o.client.Teams.AddTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName(), &github.TeamAddTeamRepoOptions{
-			Permission: en.Slug,
+			Permission: permission,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to add team to a repo: %w", err)
