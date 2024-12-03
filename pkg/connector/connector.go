@@ -85,13 +85,12 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		filterOrgs = false
 		for {
 			orgs, resp, err := gh.client.Organizations.List(ctx, "", &github.ListOptions{Page: page})
-			if resp.StatusCode == http.StatusUnauthorized {
-				return nil, status.Error(codes.Unauthenticated, "github token is not authorized")
-			}
 			if err != nil {
 				return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
 			}
-
+			if resp.StatusCode == http.StatusUnauthorized {
+				return nil, status.Error(codes.Unauthenticated, "github token is not authorized")
+			}
 			for _, o := range orgs {
 				orgLogins = append(orgLogins, o.GetLogin())
 			}
