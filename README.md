@@ -73,10 +73,10 @@ Flags:
       --instance-url string    The GitHub instance URL to connect to. (default "https://github.com") ($BATON_INSTANCE_URL)
       --log-format string      The output format for logs: json, console ($BATON_LOG_FORMAT) (default "json")
       --log-level string       The log level: debug, info, warn, error ($BATON_LOG_LEVEL) (default "info")
-      --orgs stringArray       Limit syncing to specific organizations. ($BATON_ORGS)
+      --orgs strings           Limit syncing to specific organizations. ($BATON_ORGS)
   -p, --provisioning           This must be set in order for provisioning actions to be enabled ($BATON_PROVISIONING)
       --ticketing              This must be set to enable ticketing support ($BATON_TICKETING)
-      --token string           The GitHub access token used to connect to the GitHub API. ($BATON_TOKEN)
+      --token string           required: The GitHub access token used to connect to the GitHub API. ($BATON_TOKEN)
   -v, --version                version for baton-github
 
 Use "baton-github [command] --help" for more information about a command.
