@@ -38,11 +38,17 @@ func userResource(ctx context.Context, user *github.User, userEmail string, extr
 		lastName = names[1]
 	}
 
+	managerID := "61822"
+	if user.GetID() == 61822 {
+		managerID = ""
+	}
 	profile := map[string]interface{}{
-		"first_name": firstName,
-		"last_name":  lastName,
-		"login":      user.GetLogin(),
-		"user_id":    strconv.Itoa(int(user.GetID())),
+		"first_name":      firstName,
+		"last_name":       lastName,
+		"login":           user.GetLogin(),
+		"user_id":         strconv.Itoa(int(user.GetID())),
+		"manager_id":      managerID,
+		"employee_number": strconv.Itoa(int(user.GetID())),
 	}
 
 	userTrait := []resource.UserTraitOption{
