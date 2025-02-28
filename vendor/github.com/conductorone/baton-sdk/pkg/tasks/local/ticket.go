@@ -7,9 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
+
+	"github.com/conductorone/baton-sdk/pkg/types/resource"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	v1 "github.com/conductorone/baton-sdk/pb/c1/connectorapi/baton/v1"
@@ -17,6 +19,129 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types"
 	sdkTicket "github.com/conductorone/baton-sdk/pkg/types/ticket"
 )
+
+type localBulkCreateTicket struct {
+	o sync.Once
+
+	templatePath string
+}
+
+type bulkCreateTicketTemplate struct {
+	Tickets []ticketTemplate `json:"tickets"`
+}
+
+func (m *localBulkCreateTicket) loadTicketTemplate(ctx context.Context) (*bulkCreateTicketTemplate, error) {
+	tbytes, err := os.ReadFile(m.templatePath)
+	if err != nil {
+		return nil, err
+	}
+
+	template := &bulkCreateTicketTemplate{}
+	err = json.Unmarshal(tbytes, template)
+	if err != nil {
+		return nil, err
+	}
+
+	return template, nil
+}
+
+func (m *localBulkCreateTicket) GetTempDir() string {
+	return ""
+}
+
+func (m *localBulkCreateTicket) ShouldDebug() bool {
+	return false
+}
+
+func (m *localBulkCreateTicket) Next(ctx context.Context) (*v1.Task, time.Duration, error) {
+	var task *v1.Task
+	m.o.Do(func() {
+		task = &v1.Task{
+			TaskType: &v1.Task_BulkCreateTickets{
+				BulkCreateTickets: &v1.Task_BulkCreateTicketsTask{},
+			},
+		}
+	})
+	return task, 0, nil
+}
+
+func (m *localBulkCreateTicket) Process(ctx context.Context, task *v1.Task, cc types.ConnectorClient) error {
+	ctx, span := tracer.Start(ctx, "localBulkCreateTicket.Process", trace.WithNewRoot())
+	defer span.End()
+
+	l := ctxzap.Extract(ctx)
+
+	templates, err := m.loadTicketTemplate(ctx)
+	if err != nil {
+		return err
+	}
+
+	ticketReqs := make([]*v2.TicketsServiceCreateTicketRequest, 0)
+	for _, template := range templates.Tickets {
+		schema, err := cc.GetTicketSchema(ctx, &v2.TicketsServiceGetTicketSchemaRequest{
+			Id: template.SchemaID,
+		})
+		if err != nil {
+			return err
+		}
+
+		ticketRequestBody := &v2.TicketRequest{
+			DisplayName: template.DisplayName,
+			Description: template.Description,
+			Labels:      template.Labels,
+		}
+
+		if template.StatusId != "" {
+			ticketRequestBody.Status = &v2.TicketStatus{
+				Id: template.StatusId,
+			}
+		}
+
+		if template.RequestedForId != "" {
+			rt := resource.NewResourceType("User", []v2.ResourceType_Trait{v2.ResourceType_TRAIT_USER})
+			requestedUser, err := resource.NewUserResource(template.RequestedForId, rt, template.RequestedForId, []resource.UserTraitOption{})
+			if err != nil {
+				return err
+			}
+			ticketRequestBody.RequestedFor = requestedUser
+		}
+
+		cfs := make(map[string]*v2.TicketCustomField)
+		for k, v := range template.CustomFields {
+			newCfs, err := sdkTicket.CustomFieldForSchemaField(k, schema.Schema, v)
+			if err != nil {
+				return err
+			}
+			cfs[k] = newCfs
+		}
+		ticketRequestBody.CustomFields = cfs
+
+		ticketReqs = append(ticketReqs, &v2.TicketsServiceCreateTicketRequest{
+			Request: ticketRequestBody,
+			Schema:  schema.GetSchema(),
+		})
+	}
+
+	bulkTicketReq := &v2.TicketsServiceBulkCreateTicketsRequest{
+		TicketRequests: ticketReqs,
+	}
+
+	resp, err := cc.BulkCreateTickets(ctx, bulkTicketReq)
+	if err != nil {
+		return err
+	}
+
+	l.Info("created tickets", zap.Any("resp", resp))
+
+	return nil
+}
+
+// NewBulkTicket returns a task manager that queues a bulk create ticket task.
+func NewBulkTicket(ctx context.Context, templatePath string) tasks.Manager {
+	return &localBulkCreateTicket{
+		templatePath: templatePath,
+	}
+}
 
 type localCreateTicket struct {
 	o sync.Once
@@ -27,7 +152,6 @@ type localCreateTicket struct {
 type ticketTemplate struct {
 	SchemaID       string                 `json:"schema_id"`
 	StatusId       string                 `json:"status_id"`
-	TypeId         string                 `json:"type_id"`
 	DisplayName    string                 `json:"display_name"`
 	Description    string                 `json:"description"`
 	Labels         []string               `json:"labels"`
@@ -48,6 +172,14 @@ func (m *localCreateTicket) loadTicketTemplate(ctx context.Context) (*ticketTemp
 	}
 
 	return template, nil
+}
+
+func (m *localCreateTicket) GetTempDir() string {
+	return ""
+}
+
+func (m *localCreateTicket) ShouldDebug() bool {
+	return false
 }
 
 func (m *localCreateTicket) Next(ctx context.Context) (*v1.Task, time.Duration, error) {
@@ -81,12 +213,6 @@ func (m *localCreateTicket) Process(ctx context.Context, task *v1.Task, cc types
 		DisplayName: template.DisplayName,
 		Description: template.Description,
 		Labels:      template.Labels,
-	}
-
-	if template.TypeId != "" {
-		ticketRequestBody.Type = &v2.TicketType{
-			Id: template.TypeId,
-		}
 	}
 
 	if template.StatusId != "" {
@@ -141,6 +267,14 @@ type localGetTicket struct {
 	ticketId string
 }
 
+func (m *localGetTicket) GetTempDir() string {
+	return ""
+}
+
+func (m *localGetTicket) ShouldDebug() bool {
+	return false
+}
+
 func (m *localGetTicket) Next(ctx context.Context) (*v1.Task, time.Duration, error) {
 	var task *v1.Task
 	m.o.Do(func() {
@@ -179,6 +313,14 @@ func NewGetTicket(ctx context.Context, ticketId string) tasks.Manager {
 
 type localListTicketSchemas struct {
 	o sync.Once
+}
+
+func (m *localListTicketSchemas) GetTempDir() string {
+	return ""
+}
+
+func (m *localListTicketSchemas) ShouldDebug() bool {
+	return false
 }
 
 func (m *localListTicketSchemas) Next(ctx context.Context) (*v1.Task, time.Duration, error) {

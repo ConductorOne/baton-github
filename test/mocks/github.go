@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/google/go-github/v63/github"
+	"github.com/google/go-github/v69/github"
 	"github.com/migueleliasweb/go-github-mock/src/mock"
 )
 

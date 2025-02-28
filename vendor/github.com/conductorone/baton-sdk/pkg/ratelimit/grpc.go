@@ -9,7 +9,6 @@ import (
 	connectorV2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	ratelimitV1 "github.com/conductorone/baton-sdk/pb/c1/ratelimit/v1"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/golang/protobuf/ptypes/any"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -83,7 +82,7 @@ func getRatelimitDescriptors(ctx context.Context, method string, in interface{},
 	return ret
 }
 
-// UnaryServerInterceptor returns a new unary server interceptors that adds zap.Logger to the context.
+// UnaryInterceptor returns a new unary server interceptors that adds zap.Logger to the context.
 func UnaryInterceptor(now func() time.Time, descriptors ...*ratelimitV1.RateLimitDescriptors_Entry) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		// If this is a call to the rate limit service, skip it
@@ -180,7 +179,7 @@ func reportRatelimit(
 	token string,
 	status ratelimitV1.RateLimitDescription_Status,
 	descriptors *ratelimitV1.RateLimitDescriptors,
-	anys []*any.Any,
+	anys []*anypb.Any,
 ) error {
 	l := ctxzap.Extract(ctx)
 	annos := annotations.Annotations(anys)

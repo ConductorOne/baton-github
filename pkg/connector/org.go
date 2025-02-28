@@ -13,7 +13,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/google/go-github/v63/github"
+	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 )
@@ -52,6 +52,7 @@ func organizationResource(
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeApiToken.Id},
 		),
 	)
 }

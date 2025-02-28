@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	v1 "github.com/conductorone/baton-sdk/pb/c1/connectorapi/baton/v1"
 	sdkSync "github.com/conductorone/baton-sdk/pkg/sync"
 	"github.com/conductorone/baton-sdk/pkg/tasks"
@@ -26,6 +28,14 @@ func WithTmpDir(tmpDir string) Option {
 	}
 }
 
+func (m *localSyncer) GetTempDir() string {
+	return ""
+}
+
+func (m *localSyncer) ShouldDebug() bool {
+	return false
+}
+
 func (m *localSyncer) Next(ctx context.Context) (*v1.Task, time.Duration, error) {
 	var task *v1.Task
 	m.o.Do(func() {
@@ -37,6 +47,9 @@ func (m *localSyncer) Next(ctx context.Context) (*v1.Task, time.Duration, error)
 }
 
 func (m *localSyncer) Process(ctx context.Context, task *v1.Task, cc types.ConnectorClient) error {
+	ctx, span := tracer.Start(ctx, "localSyncer.Process", trace.WithNewRoot())
+	defer span.End()
+
 	syncer, err := sdkSync.NewSyncer(ctx, cc, sdkSync.WithC1ZPath(m.dbPath), sdkSync.WithTmpDir(m.tmpDir))
 	if err != nil {
 		return err
