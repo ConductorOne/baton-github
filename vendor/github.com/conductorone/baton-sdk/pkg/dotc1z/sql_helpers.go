@@ -73,6 +73,9 @@ type protoHasID interface {
 // listConnectorObjects uses a connector list request to fetch the corresponding data from the local db.
 // It returns the raw bytes that need to be unmarshalled into the correct proto message.
 func (c *C1File) listConnectorObjects(ctx context.Context, tableName string, req proto.Message) ([][]byte, string, error) {
+	ctx, span := tracer.Start(ctx, "C1File.listConnectorObjects")
+	defer span.End()
+
 	err := c.validateDb(ctx)
 	if err != nil {
 		return nil, "", err
@@ -183,7 +186,7 @@ func (c *C1File) listConnectorObjects(ctx context.Context, tableName string, req
 	}
 
 	// Clamp the page size
-	pageSize := int(listReq.GetPageSize())
+	pageSize := listReq.GetPageSize()
 	if pageSize > maxPageSize || pageSize == 0 {
 		pageSize = maxPageSize
 	}
@@ -206,7 +209,7 @@ func (c *C1File) listConnectorObjects(ctx context.Context, tableName string, req
 	}
 	defer rows.Close()
 
-	count := 0
+	var count uint32 = 0
 	lastRow := 0
 	for rows.Next() {
 		count++
@@ -233,20 +236,23 @@ func (c *C1File) listConnectorObjects(ctx context.Context, tableName string, req
 
 var protoMarshaler = proto.MarshalOptions{Deterministic: true}
 
-func bulkPutConnectorObjectTx[T proto.Message](ctx context.Context, c *C1File,
-	tx *goqu.TxDatabase,
+func bulkPutConnectorObject[T proto.Message](ctx context.Context, c *C1File,
 	tableName string,
 	extractFields func(m T) (goqu.Record, error),
 	msgs ...T) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	ctx, span := tracer.Start(ctx, "C1File.bulkPutConnectorObjectTx")
+	defer span.End()
+
 	err := c.validateSyncDb(ctx)
 	if err != nil {
 		return err
 	}
 
-	baseQ := tx.Insert(tableName).Prepared(true)
-	baseQ = baseQ.OnConflict(goqu.DoUpdate("external_id, sync_id", goqu.C("data").Set(goqu.I("EXCLUDED.data"))))
-
-	for _, m := range msgs {
+	rows := make([]*goqu.Record, len(msgs))
+	for i, m := range msgs {
 		messageBlob, err := protoMarshaler.Marshal(m)
 		if err != nil {
 			return err
@@ -270,20 +276,42 @@ func bulkPutConnectorObjectTx[T proto.Message](ctx context.Context, c *C1File,
 		fields["data"] = messageBlob
 		fields["sync_id"] = c.currentSyncID
 		fields["discovered_at"] = time.Now().Format("2006-01-02 15:04:05.999999999")
-		q := baseQ.Rows(fields)
-		query, args, err := q.ToSQL()
+		rows[i] = &fields
+	}
+	chunkSize := 100
+	chunks := len(rows) / chunkSize
+	if len(rows)%chunkSize != 0 {
+		chunks++
+	}
+
+	for i := 0; i < chunks; i++ {
+		start := i * chunkSize
+		end := (i + 1) * chunkSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunkedRows := rows[start:end]
+		query, args, err := c.db.Insert(tableName).
+			OnConflict(goqu.DoUpdate("external_id, sync_id", goqu.C("data").Set(goqu.I("EXCLUDED.data")))).
+			Rows(chunkedRows).
+			Prepared(true).
+			ToSQL()
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(query, args...)
+		_, err = c.db.Exec(query, args...)
 		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
 func (c *C1File) getResourceObject(ctx context.Context, resourceID *v2.ResourceId, m *v2.Resource, syncID string) error {
+	ctx, span := tracer.Start(ctx, "C1File.getResourceObject")
+	defer span.End()
+
 	err := c.validateDb(ctx)
 	if err != nil {
 		return err
@@ -342,6 +370,9 @@ func (c *C1File) getResourceObject(ctx context.Context, resourceID *v2.ResourceI
 }
 
 func (c *C1File) getConnectorObject(ctx context.Context, tableName string, id string, m proto.Message) error {
+	ctx, span := tracer.Start(ctx, "C1File.getConnectorObject")
+	defer span.End()
+
 	err := c.validateDb(ctx)
 	if err != nil {
 		return err

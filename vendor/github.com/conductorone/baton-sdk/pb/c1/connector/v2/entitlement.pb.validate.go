@@ -232,7 +232,7 @@ type EntitlementMultiError []error
 
 // Error returns a concatenation of all the error messages it wraps.
 func (m EntitlementMultiError) Error() string {
-	var msgs []string
+	msgs := make([]string, 0, len(m))
 	for _, err := range m {
 		msgs = append(msgs, err.Error())
 	}
@@ -366,10 +366,10 @@ func (m *EntitlementsServiceListEntitlementsRequest) validate(all bool) error {
 
 	if m.GetPageToken() != "" {
 
-		if l := len(m.GetPageToken()); l < 1 || l > 4096 {
+		if l := len(m.GetPageToken()); l < 1 || l > 1048576 {
 			err := EntitlementsServiceListEntitlementsRequestValidationError{
 				field:  "PageToken",
-				reason: "value length must be between 1 and 4096 bytes, inclusive",
+				reason: "value length must be between 1 and 1048576 bytes, inclusive",
 			}
 			if !all {
 				return err
@@ -428,7 +428,7 @@ type EntitlementsServiceListEntitlementsRequestMultiError []error
 
 // Error returns a concatenation of all the error messages it wraps.
 func (m EntitlementsServiceListEntitlementsRequestMultiError) Error() string {
-	var msgs []string
+	msgs := make([]string, 0, len(m))
 	for _, err := range m {
 		msgs = append(msgs, err.Error())
 	}
@@ -555,10 +555,10 @@ func (m *EntitlementsServiceListEntitlementsResponse) validate(all bool) error {
 
 	if m.GetNextPageToken() != "" {
 
-		if l := len(m.GetNextPageToken()); l < 1 || l > 4096 {
+		if l := len(m.GetNextPageToken()); l < 1 || l > 1048576 {
 			err := EntitlementsServiceListEntitlementsResponseValidationError{
 				field:  "NextPageToken",
-				reason: "value length must be between 1 and 4096 bytes, inclusive",
+				reason: "value length must be between 1 and 1048576 bytes, inclusive",
 			}
 			if !all {
 				return err
@@ -617,7 +617,7 @@ type EntitlementsServiceListEntitlementsResponseMultiError []error
 
 // Error returns a concatenation of all the error messages it wraps.
 func (m EntitlementsServiceListEntitlementsResponseMultiError) Error() string {
-	var msgs []string
+	msgs := make([]string, 0, len(m))
 	for _, err := range m {
 		msgs = append(msgs, err.Error())
 	}

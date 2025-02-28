@@ -8,27 +8,29 @@ import (
 	"go.uber.org/zap"
 )
 
+// JSON tags for actions, edges, and nodes are short to minimize size of serialized data when checkpointing
+
 type EntitlementGraphAction struct {
-	SourceEntitlementID     string   `json:"source_entitlement_id"`
-	DescendantEntitlementID string   `json:"descendant_entitlement_id"`
-	Shallow                 bool     `json:"shallow"`
-	ResourceTypeIDs         []string `json:"resource_types_ids"`
-	PageToken               string   `json:"page_token"`
+	SourceEntitlementID     string   `json:"sid"`
+	DescendantEntitlementID string   `json:"did"`
+	Shallow                 bool     `json:"s"`
+	ResourceTypeIDs         []string `json:"rtids"`
+	PageToken               string   `json:"pt"`
 }
 
 type Edge struct {
-	EdgeID          int      `json:"edge_id"`
-	SourceID        int      `json:"source_id"`
-	DestinationID   int      `json:"destination_id"`
-	IsExpanded      bool     `json:"expanded"`
-	IsShallow       bool     `json:"shallow"`
-	ResourceTypeIDs []string `json:"resource_type_ids"`
+	EdgeID          int      `json:"id"`
+	SourceID        int      `json:"sid"`
+	DestinationID   int      `json:"did"`
+	IsExpanded      bool     `json:"e"`
+	IsShallow       bool     `json:"s"`
+	ResourceTypeIDs []string `json:"rtids"`
 }
 
 // Node represents a list of entitlements. It is the base element of the graph.
 type Node struct {
 	Id             int      `json:"id"`
-	EntitlementIDs []string `json:"entitlementIds"` // List of entitlements.
+	EntitlementIDs []string `json:"eids"` // List of entitlements.
 }
 
 // EntitlementGraph - a directed graph representing the relationships between
@@ -37,16 +39,17 @@ type Node struct {
 // This is because the graph can have cycles, and we address them by reducing
 // _all_ nodes in a cycle into a single node.
 type EntitlementGraph struct {
-	NextNodeID            int                      `json:"next_node_id"`            // Automatically incremented so that each node has a unique ID.
-	NextEdgeID            int                      `json:"next_edge_id"`            // Automatically incremented so that each edge has a unique ID.
-	Nodes                 map[int]Node             `json:"nodes"`                   // The mapping of all node IDs to nodes.
-	EntitlementsToNodes   map[string]int           `json:"entitlements_to_nodes"`   // Internal mapping of entitlements to nodes for quicker lookup.
-	SourcesToDestinations map[int]map[int]int      `json:"sources_to_destinations"` // Internal mapping of outgoing edges by node ID.
-	DestinationsToSources map[int]map[int]int      `json:"destinations_to_sources"` // Internal mapping of incoming edges by node ID.
-	Edges                 map[int]Edge             `json:"edges"`                   // Adjacency list. Source node -> descendant node
-	Loaded                bool                     `json:"loaded"`
-	Depth                 int                      `json:"depth"`
-	Actions               []EntitlementGraphAction `json:"actions"`
+	NextNodeID            int                       `json:"next_node_id"`            // Automatically incremented so that each node has a unique ID.
+	NextEdgeID            int                       `json:"next_edge_id"`            // Automatically incremented so that each edge has a unique ID.
+	Nodes                 map[int]Node              `json:"nodes"`                   // The mapping of all node IDs to nodes.
+	EntitlementsToNodes   map[string]int            `json:"entitlements_to_nodes"`   // Internal mapping of entitlements to nodes for quicker lookup.
+	SourcesToDestinations map[int]map[int]int       `json:"sources_to_destinations"` // Internal mapping of outgoing edges by node ID.
+	DestinationsToSources map[int]map[int]int       `json:"destinations_to_sources"` // Internal mapping of incoming edges by node ID.
+	Edges                 map[int]Edge              `json:"edges"`                   // Adjacency list. Source node -> descendant node
+	Loaded                bool                      `json:"loaded"`
+	Depth                 int                       `json:"depth"`
+	Actions               []*EntitlementGraphAction `json:"actions"`
+	HasNoCycles           bool                      `json:"has_no_cycles"`
 }
 
 func NewEntitlementGraph(_ context.Context) *EntitlementGraph {
@@ -56,6 +59,7 @@ func NewEntitlementGraph(_ context.Context) *EntitlementGraph {
 		EntitlementsToNodes:   make(map[string]int),
 		Nodes:                 make(map[int]Node),
 		SourcesToDestinations: make(map[int]map[int]int),
+		HasNoCycles:           false,
 	}
 }
 
@@ -155,6 +159,7 @@ func (g *EntitlementGraph) AddEntitlement(entitlement *v2.Entitlement) {
 	if found != nil {
 		return
 	}
+	g.HasNoCycles = false // Reset this since we're changing the graph.
 
 	// Start at 1 in case we don't initialize something and try to get node 0.
 	g.NextNodeID++
@@ -265,6 +270,8 @@ func (g *EntitlementGraph) AddEdge(
 		g.DestinationsToSources[dstNode.Id] = make(map[int]int)
 	}
 
+	g.HasNoCycles = false // Reset this since we're changing the graph.
+
 	// Start at 1 in case we don't initialize something and try to get edge 0.
 	g.NextEdgeID++
 	edge := Edge{
@@ -279,5 +286,26 @@ func (g *EntitlementGraph) AddEdge(
 	g.Edges[g.NextEdgeID] = edge
 	g.SourcesToDestinations[srcNode.Id][dstNode.Id] = edge.EdgeID
 	g.DestinationsToSources[dstNode.Id][srcNode.Id] = edge.EdgeID
+	return nil
+}
+
+func (g *EntitlementGraph) DeleteEdge(ctx context.Context, srcEntitlementID string, dstEntitlementID string) error {
+	srcNode := g.GetNode(srcEntitlementID)
+	if srcNode == nil {
+		return ErrNoEntitlement
+	}
+	dstNode := g.GetNode(dstEntitlementID)
+	if dstNode == nil {
+		return ErrNoEntitlement
+	}
+
+	if destinations, ok := g.SourcesToDestinations[srcNode.Id]; ok {
+		if edgeID, ok := destinations[dstNode.Id]; ok {
+			delete(destinations, dstNode.Id)
+			delete(g.DestinationsToSources[dstNode.Id], srcNode.Id)
+			delete(g.Edges, edgeID)
+			return nil
+		}
+	}
 	return nil
 }
