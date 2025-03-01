@@ -7,9 +7,11 @@ toolchain go1.23.6
 require (
 	github.com/conductorone/baton-sdk v0.2.14
 	github.com/deckarep/golang-set/v2 v2.6.0
+	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/google/go-github/v63 v63.0.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/migueleliasweb/go-github-mock v0.0.23
+	github.com/quasilyte/go-ruleguard/dsl v0.3.22
 	github.com/shurcooL/githubv4 v0.0.0-20240120211514-18a1ae0e79dc
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.9.0
@@ -92,7 +94,7 @@ require (
 	golang.org/x/crypto v0.24.0 // indirect
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
 	golang.org/x/net v0.26.0 // indirect
-	golang.org/x/sync v0.7.0 // indirect
+	golang.org/x/sync v0.11.0 // indirect
 	golang.org/x/sys v0.21.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240506185236-b8a5c65736ae // indirect
