@@ -1,41 +1,42 @@
+#AUTO GENERATED CODE. UPDATE THE CONFIG IN BATON-TEMPLATE FIRST
 linters-settings:
   exhaustive:
     default-signifies-exhaustive: true
-
   gocritic:
+    enabled-checks:
+      - ruleguard
     # The list of supported checkers can be find in https://go-critic.github.io/overview.
     settings:
       underef:
         # Whether to skip (*x).method() calls where x is a pointer receiver.
         skipRecvDeref: false
-
+      ruleguard:
+        rules: "${configDir}/tools/rules.go"
   govet:
     enable-all: true
     disable:
       - fieldalignment # too strict
       - shadow # complains too much about shadowing errors. All research points to this being fine.
-
   nakedret:
     max-func-lines: 0
-
   nolintlint:
-    allow-no-explanation: [ forbidigo, tracecheck, gomnd, gochecknoinits, makezero ]
+    allow-no-explanation: [forbidigo, tracecheck, gomnd, gochecknoinits, makezero]
     require-explanation: true
     require-specific: true
-
   revive:
     ignore-generated-header: true
     severity: error
     rules:
       - name: atomic
       - name: line-length-limit
-        arguments: [ 200 ]
+        arguments: [200]
       # These are functions that we use without checking the errors often. Most of these can't return an error even
       # though they implement an interface that can.
       - name: unhandled-error
         arguments:
           - fmt.Printf
           - fmt.Println
+          - fmt.Fprint
           - fmt.Fprintf
           - fmt.Fprintln
           - os.Stderr.Sync
@@ -46,14 +47,8 @@ linters-settings:
           - os.RemoveAll
       - name: var-naming
         arguments: [["ID", "URL", "HTTP", "API"], []]
-
   tenv:
     all: true
-
-  varcheck:
-    exported-fields: false # this appears to improperly detect exported variables as unused when they are used from a package with the same name
-
-
 linters:
   disable-all: true
   enable:
@@ -70,9 +65,7 @@ linters:
     - bodyclose # checks whether HTTP response body is closed successfully
     - durationcheck # check for two durations multiplied together
     - errorlint # errorlint is a linter for that can be used to find code that will cause problems with the error wrapping scheme introduced in Go 1.13.
-    - execinquery # execinquery is a linter about query string checker in Query function which reads your Go src files and warning it finds
     - exhaustive # check exhaustiveness of enum switch statements
-    - exportloopref # checks for pointers to enclosing loop variables
     - forbidigo # Forbids identifiers
     - gochecknoinits # Checks that no init functions are present in Go code
     - goconst # Finds repeated strings that could be replaced by a constant
@@ -95,11 +88,9 @@ linters:
     - unconvert # Remove unnecessary type conversions
     - usestdlibvars # detect the possibility to use variables/constants from the Go standard library
     - whitespace # Tool for detection of leading and trailing whitespace
-
 issues:
   max-same-issues: 50
-
   exclude-rules:
     # Don't require TODO comments to end in a period
     - source: "(TODO)"
-      linters: [ godot ]
+      linters: [godot]
