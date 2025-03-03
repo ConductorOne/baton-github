@@ -35,6 +35,7 @@ func TestUsersList(t *testing.T) {
 				ctx,
 				githubOrganization,
 				nil,
+				false,
 			)
 			if err != nil {
 				t.Error(err)
