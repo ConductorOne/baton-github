@@ -26,7 +26,7 @@ func TestRepository(t *testing.T) {
 		cache := newOrgNameCache(githubClient)
 		client := repositoryBuilder(githubClient, cache)
 
-		organization, _ := organizationResource(ctx, githubOrganization, nil)
+		organization, _ := organizationResource(ctx, githubOrganization, nil, false)
 		repository, _ := repositoryResource(ctx, githubRepository, organization.Id)
 		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)
 

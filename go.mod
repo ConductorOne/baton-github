@@ -7,7 +7,6 @@ toolchain go1.23.4
 require (
 	github.com/conductorone/baton-sdk v0.2.70
 	github.com/deckarep/golang-set/v2 v2.7.0
-	github.com/google/go-github/v63 v63.0.0
 	github.com/google/go-github/v69 v69.2.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/migueleliasweb/go-github-mock v0.0.23

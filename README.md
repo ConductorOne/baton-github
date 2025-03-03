@@ -45,6 +45,11 @@ baton resources
 
 By default, `baton-github` will sync information from any organizations that the provided credential has Administrator permissions on. You can specify exactly which organizations you would like to sync using the `--orgs` flag.
 
+# Sync Secrets
+in order to sync secrets, you must use a token created using a github app installed into your organization, more info here:  
+- [docs](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app)
+- [rest api](https://docs.github.com/rest/orgs/personal-access-tokens#list-fine-grained-personal-access-tokens-with-access-to-organization-resources)
+
 # Contributing, Support and Issues
 
 We started Baton because we were tired of taking screenshots and manually building spreadsheets. We welcome contributions, and ideas, no matter how small -- our goal is to make identity and permissions sprawl less painful for everyone. If you have questions, problems, or ideas: Please open a GitHub Issue!
@@ -63,21 +68,25 @@ Usage:
 Available Commands:
   capabilities       Get connector capabilities
   completion         Generate the autocompletion script for the specified shell
+  config             Get connector config
   help               Help about any command
 
 Flags:
-      --client-id string       The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
-      --client-secret string   The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
-  -f, --file string            The path to the c1z file to sync with ($BATON_FILE) (default "sync.c1z")
-  -h, --help                   help for baton-github
-      --instance-url string    The GitHub instance URL to connect to. (default "https://github.com") ($BATON_INSTANCE_URL)
-      --log-format string      The output format for logs: json, console ($BATON_LOG_FORMAT) (default "json")
-      --log-level string       The log level: debug, info, warn, error ($BATON_LOG_LEVEL) (default "info")
-      --orgs strings           Limit syncing to specific organizations. ($BATON_ORGS)
-  -p, --provisioning           This must be set in order for provisioning actions to be enabled ($BATON_PROVISIONING)
-      --ticketing              This must be set to enable ticketing support ($BATON_TICKETING)
-      --token string           required: The GitHub access token used to connect to the GitHub API. ($BATON_TOKEN)
-  -v, --version                version for baton-github
+      --client-id string                 The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
+      --client-secret string             The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
+  -f, --file string                      The path to the c1z file to sync with ($BATON_FILE) (default "sync.c1z")
+  -h, --help                             help for baton-github
+      --instance-url string              The GitHub instance URL to connect to. (default "https://github.com") ($BATON_INSTANCE_URL)
+      --log-format string                The output format for logs: json, console ($BATON_LOG_FORMAT) (default "json")
+      --log-level string                 The log level: debug, info, warn, error ($BATON_LOG_LEVEL) (default "info")
+      --orgs strings                     Limit syncing to specific organizations. ($BATON_ORGS)
+      --otel-collector-endpoint string   The endpoint of the OpenTelemetry collector to send observability data to ($BATON_OTEL_COLLECTOR_ENDPOINT)
+  -p, --provisioning                     This must be set in order for provisioning actions to be enabled ($BATON_PROVISIONING)
+      --skip-full-sync                   This must be set to skip a full sync ($BATON_SKIP_FULL_SYNC)
+      --sync-secrets                     Whether to sync secrets or not ($BATON_SYNC_SECRETS)
+      --ticketing                        This must be set to enable ticketing support ($BATON_TICKETING)
+      --token string                     required: The GitHub access token used to connect to the GitHub API. ($BATON_TOKEN)
+  -v, --version                          version for baton-github
 
 Use "baton-github [command] --help" for more information about a command.
 ```

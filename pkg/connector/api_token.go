@@ -14,18 +14,28 @@ import (
 
 func apiTokenResource(ctx context.Context, token *github.PersonalAccessToken) (*v2.Resource, error) {
 	userId := token.Owner.GetID()
-	options := []resourceSdk.SecretTraitOption{
+
+	options := []resourceSdk.SecretTraitOption{}
+	options = append(options,
 		resourceSdk.WithSecretCreatedByID(&v2.ResourceId{
 			ResourceType:  resourceTypeUser.Id,
 			Resource:      strconv.FormatInt(userId, 10),
 			BatonResource: false,
-		}),
-		resourceSdk.WithSecretLastUsedAt(token.TokenLastUsedAt.Time),
-		resourceSdk.WithSecretCreatedAt(token.AccessGrantedAt.Time),
-		resourceSdk.WithSecretExpiresAt(token.TokenExpiresAt.Time),
+		}))
+
+	if token.TokenLastUsedAt != nil {
+		options = append(options, resourceSdk.WithSecretLastUsedAt(token.TokenLastUsedAt.Time))
+	}
+
+	if token.AccessGrantedAt != nil {
+		options = append(options, resourceSdk.WithSecretCreatedAt(token.AccessGrantedAt.Time))
+	}
+
+	if token.TokenExpiresAt != nil {
+		options = append(options, resourceSdk.WithSecretExpiresAt(token.TokenExpiresAt.Time))
 	}
 	rv, err := resourceSdk.NewSecretResource(
-		*token.TokenName,
+		token.GetTokenName(),
 		resourceTypeApiToken,
 		token.GetID(),
 		options,
@@ -113,11 +123,10 @@ func (o *apiTokenResourceType) List(
 	return rv, pageToken, annotations, nil
 }
 
-func apiTokenBuilder(client *github.Client, hasSAMLEnabled *bool, graphqlClient *githubv4.Client, orgCache *orgNameCache) *userResourceType {
-	return &userResourceType{
-		resourceType:   resourceTypeUser,
+func apiTokenBuilder(client *github.Client, hasSAMLEnabled *bool, orgCache *orgNameCache) *apiTokenResourceType {
+	return &apiTokenResourceType{
+		resourceType:   resourceTypeApiToken,
 		client:         client,
-		graphqlClient:  graphqlClient,
 		hasSAMLEnabled: hasSAMLEnabled,
 		orgCache:       orgCache,
 	}
