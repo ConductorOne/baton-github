@@ -56,6 +56,9 @@ func (r *resourcesTable) Schema() (string, []interface{}) {
 }
 
 func (c *C1File) ListResources(ctx context.Context, request *v2.ResourcesServiceListResourcesRequest) (*v2.ResourcesServiceListResourcesResponse, error) {
+	ctx, span := tracer.Start(ctx, "C1File.ListResources")
+	defer span.End()
+
 	objs, nextPageToken, err := c.listConnectorObjects(ctx, resources.Name(), request)
 	if err != nil {
 		return nil, fmt.Errorf("error listing resources: %w", err)
@@ -78,6 +81,9 @@ func (c *C1File) ListResources(ctx context.Context, request *v2.ResourcesService
 }
 
 func (c *C1File) GetResource(ctx context.Context, request *reader_v2.ResourcesReaderServiceGetResourceRequest) (*reader_v2.ResourcesReaderServiceGetResourceResponse, error) {
+	ctx, span := tracer.Start(ctx, "C1File.GetResource")
+	defer span.End()
+
 	ret := &v2.Resource{}
 	annos := annotations.Annotations(request.GetAnnotations())
 	syncDetails := &c1zpb.SyncDetails{}
@@ -98,27 +104,28 @@ func (c *C1File) GetResource(ctx context.Context, request *reader_v2.ResourcesRe
 }
 
 func (c *C1File) PutResources(ctx context.Context, resourceObjs ...*v2.Resource) error {
-	err := c.db.WithTx(func(tx *goqu.TxDatabase) error {
-		err := bulkPutConnectorObjectTx(ctx, c, tx, resources.Name(),
-			func(resource *v2.Resource) (goqu.Record, error) {
-				fields := goqu.Record{
-					"resource_type_id": resource.Id.ResourceType,
-					"external_id":      fmt.Sprintf("%s:%s", resource.Id.ResourceType, resource.Id.Resource),
-				}
+	ctx, span := tracer.Start(ctx, "C1File.PutResources")
+	defer span.End()
 
-				if resource.ParentResourceId != nil {
-					fields["parent_resource_type_id"] = resource.ParentResourceId.ResourceType
-					fields["parent_resource_id"] = resource.ParentResourceId.Resource
-				}
-				return fields, nil
-			},
-			resourceObjs...,
-		)
-		if err != nil {
-			return err
-		}
-		return nil
-	})
+	err := bulkPutConnectorObject(ctx, c, resources.Name(),
+		func(resource *v2.Resource) (goqu.Record, error) {
+			fields := goqu.Record{
+				"resource_type_id": resource.Id.ResourceType,
+				"external_id":      fmt.Sprintf("%s:%s", resource.Id.ResourceType, resource.Id.Resource),
+			}
+
+			// If we bulk insert some resources with parent ids and some without, goqu errors because of the different number of fields.
+			if resource.ParentResourceId == nil {
+				fields["parent_resource_type_id"] = nil
+				fields["parent_resource_id"] = nil
+			} else {
+				fields["parent_resource_type_id"] = resource.ParentResourceId.ResourceType
+				fields["parent_resource_id"] = resource.ParentResourceId.Resource
+			}
+			return fields, nil
+		},
+		resourceObjs...,
+	)
 	if err != nil {
 		return err
 	}

@@ -18,12 +18,19 @@ var (
 		"instance-url",
 		field.WithDescription(`The GitHub instance URL to connect to. (default "https://github.com")`),
 	)
+
+	syncSecrets = field.BoolField(
+		"sync-secrets",
+		field.WithDescription(`Whether to sync secrets or not`),
+	)
+
 	// configuration defines the external configuration required for the connector to run.
 	configuration = field.Configuration{
 		Fields: []field.SchemaField{
 			accessTokenField,
 			orgsField,
 			instanceUrlField,
+			syncSecrets,
 		},
 	}
 )

@@ -13,9 +13,10 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/google/go-github/v63/github"
+	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -34,24 +35,34 @@ type orgResourceType struct {
 	client       *github.Client
 	orgs         map[string]struct{}
 	orgCache     *orgNameCache
+	syncSecrets  bool
 }
 
 func organizationResource(
 	ctx context.Context,
 	org *github.Organization,
 	parentResourceID *v2.ResourceId,
+	syncSecrets bool,
 ) (*v2.Resource, error) {
+
+	annotations := []proto.Message{
+		&v2.ExternalLink{Url: org.GetHTMLURL()},
+		&v2.V1Identifier{Id: fmt.Sprintf("org:%d", org.GetID())},
+		&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
+		&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
+		&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
+	}
+	if syncSecrets {
+		annotations = append(annotations, &v2.ChildResourceType{ResourceTypeId: resourceTypeApiToken.Id})
+	}
+
 	return resource.NewResource(
 		org.GetLogin(),
 		resourceTypeOrg,
 		org.GetID(),
 		resource.WithParentResourceID(parentResourceID),
 		resource.WithAnnotation(
-			&v2.ExternalLink{Url: org.GetHTMLURL()},
-			&v2.V1Identifier{Id: fmt.Sprintf("org:%d", org.GetID())},
-			&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
-			&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
-			&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
+			annotations...,
 		),
 	)
 }
@@ -111,7 +122,7 @@ func (o *orgResourceType) List(
 			continue
 		}
 
-		orgResource, err := organizationResource(ctx, org, parentResourceID)
+		orgResource, err := organizationResource(ctx, org, parentResourceID, o.syncSecrets)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -373,7 +384,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	return nil, nil
 }
 
-func orgBuilder(client *github.Client, orgCache *orgNameCache, orgs []string) *orgResourceType {
+func orgBuilder(client *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool) *orgResourceType {
 	orgMap := make(map[string]struct{})
 
 	for _, o := range orgs {
@@ -385,5 +396,6 @@ func orgBuilder(client *github.Client, orgCache *orgNameCache, orgs []string) *o
 		orgs:         orgMap,
 		client:       client,
 		orgCache:     orgCache,
+		syncSecrets:  syncSecrets,
 	}
 }

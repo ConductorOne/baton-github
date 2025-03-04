@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
@@ -42,11 +43,13 @@ var (
 )
 
 type c1ApiTaskManager struct {
-	mtx           sync.Mutex
-	started       bool
-	queue         []*v1.Task
-	serviceClient BatonServiceClient
-	tempDir       string
+	mtx               sync.Mutex
+	started           bool
+	queue             []*v1.Task
+	serviceClient     BatonServiceClient
+	tempDir           string
+	skipFullSync      bool
+	runnerShouldDebug bool
 }
 
 // getHeartbeatInterval returns an appropriate heartbeat interval. If the interval is 0, it will return the default heartbeat interval.
@@ -77,6 +80,9 @@ func getNextPoll(d time.Duration) time.Duration {
 }
 
 func (c *c1ApiTaskManager) Next(ctx context.Context) (*v1.Task, time.Duration, error) {
+	ctx, span := tracer.Start(ctx, "c1ApiTaskManager.Next", trace.WithNewRoot())
+	defer span.End()
+
 	l := ctxzap.Extract(ctx)
 
 	c.mtx.Lock()
@@ -128,6 +134,9 @@ func (c *c1ApiTaskManager) Next(ctx context.Context) (*v1.Task, time.Duration, e
 }
 
 func (c *c1ApiTaskManager) finishTask(ctx context.Context, task *v1.Task, resp proto.Message, annos annotations.Annotations, err error) error {
+	ctx, span := tracer.Start(ctx, "c1ApiTaskManager.finishTask")
+	defer span.End()
+
 	l := ctxzap.Extract(ctx)
 	l = l.With(
 		zap.String("task_id", task.GetId()),
@@ -137,12 +146,13 @@ func (c *c1ApiTaskManager) finishTask(ctx context.Context, task *v1.Task, resp p
 	finishCtx, finishCanc := context.WithTimeout(context.Background(), time.Second*30)
 	defer finishCanc()
 
+	var err2 error
 	var marshalledResp *anypb.Any
 	if resp != nil {
-		marshalledResp, err = anypb.New(resp)
-		if err != nil {
-			l.Error("c1_api_task_manager.finishTask(): error while attempting to marshal response", zap.Error(err))
-			return err
+		marshalledResp, err2 = anypb.New(resp)
+		if err2 != nil {
+			l.Error("c1_api_task_manager.finishTask(): error while attempting to marshal response", zap.Error(err2))
+			return err2
 		}
 	}
 
@@ -176,6 +186,7 @@ func (c *c1ApiTaskManager) finishTask(ctx context.Context, task *v1.Task, resp p
 	_, rpcErr := c.serviceClient.FinishTask(finishCtx, &v1.BatonServiceFinishTaskRequest{
 		TaskId: task.GetId(),
 		Status: &pbstatus.Status{
+			//nolint:gosec // No risk of overflow because `Code` is a small enum.
 			Code:    int32(statusErr.Code()),
 			Message: statusErr.Message(),
 		},
@@ -194,7 +205,18 @@ func (c *c1ApiTaskManager) finishTask(ctx context.Context, task *v1.Task, resp p
 	return err
 }
 
+func (c *c1ApiTaskManager) GetTempDir() string {
+	return c.tempDir
+}
+
+func (c *c1ApiTaskManager) ShouldDebug() bool {
+	return c.runnerShouldDebug
+}
+
 func (c *c1ApiTaskManager) Process(ctx context.Context, task *v1.Task, cc types.ConnectorClient) error {
+	ctx, span := tracer.Start(ctx, "c1ApiTaskManager.Process", trace.WithNewRoot())
+	defer span.End()
+
 	l := ctxzap.Extract(ctx)
 	if task == nil {
 		l.Debug("c1_api_task_manager.Process(): process called with nil task -- continuing")
@@ -222,26 +244,19 @@ func (c *c1ApiTaskManager) Process(ctx context.Context, task *v1.Task, cc types.
 	var handler tasks.TaskHandler
 	switch tasks.GetType(task) {
 	case taskTypes.FullSyncType:
-		handler = newFullSyncTaskHandler(task, tHelpers)
-
+		handler = newFullSyncTaskHandler(task, tHelpers, c.skipFullSync)
 	case taskTypes.HelloType:
 		handler = newHelloTaskHandler(task, tHelpers)
-
 	case taskTypes.GrantType:
 		handler = newGrantTaskHandler(task, tHelpers)
-
 	case taskTypes.RevokeType:
 		handler = newRevokeTaskHandler(task, tHelpers)
-
 	case taskTypes.CreateAccountType:
 		handler = newCreateAccountTaskHandler(task, tHelpers)
-
 	case taskTypes.CreateResourceType:
 		handler = newCreateResourceTaskHandler(task, tHelpers)
-
 	case taskTypes.DeleteResourceType:
 		handler = newDeleteResourceTaskHandler(task, tHelpers)
-
 	case taskTypes.RotateCredentialsType:
 		handler = newRotateCredentialsTaskHandler(task, tHelpers)
 	case taskTypes.CreateTicketType:
@@ -250,6 +265,12 @@ func (c *c1ApiTaskManager) Process(ctx context.Context, task *v1.Task, cc types.
 		handler = newListSchemasTaskHandler(task, tHelpers)
 	case taskTypes.GetTicketType:
 		handler = newGetTicketTaskHandler(task, tHelpers)
+	case taskTypes.StartDebugging:
+		handler = newStartDebugging(c)
+	case taskTypes.BulkCreateTicketsType:
+		handler = newBulkCreateTicketTaskHandler(task, tHelpers)
+	case taskTypes.BulkGetTicketsType:
+		handler = newBulkGetTicketTaskHandler(task, tHelpers)
 	default:
 		return c.finishTask(ctx, task, nil, nil, errors.New("unsupported task type"))
 	}
@@ -263,7 +284,7 @@ func (c *c1ApiTaskManager) Process(ctx context.Context, task *v1.Task, cc types.
 	return nil
 }
 
-func NewC1TaskManager(ctx context.Context, clientID string, clientSecret string, tempDir string) (tasks.Manager, error) {
+func NewC1TaskManager(ctx context.Context, clientID string, clientSecret string, tempDir string, skipFullSync bool) (tasks.Manager, error) {
 	serviceClient, err := newServiceClient(ctx, clientID, clientSecret)
 	if err != nil {
 		return nil, err
@@ -272,5 +293,6 @@ func NewC1TaskManager(ctx context.Context, clientID string, clientSecret string,
 	return &c1ApiTaskManager{
 		serviceClient: serviceClient,
 		tempDir:       tempDir,
+		skipFullSync:  skipFullSync,
 	}, nil
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v63/github"
+	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
@@ -48,7 +48,23 @@ var (
 		},
 		Annotations: v1AnnotationsForResourceType("user"),
 	}
+	resourceTypeApiToken = &v2.ResourceType{
+		Id:          "api-key",
+		DisplayName: "API Key",
+		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_SECRET},
+		Annotations: annotationsForResourceType(true),
+	}
 )
+
+func annotationsForResourceType(skipEntitlementsAndGrants bool) annotations.Annotations {
+	annos := annotations.Annotations{}
+
+	if skipEntitlementsAndGrants {
+		annos.Update(&v2.SkipEntitlementsAndGrants{})
+	}
+
+	return annos
+}
 
 type GitHub struct {
 	orgs           []string
@@ -57,15 +73,21 @@ type GitHub struct {
 	graphqlClient  *githubv4.Client
 	hasSAMLEnabled *bool
 	orgCache       *orgNameCache
+	syncSecrets    bool
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
-	return []connectorbuilder.ResourceSyncer{
-		orgBuilder(gh.client, gh.orgCache, gh.orgs),
+	resourceSyncers := []connectorbuilder.ResourceSyncer{
+		orgBuilder(gh.client, gh.orgCache, gh.orgs, gh.syncSecrets),
 		teamBuilder(gh.client, gh.orgCache),
 		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache),
 		repositoryBuilder(gh.client, gh.orgCache),
 	}
+
+	if gh.syncSecrets {
+		resourceSyncers = append(resourceSyncers, apiTokenBuilder(gh.client, gh.hasSAMLEnabled, gh.orgCache))
+	}
+	return resourceSyncers
 }
 
 // Metadata returns metadata about the connector.
@@ -155,7 +177,7 @@ func newGitHubClient(ctx context.Context, instanceURL string, accessToken string
 }
 
 // New returns the GitHub connector configured to sync against the instance URL.
-func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken string) (*GitHub, error) {
+func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken string, syncSecrets bool) (*GitHub, error) {
 	client, err := newGitHubClient(ctx, instanceURL, accessToken)
 	if err != nil {
 		return nil, err
@@ -170,6 +192,7 @@ func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken stri
 		orgs:          githubOrgs,
 		graphqlClient: graphqlClient,
 		orgCache:      newOrgNameCache(client),
+		syncSecrets:   syncSecrets,
 	}
 
 	return gh, nil

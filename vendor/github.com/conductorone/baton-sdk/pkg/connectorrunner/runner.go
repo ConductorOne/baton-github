@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/semaphore"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	v1 "github.com/conductorone/baton-sdk/pb/c1/connectorapi/baton/v1"
@@ -30,9 +34,10 @@ const (
 )
 
 type connectorRunner struct {
-	cw      types.ClientWrapper
-	oneShot bool
-	tasks   tasks.Manager
+	cw        types.ClientWrapper
+	oneShot   bool
+	tasks     tasks.Manager
+	debugFile *os.File
 }
 
 var ErrSigTerm = errors.New("context cancelled by process shutdown")
@@ -41,6 +46,28 @@ var ErrSigTerm = errors.New("context cancelled by process shutdown")
 func (c *connectorRunner) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(ErrSigTerm)
+
+	if c.tasks.ShouldDebug() && c.debugFile == nil {
+		var err error
+		c.debugFile, err = os.Create(filepath.Join(c.tasks.GetTempDir(), "debug.log"))
+		if err != nil {
+			return err
+		}
+	}
+
+	// modify the context to insert a logger directed to a file
+	if c.debugFile != nil {
+		l := ctxzap.Extract(ctx)
+		writeSyncer := zapcore.AddSync(c.debugFile)
+		encoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
+		core := zapcore.NewCore(encoder, writeSyncer, zapcore.DebugLevel)
+
+		l = l.WithOptions(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
+			return zapcore.NewTee(c, core)
+		}))
+
+		ctx = ctxzap.ToContext(ctx, l)
+	}
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
@@ -103,8 +130,9 @@ func (c *connectorRunner) run(ctx context.Context) error {
 
 	waitDuration := time.Second * 0
 	errCount := 0
+	stopForLoop := false
 	var err error
-	for {
+	for !stopForLoop {
 		select {
 		case <-ctx.Done():
 			return c.handleContextCancel(ctx)
@@ -113,8 +141,11 @@ func (c *connectorRunner) run(ctx context.Context) error {
 			// Acquire a worker slot before we call Next() so we don't claim a task before we can actually process it.
 			err = sem.Acquire(ctx, 1)
 			if err != nil {
-				// Any error returned from Acquire() is due to the context being cancelled.
-				sem.Release(1)
+				if errors.Is(err, context.Canceled) {
+					// Any error returned from Acquire() is due to the context being cancelled.
+					// Except for some tests where error is context deadline exceeded
+					sem.Release(1)
+				}
 				return c.handleContextCancel(ctx)
 			}
 			l.Debug("runner: worker claimed, checking for next task")
@@ -169,7 +200,11 @@ func (c *connectorRunner) run(ctx context.Context) error {
 				defer sem.Release(1)
 				err := c.processTask(ctx, t)
 				if err != nil {
+					if strings.Contains(err.Error(), "grpc: the client connection is closing") {
+						stopForLoop = true
+					}
 					l.Error("runner: error processing task", zap.Error(err), zap.String("task_id", t.Id), zap.String("task_type", tasks.GetType(t).String()))
+					return
 				}
 				l.Debug("runner: task processed", zap.String("task_id", t.Id), zap.String("task_type", tasks.GetType(t).String()))
 			}(nextTask)
@@ -177,6 +212,12 @@ func (c *connectorRunner) run(ctx context.Context) error {
 			l.Debug("runner: dispatched task, waiting for next task", zap.Duration("wait_duration", waitDuration))
 		}
 	}
+
+	if stopForLoop {
+		return fmt.Errorf("Unable to communicate with gRPC server")
+	}
+
+	return nil
 }
 
 func (c *connectorRunner) Close(ctx context.Context) error {
@@ -184,6 +225,13 @@ func (c *connectorRunner) Close(ctx context.Context) error {
 
 	if err := c.cw.Close(); err != nil {
 		retErr = errors.Join(retErr, err)
+	}
+
+	if c.debugFile != nil {
+		if err := c.debugFile.Close(); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
+		c.debugFile = nil
 	}
 
 	return retErr
@@ -201,6 +249,10 @@ type createTicketConfig struct {
 	templatePath string
 }
 
+type bulkCreateTicketConfig struct {
+	templatePath string
+}
+
 type grantConfig struct {
 	entitlementID string
 	principalType string
@@ -212,8 +264,9 @@ type revokeConfig struct {
 }
 
 type createAccountConfig struct {
-	login string
-	email string
+	login   string
+	email   string
+	profile *structpb.Struct
 }
 
 type deleteResourceConfig struct {
@@ -247,8 +300,10 @@ type runnerConfig struct {
 	deleteResourceConfig    *deleteResourceConfig
 	rotateCredentialsConfig *rotateCredentialsConfig
 	createTicketConfig      *createTicketConfig
+	bulkCreateTicketConfig  *bulkCreateTicketConfig
 	listTicketSchemasConfig *listTicketSchemasConfig
 	getTicketConfig         *getTicketConfig
+	skipFullSync            bool
 }
 
 // WithRateLimiterConfig sets the RateLimiterConfig for a runner.
@@ -358,13 +413,14 @@ func WithOnDemandRevoke(c1zPath string, grantID string) Option {
 	}
 }
 
-func WithOnDemandCreateAccount(c1zPath string, login string, email string) Option {
+func WithOnDemandCreateAccount(c1zPath string, login string, email string, profile *structpb.Struct) Option {
 	return func(ctx context.Context, cfg *runnerConfig) error {
 		cfg.onDemand = true
 		cfg.c1zPath = c1zPath
 		cfg.createAccountConfig = &createAccountConfig{
-			login: login,
-			email: email,
+			login:   login,
+			email:   email,
+			profile: profile,
 		}
 		return nil
 	}
@@ -416,6 +472,13 @@ func WithProvisioningEnabled() Option {
 	}
 }
 
+func WithFullSyncDisabled() Option {
+	return func(ctx context.Context, cfg *runnerConfig) error {
+		cfg.skipFullSync = true
+		return nil
+	}
+}
+
 func WithTicketingEnabled() Option {
 	return func(ctx context.Context, cfg *runnerConfig) error {
 		cfg.ticketingEnabled = true
@@ -427,6 +490,16 @@ func WithCreateTicket(templatePath string) Option {
 	return func(ctx context.Context, cfg *runnerConfig) error {
 		cfg.onDemand = true
 		cfg.createTicketConfig = &createTicketConfig{
+			templatePath: templatePath,
+		}
+		return nil
+	}
+}
+
+func WithBulkCreateTicket(templatePath string) Option {
+	return func(ctx context.Context, cfg *runnerConfig) error {
+		cfg.onDemand = true
+		cfg.bulkCreateTicketConfig = &bulkCreateTicketConfig{
 			templatePath: templatePath,
 		}
 		return nil
@@ -485,6 +558,10 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 		wrapperOpts = append(wrapperOpts, connector.WithTicketingEnabled())
 	}
 
+	if cfg.skipFullSync {
+		wrapperOpts = append(wrapperOpts, connector.WithFullSyncDisabled())
+	}
+
 	cw, err := connector.NewWrapper(ctx, c, wrapperOpts...)
 	if err != nil {
 		return nil, err
@@ -493,7 +570,7 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 	runner.cw = cw
 
 	if cfg.onDemand {
-		if cfg.c1zPath == "" && cfg.eventFeedConfig == nil && cfg.createTicketConfig == nil && cfg.listTicketSchemasConfig == nil && cfg.getTicketConfig == nil {
+		if cfg.c1zPath == "" && cfg.eventFeedConfig == nil && cfg.createTicketConfig == nil && cfg.listTicketSchemasConfig == nil && cfg.getTicketConfig == nil && cfg.bulkCreateTicketConfig == nil {
 			return nil, errors.New("c1zPath must be set when in on-demand mode")
 		}
 
@@ -512,7 +589,7 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 			tm = local.NewRevoker(ctx, cfg.c1zPath, cfg.revokeConfig.grantID)
 
 		case cfg.createAccountConfig != nil:
-			tm = local.NewCreateAccountManager(ctx, cfg.c1zPath, cfg.createAccountConfig.login, cfg.createAccountConfig.email)
+			tm = local.NewCreateAccountManager(ctx, cfg.c1zPath, cfg.createAccountConfig.login, cfg.createAccountConfig.email, cfg.createAccountConfig.profile)
 
 		case cfg.deleteResourceConfig != nil:
 			tm = local.NewResourceDeleter(ctx, cfg.c1zPath, cfg.deleteResourceConfig.resourceId, cfg.deleteResourceConfig.resourceType)
@@ -528,6 +605,8 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 			tm = local.NewListTicketSchema(ctx)
 		case cfg.getTicketConfig != nil:
 			tm = local.NewGetTicket(ctx, cfg.getTicketConfig.ticketID)
+		case cfg.bulkCreateTicketConfig != nil:
+			tm = local.NewBulkTicket(ctx, cfg.bulkCreateTicketConfig.templatePath)
 		default:
 			tm, err = local.NewSyncer(ctx, cfg.c1zPath, local.WithTmpDir(cfg.tempDir))
 			if err != nil {
@@ -541,7 +620,7 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 		return runner, nil
 	}
 
-	tm, err := c1api.NewC1TaskManager(ctx, cfg.clientID, cfg.clientSecret, cfg.tempDir)
+	tm, err := c1api.NewC1TaskManager(ctx, cfg.clientID, cfg.clientSecret, cfg.tempDir, cfg.skipFullSync)
 	if err != nil {
 		return nil, err
 	}

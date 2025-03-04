@@ -8,7 +8,7 @@ import (
 	"github.com/conductorone/baton-github/test"
 	"github.com/conductorone/baton-github/test/mocks"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
-	"github.com/google/go-github/v63/github"
+	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,6 +35,7 @@ func TestUsersList(t *testing.T) {
 				ctx,
 				githubOrganization,
 				nil,
+				false,
 			)
 			if err != nil {
 				t.Error(err)
