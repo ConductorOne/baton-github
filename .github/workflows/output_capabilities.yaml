@@ -24,6 +24,8 @@ jobs:
         run: go build -o connector ./cmd/baton-github
 
       - name: Run and save output
+        env:
+          BATON_TOKEN: test
         run: ./connector capabilities > baton_capabilities.json
 
       - name: Commit changes
