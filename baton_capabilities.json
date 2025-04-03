@@ -72,7 +72,7 @@
     }
   ],
   "connectorCapabilities":  [
-    "CAPABILITY_PROVISION",
-    "CAPABILITY_SYNC"
+    "CAPABILITY_SYNC",
+    "CAPABILITY_PROVISION"
   ]
 }
