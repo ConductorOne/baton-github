@@ -13,6 +13,9 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/segmentio/ksuid"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	reader_v2 "github.com/conductorone/baton-sdk/pb/c1/reader/v2"
 )
 
 const syncRunsTableVersion = "1"
@@ -55,15 +58,21 @@ type syncRun struct {
 }
 
 func (c *C1File) getLatestUnfinishedSync(ctx context.Context) (*syncRun, error) {
+	ctx, span := tracer.Start(ctx, "C1File.getLatestUnfinishedSync")
+	defer span.End()
+
 	err := c.validateDb(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	// Don't resume syncs that started over a week ago
+	oneWeekAgo := time.Now().AddDate(0, 0, -7)
 	ret := &syncRun{}
 	q := c.db.From(syncRuns.Name())
 	q = q.Select("sync_id", "started_at", "ended_at", "sync_token")
 	q = q.Where(goqu.C("ended_at").IsNull())
+	q = q.Where(goqu.C("started_at").Gte(oneWeekAgo))
 	q = q.Order(goqu.C("started_at").Desc())
 	q = q.Limit(1)
 
@@ -86,6 +95,9 @@ func (c *C1File) getLatestUnfinishedSync(ctx context.Context) (*syncRun, error) 
 }
 
 func (c *C1File) getFinishedSync(ctx context.Context, offset uint) (*syncRun, error) {
+	ctx, span := tracer.Start(ctx, "C1File.getFinishedSync")
+	defer span.End()
+
 	err := c.validateDb(ctx)
 	if err != nil {
 		return nil, err
@@ -120,7 +132,10 @@ func (c *C1File) getFinishedSync(ctx context.Context, offset uint) (*syncRun, er
 	return ret, nil
 }
 
-func (c *C1File) ListSyncRuns(ctx context.Context, pageToken string, pageSize int) ([]*syncRun, string, error) {
+func (c *C1File) ListSyncRuns(ctx context.Context, pageToken string, pageSize uint32) ([]*syncRun, string, error) {
+	ctx, span := tracer.Start(ctx, "C1File.ListSyncRuns")
+	defer span.End()
+
 	err := c.validateDb(ctx)
 	if err != nil {
 		return nil, "", err
@@ -153,7 +168,7 @@ func (c *C1File) ListSyncRuns(ctx context.Context, pageToken string, pageSize in
 	}
 	defer rows.Close()
 
-	count := 0
+	var count uint32 = 0
 	lastRow := 0
 	for rows.Next() {
 		count++
@@ -179,6 +194,9 @@ func (c *C1File) ListSyncRuns(ctx context.Context, pageToken string, pageSize in
 }
 
 func (c *C1File) LatestSyncID(ctx context.Context) (string, error) {
+	ctx, span := tracer.Start(ctx, "C1File.LatestSyncID")
+	defer span.End()
+
 	s, err := c.getFinishedSync(ctx, 0)
 	if err != nil {
 		return "", err
@@ -202,6 +220,9 @@ func (c *C1File) ViewSync(ctx context.Context, syncID string) error {
 }
 
 func (c *C1File) PreviousSyncID(ctx context.Context) (string, error) {
+	ctx, span := tracer.Start(ctx, "C1File.PreviousSyncID")
+	defer span.End()
+
 	s, err := c.getFinishedSync(ctx, 1)
 	if err != nil {
 		return "", err
@@ -215,6 +236,9 @@ func (c *C1File) PreviousSyncID(ctx context.Context) (string, error) {
 }
 
 func (c *C1File) LatestFinishedSync(ctx context.Context) (string, error) {
+	ctx, span := tracer.Start(ctx, "C1File.LatestFinishedSync")
+	defer span.End()
+
 	s, err := c.getFinishedSync(ctx, 0)
 	if err != nil {
 		return "", err
@@ -228,6 +252,9 @@ func (c *C1File) LatestFinishedSync(ctx context.Context) (string, error) {
 }
 
 func (c *C1File) getSync(ctx context.Context, syncID string) (*syncRun, error) {
+	ctx, span := tracer.Start(ctx, "C1File.getSync")
+	defer span.End()
+
 	err := c.validateDb(ctx)
 	if err != nil {
 		return nil, err
@@ -254,6 +281,9 @@ func (c *C1File) getSync(ctx context.Context, syncID string) (*syncRun, error) {
 }
 
 func (c *C1File) getCurrentSync(ctx context.Context) (*syncRun, error) {
+	ctx, span := tracer.Start(ctx, "C1File.getCurrentSync")
+	defer span.End()
+
 	if c.currentSyncID == "" {
 		return nil, fmt.Errorf("c1file: sync must be running to checkpoint")
 	}
@@ -262,6 +292,9 @@ func (c *C1File) getCurrentSync(ctx context.Context) (*syncRun, error) {
 }
 
 func (c *C1File) CheckpointSync(ctx context.Context, syncToken string) error {
+	ctx, span := tracer.Start(ctx, "C1File.CheckpointSync")
+	defer span.End()
+
 	err := c.validateSyncDb(ctx)
 	if err != nil {
 		return err
@@ -288,6 +321,9 @@ func (c *C1File) CheckpointSync(ctx context.Context, syncToken string) error {
 
 // StartSync generates a sync ID to be associated with all objects discovered during this run.
 func (c *C1File) StartSync(ctx context.Context) (string, bool, error) {
+	ctx, span := tracer.Start(ctx, "C1File.StartSync")
+	defer span.End()
+
 	if c.currentSyncID != "" {
 		return c.currentSyncID, false, nil
 	}
@@ -299,29 +335,15 @@ func (c *C1File) StartSync(ctx context.Context) (string, bool, error) {
 		return "", false, err
 	}
 
-	syncID := ksuid.New().String()
+	var syncID string
 	if sync != nil && sync.EndedAt == nil {
 		syncID = sync.ID
 	} else {
-		q := c.db.Insert(syncRuns.Name())
-		q = q.Rows(goqu.Record{
-			"sync_id":    syncID,
-			"started_at": time.Now().Format("2006-01-02 15:04:05.999999999"),
-			"sync_token": "",
-		})
-
-		query, args, err := q.ToSQL()
+		syncID, err = c.StartNewSync(ctx)
 		if err != nil {
 			return "", false, err
 		}
-
-		_, err = c.db.ExecContext(ctx, query, args...)
-		if err != nil {
-			return "", false, err
-		}
-
 		newSync = true
-		c.dbUpdated = true
 	}
 
 	c.currentSyncID = syncID
@@ -329,7 +351,44 @@ func (c *C1File) StartSync(ctx context.Context) (string, bool, error) {
 	return c.currentSyncID, newSync, nil
 }
 
+func (c *C1File) StartNewSync(ctx context.Context) (string, error) {
+	ctx, span := tracer.Start(ctx, "C1File.StartNewSync")
+	defer span.End()
+
+	// Not sure if we want to do this here
+	if c.currentSyncID != "" {
+		return c.currentSyncID, nil
+	}
+
+	syncID := ksuid.New().String()
+
+	q := c.db.Insert(syncRuns.Name())
+	q = q.Rows(goqu.Record{
+		"sync_id":    syncID,
+		"started_at": time.Now().Format("2006-01-02 15:04:05.999999999"),
+		"sync_token": "",
+	})
+
+	query, args, err := q.ToSQL()
+	if err != nil {
+		return "", err
+	}
+
+	_, err = c.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return "", err
+	}
+
+	c.dbUpdated = true
+	c.currentSyncID = syncID
+
+	return c.currentSyncID, nil
+}
+
 func (c *C1File) CurrentSyncStep(ctx context.Context) (string, error) {
+	ctx, span := tracer.Start(ctx, "C1File.CurrentSyncStep")
+	defer span.End()
+
 	sr, err := c.getCurrentSync(ctx)
 	if err != nil {
 		return "", err
@@ -340,6 +399,9 @@ func (c *C1File) CurrentSyncStep(ctx context.Context) (string, error) {
 
 // EndSync updates the current sync_run row with the end time, and removes any other objects that don't have the current sync ID.
 func (c *C1File) EndSync(ctx context.Context) error {
+	ctx, span := tracer.Start(ctx, "C1File.EndSync")
+	defer span.End()
+
 	err := c.validateSyncDb(ctx)
 	if err != nil {
 		return err
@@ -369,9 +431,13 @@ func (c *C1File) EndSync(ctx context.Context) error {
 }
 
 func (c *C1File) Cleanup(ctx context.Context) error {
+	ctx, span := tracer.Start(ctx, "C1File.Cleanup")
+	defer span.End()
+
 	l := ctxzap.Extract(ctx)
 
 	if skipCleanup, _ := strconv.ParseBool(os.Getenv("BATON_SKIP_CLEANUP")); skipCleanup {
+		l.Info("BATON_SKIP_CLEANUP is set, skipping cleanup of old syncs")
 		return nil
 	}
 
@@ -381,6 +447,7 @@ func (c *C1File) Cleanup(ctx context.Context) error {
 	}
 
 	if c.currentSyncID != "" {
+		l.Warn("current sync is running, skipping cleanup of old syncs", zap.String("current_sync_id", c.currentSyncID))
 		return nil
 	}
 
@@ -411,6 +478,7 @@ func (c *C1File) Cleanup(ctx context.Context) error {
 		syncLimit = int(customSyncLimit)
 	}
 
+	l.Debug("found syncs", zap.Int("count", len(ret)), zap.Int("sync_limit", syncLimit))
 	if len(ret) <= syncLimit {
 		return nil
 	}
@@ -436,6 +504,9 @@ func (c *C1File) Cleanup(ctx context.Context) error {
 
 // DeleteSyncRun removes all the objects with a given syncID from the database.
 func (c *C1File) DeleteSyncRun(ctx context.Context, syncID string) error {
+	ctx, span := tracer.Start(ctx, "C1File.DeleteSyncRun")
+	defer span.End()
+
 	err := c.validateDb(ctx)
 	if err != nil {
 		return err
@@ -467,6 +538,9 @@ func (c *C1File) DeleteSyncRun(ctx context.Context, syncID string) error {
 
 // Vacuum runs a VACUUM on the database to reclaim space.
 func (c *C1File) Vacuum(ctx context.Context) error {
+	ctx, span := tracer.Start(ctx, "C1File.Vacuum")
+	defer span.End()
+
 	err := c.validateDb(ctx)
 	if err != nil {
 		return err
@@ -480,4 +554,74 @@ func (c *C1File) Vacuum(ctx context.Context) error {
 	c.dbUpdated = true
 
 	return nil
+}
+
+func toTimeStamp(t *time.Time) *timestamppb.Timestamp {
+	if t == nil {
+		return nil
+	}
+	return timestamppb.New(*t)
+}
+
+func (c *C1File) GetSync(ctx context.Context, request *reader_v2.SyncsReaderServiceGetSyncRequest) (*reader_v2.SyncsReaderServiceGetSyncResponse, error) {
+	ctx, span := tracer.Start(ctx, "C1File.GetSync")
+	defer span.End()
+
+	sr, err := c.getSync(ctx, request.SyncId)
+	if err != nil {
+		return nil, fmt.Errorf("error getting sync '%s': %w", request.SyncId, err)
+	}
+
+	return &reader_v2.SyncsReaderServiceGetSyncResponse{
+		Sync: &reader_v2.SyncRun{
+			Id:        sr.ID,
+			StartedAt: toTimeStamp(sr.StartedAt),
+			EndedAt:   toTimeStamp(sr.EndedAt),
+			SyncToken: sr.SyncToken,
+		},
+	}, nil
+}
+
+func (c *C1File) ListSyncs(ctx context.Context, request *reader_v2.SyncsReaderServiceListSyncsRequest) (*reader_v2.SyncsReaderServiceListSyncsResponse, error) {
+	ctx, span := tracer.Start(ctx, "C1File.ListSyncs")
+	defer span.End()
+
+	syncs, nextPageToken, err := c.ListSyncRuns(ctx, request.PageToken, request.PageSize)
+	if err != nil {
+		return nil, fmt.Errorf("error listing syncs: %w", err)
+	}
+
+	syncRuns := make([]*reader_v2.SyncRun, len(syncs))
+	for i, sr := range syncs {
+		syncRuns[i] = &reader_v2.SyncRun{
+			Id:        sr.ID,
+			StartedAt: toTimeStamp(sr.StartedAt),
+			EndedAt:   toTimeStamp(sr.EndedAt),
+			SyncToken: sr.SyncToken,
+		}
+	}
+
+	return &reader_v2.SyncsReaderServiceListSyncsResponse{
+		Syncs:         syncRuns,
+		NextPageToken: nextPageToken,
+	}, nil
+}
+
+func (c *C1File) GetLatestFinishedSync(ctx context.Context, request *reader_v2.SyncsReaderServiceGetLatestFinishedSyncRequest) (*reader_v2.SyncsReaderServiceGetLatestFinishedSyncResponse, error) {
+	ctx, span := tracer.Start(ctx, "C1File.GetLatestFinishedSync")
+	defer span.End()
+
+	sync, err := c.getFinishedSync(ctx, 0)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching latest finished sync: %w", err)
+	}
+
+	return &reader_v2.SyncsReaderServiceGetLatestFinishedSyncResponse{
+		Sync: &reader_v2.SyncRun{
+			Id:        sync.ID,
+			StartedAt: toTimeStamp(sync.StartedAt),
+			EndedAt:   toTimeStamp(sync.EndedAt),
+			SyncToken: sync.SyncToken,
+		},
+	}, nil
 }

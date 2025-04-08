@@ -13,17 +13,20 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/connectorrunner"
 	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
 
-func DefineConfiguration(
+func DefineConfiguration[T field.Configurable](
 	ctx context.Context,
 	connectorName string,
-	connector cli.GetConnectorFunc,
+	connector cli.GetConnectorFunc[T],
 	schema field.Configuration,
 	options ...connectorrunner.Option,
 ) (*viper.Viper, *cobra.Command, error) {
+	if err := verifyStructFields[T](schema); err != nil {
+		return nil, nil, fmt.Errorf("VerifyStructFields failed: %w", err)
+	}
+
 	v := viper.New()
 	v.SetConfigType("yaml")
 
@@ -43,9 +46,17 @@ func DefineConfiguration(
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	v.AutomaticEnv()
 
-	// add default fields and constrains
-	schema.Fields = field.EnsureDefaultFieldsExists(schema.Fields)
-	schema.Constraints = field.EnsureDefaultRelationships(schema.Constraints)
+	confschema := schema
+	confschema.Fields = append(field.DefaultFields, confschema.Fields...)
+	// Ensure unique fields
+	uniqueFields := make(map[string]field.SchemaField)
+	for _, f := range confschema.Fields {
+		uniqueFields[f.FieldName] = f
+	}
+	confschema.Fields = make([]field.SchemaField, 0, len(uniqueFields))
+	for _, f := range uniqueFields {
+		confschema.Fields = append(confschema.Fields, f)
+	}
 
 	// setup CLI with cobra
 	mainCMD := &cobra.Command{
@@ -53,154 +64,93 @@ func DefineConfiguration(
 		Short:         connectorName,
 		SilenceErrors: true,
 		SilenceUsage:  true,
-		RunE:          cli.MakeMainCommand(ctx, connectorName, v, schema, connector, options...),
+		RunE:          cli.MakeMainCommand(ctx, connectorName, v, confschema, connector, options...),
 	}
-
-	// add options to the main command
-	for _, field := range schema.Fields {
-		switch field.FieldType {
-		case reflect.Bool:
-			value, err := field.Bool()
-			if err != nil {
-				return nil, nil, fmt.Errorf(
-					"field %s, %s: %w",
-					field.FieldName,
-					field.FieldType,
-					err,
-				)
-			}
-			mainCMD.PersistentFlags().
-				BoolP(field.FieldName, field.CLIShortHand, value, field.GetDescription())
-		case reflect.Int:
-			value, err := field.Int()
-			if err != nil {
-				return nil, nil, fmt.Errorf(
-					"field %s, %s: %w",
-					field.FieldName,
-					field.FieldType,
-					err,
-				)
-			}
-			mainCMD.PersistentFlags().
-				IntP(field.FieldName, field.CLIShortHand, value, field.GetDescription())
-		case reflect.String:
-			value, err := field.String()
-			if err != nil {
-				return nil, nil, fmt.Errorf(
-					"field %s, %s: %w",
-					field.FieldName,
-					field.FieldType,
-					err,
-				)
-			}
-			mainCMD.PersistentFlags().
-				StringP(field.FieldName, field.CLIShortHand, value, field.GetDescription())
-		case reflect.Slice:
-			value, err := field.StringSlice()
-			if err != nil {
-				return nil, nil, fmt.Errorf(
-					"field %s, %s: %w",
-					field.FieldName,
-					field.FieldType,
-					err,
-				)
-			}
-			mainCMD.PersistentFlags().
-				StringSliceP(field.FieldName, field.CLIShortHand, value, field.GetDescription())
-		default:
-			return nil, nil, fmt.Errorf(
-				"field %s, %s is not yet supported",
-				field.FieldName,
-				field.FieldType,
-			)
-		}
-
-		// mark hidden
-		if field.Hidden {
-			err := mainCMD.PersistentFlags().MarkHidden(field.FieldName)
-			if err != nil {
-				return nil, nil, fmt.Errorf(
-					"cannot hide field %s, %s: %w",
-					field.FieldName,
-					field.FieldType,
-					err,
-				)
-			}
-		}
-
-		// mark required
-		if field.Required {
-			if field.FieldType == reflect.Bool {
-				return nil, nil, fmt.Errorf("requiring %s of type %s does not make sense", field.FieldName, field.FieldType)
-			}
-
-			err := mainCMD.MarkPersistentFlagRequired(field.FieldName)
-			if err != nil {
-				return nil, nil, fmt.Errorf(
-					"cannot require field %s, %s: %w",
-					field.FieldName,
-					field.FieldType,
-					err,
-				)
-			}
-		}
-	}
-
-	// apply constrains
-	for _, constrain := range schema.Constraints {
-		switch constrain.Kind {
-		case field.MutuallyExclusive:
-			mainCMD.MarkFlagsMutuallyExclusive(listFieldConstrainsAsStrings(constrain)...)
-		case field.RequiredTogether:
-			mainCMD.MarkFlagsRequiredTogether(listFieldConstrainsAsStrings(constrain)...)
-		case field.AtLeastOne:
-			mainCMD.MarkFlagsOneRequired(listFieldConstrainsAsStrings(constrain)...)
-		case field.Dependents:
-			// do nothing
-		}
-	}
-
-	if err := v.BindPFlags(mainCMD.PersistentFlags()); err != nil {
-		return nil, nil, err
-	}
-	if err := v.BindPFlags(mainCMD.Flags()); err != nil {
+	// set persistent flags only on the main subcommand
+	err = cli.SetFlagsAndConstraints(mainCMD, field.NewConfiguration(field.DefaultFields, field.DefaultRelationships...))
+	if err != nil {
 		return nil, nil, err
 	}
 
-	grpcServerCmd := &cobra.Command{
+	// set the rest of flags
+	err = cli.SetFlagsAndConstraints(mainCMD, schema)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	mainCMD.AddCommand(cli.AdditionalCommands(connectorName, confschema.Fields)...)
+	cli.VisitFlags(mainCMD, v)
+
+	err = cli.OptionallyAddLambdaCommand(ctx, connectorName, v, connector, confschema, mainCMD)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	_, err = cli.AddCommand(mainCMD, v, &schema, &cobra.Command{
 		Use:    "_connector-service",
 		Short:  "Start the connector service",
 		Hidden: true,
-		RunE:   cli.MakeGRPCServerCommand(ctx, connectorName, v, schema, connector),
-	}
-	mainCMD.AddCommand(grpcServerCmd)
+		RunE:   cli.MakeGRPCServerCommand(ctx, connectorName, v, confschema, connector),
+	})
 
-	capabilitiesCmd := &cobra.Command{
+	if err != nil {
+		return nil, nil, err
+	}
+
+	_, err = cli.AddCommand(mainCMD, v, &schema, &cobra.Command{
 		Use:   "capabilities",
 		Short: "Get connector capabilities",
-		RunE:  cli.MakeCapabilitiesCommand(ctx, connectorName, v, connector),
-	}
-	mainCMD.AddCommand(capabilitiesCmd)
-
-	mainCMD.AddCommand(cli.AdditionalCommands(name, schema.Fields)...)
-
-	// NOTE (shackra): we don't check subcommands (i.e.: grpcServerCmd and capabilitiesCmd)
-	mainCMD.PersistentFlags().VisitAll(func(f *pflag.Flag) {
-		if v.IsSet(f.Name) {
-			_ = mainCMD.Flags().Set(f.Name, v.GetString(f.Name))
-		}
+		RunE:  cli.MakeCapabilitiesCommand(ctx, connectorName, v, confschema, connector),
 	})
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	_, err = cli.AddCommand(mainCMD, v, nil, &cobra.Command{
+		Use:   "config",
+		Short: "Get the connector config schema",
+		RunE:  cli.MakeConfigSchemaCommand(ctx, connectorName, v, confschema, connector),
+	})
+
+	if err != nil {
+		return nil, nil, err
+	}
 
 	return v, mainCMD, nil
 }
 
-func listFieldConstrainsAsStrings(constrains field.SchemaFieldRelationship) []string {
-	var fields []string
-	for _, v := range constrains.Fields {
-		fields = append(fields, v.FieldName)
+func verifyStructFields[T field.Configurable](schema field.Configuration) error {
+	// Verify that every field in the confschema has a corresponding struct tag in the struct defined in getconnector of type T
+	//  or that it obeys the old interface, a *viper.Viper
+	var config T // Create a zero-value instance of T
+	tType := reflect.TypeOf(config)
+	// Viper doesn't do struct fields
+	if tType == reflect.TypeOf(&viper.Viper{}) {
+		return nil
 	}
-
-	return fields
+	configType := reflect.TypeOf(config)
+	if configType.Kind() == reflect.Ptr {
+		configType = configType.Elem()
+	}
+	if configType.Kind() != reflect.Struct {
+		return fmt.Errorf("T must be a struct type, got %v", configType.Kind())
+	}
+	for _, field := range schema.Fields {
+		fieldFound := false
+		for i := 0; i < configType.NumField(); i++ {
+			structField := configType.Field(i)
+			if structField.Tag.Get("mapstructure") == field.FieldName {
+				fieldFound = true
+				break
+			}
+		}
+		if !fieldFound {
+			return fmt.Errorf("field %s in confschema does not have a corresponding struct tag in the configuration struct", field.FieldName)
+		}
+	}
+	return nil
 }
 
 func cleanOrGetConfigPath(customPath string) (string, string, error) {
