@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	cfg "github.com/conductorone/baton-github/pkg/config"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
@@ -155,19 +156,19 @@ func newGitHubClient(ctx context.Context, instanceURL string, accessToken string
 }
 
 // New returns the GitHub connector configured to sync against the instance URL.
-func New(ctx context.Context, githubOrgs []string, instanceURL, accessToken string) (*GitHub, error) {
-	client, err := newGitHubClient(ctx, instanceURL, accessToken)
+func New(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
+	client, err := newGitHubClient(ctx, ghc.InstanceUrl, ghc.Token)
 	if err != nil {
 		return nil, err
 	}
-	graphqlClient, err := newGitHubGraphqlClient(ctx, instanceURL, accessToken)
+	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ghc.Token)
 	if err != nil {
 		return nil, err
 	}
 	gh := &GitHub{
 		client:        client,
-		instanceURL:   instanceURL,
-		orgs:          githubOrgs,
+		instanceURL:   ghc.InstanceUrl,
+		orgs:          ghc.Orgs,
 		graphqlClient: graphqlClient,
 		orgCache:      newOrgNameCache(client),
 	}
