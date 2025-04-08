@@ -45,6 +45,7 @@ func WithEmail(email string, primary bool) UserTraitOption {
 		return nil
 	}
 }
+
 func WithUserLogin(login string, aliases ...string) UserTraitOption {
 	return func(ut *v2.UserTrait) error {
 		if login == "" {
@@ -53,6 +54,13 @@ func WithUserLogin(login string, aliases ...string) UserTraitOption {
 		}
 		ut.Login = login
 		ut.LoginAliases = aliases
+		return nil
+	}
+}
+
+func WithEmployeeID(employeeIDs ...string) UserTraitOption {
+	return func(ut *v2.UserTrait) error {
+		ut.EmployeeIds = employeeIDs
 		return nil
 	}
 }
@@ -109,6 +117,13 @@ func WithMFAStatus(mfaStatus *v2.UserTrait_MFAStatus) UserTraitOption {
 func WithSSOStatus(ssoStatus *v2.UserTrait_SSOStatus) UserTraitOption {
 	return func(ut *v2.UserTrait) error {
 		ut.SsoStatus = ssoStatus
+		return nil
+	}
+}
+
+func WithStructuredName(structuredName *v2.UserTrait_StructuredName) UserTraitOption {
+	return func(ut *v2.UserTrait) error {
+		ut.StructuredName = structuredName
 		return nil
 	}
 }

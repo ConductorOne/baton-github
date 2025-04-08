@@ -17,6 +17,9 @@ type GrantPrincipal interface {
 	GetBatonResource() bool
 }
 
+// Sometimes C1 doesn't have the grant ID, but does have the principal and entitlement.
+const UnknownGrantId string = "🧸_UNKNOWN_GRANT_ID"
+
 func WithGrantMetadata(metadata map[string]interface{}) GrantOption {
 	return func(g *v2.Grant) error {
 		md, err := structpb.NewStruct(metadata)
@@ -88,4 +91,21 @@ func NewGrant(resource *v2.Resource, entitlementName string, principal GrantPrin
 	}
 
 	return grant
+}
+
+func NewGrantID(principal GrantPrincipal, entitlement *v2.Entitlement) string {
+	var resourceID *v2.ResourceId
+	switch p := principal.(type) {
+	case *v2.ResourceId:
+		resourceID = p
+	case *v2.Resource:
+		resourceID = p.Id
+	default:
+		panic("unexpected principal type")
+	}
+
+	if resourceID == nil {
+		panic("principal resource must have a valid resource ID")
+	}
+	return fmt.Sprintf("%s:%s:%s", entitlement.Id, resourceID.ResourceType, resourceID.Resource)
 }

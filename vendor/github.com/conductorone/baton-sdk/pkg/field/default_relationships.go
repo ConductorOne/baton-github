@@ -1,9 +1,10 @@
 package field
 
-var defaultRelationship = []SchemaFieldRelationship{
+var DefaultRelationships = []SchemaFieldRelationship{
 	FieldsRequiredTogether(grantEntitlementField, grantPrincipalField),
 	FieldsRequiredTogether(clientIDField, clientSecretField),
 	FieldsRequiredTogether(createTicketField, ticketTemplatePathField),
+	FieldsRequiredTogether(bulkCreateTicketField, bulkTicketTemplatePathField),
 	FieldsRequiredTogether(getTicketField, ticketIDField),
 	FieldsMutuallyExclusive(
 		grantEntitlementField,
@@ -15,6 +16,7 @@ var defaultRelationship = []SchemaFieldRelationship{
 		createTicketField,
 		getTicketField,
 		ListTicketSchemasField,
+		bulkCreateTicketField,
 	),
 	FieldsMutuallyExclusive(
 		grantEntitlementField,
@@ -25,8 +27,12 @@ var defaultRelationship = []SchemaFieldRelationship{
 		eventFeedField,
 		ListTicketSchemasField,
 	),
+	FieldsDependentOn(
+		[]SchemaField{externalResourceEntitlementIdFilter},
+		[]SchemaField{externalResourceC1ZField},
+	),
 }
 
 func EnsureDefaultRelationships(original []SchemaFieldRelationship) []SchemaFieldRelationship {
-	return append(defaultRelationship, original...)
+	return append(DefaultRelationships, original...)
 }

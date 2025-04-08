@@ -9,6 +9,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	reader_v2 "github.com/conductorone/baton-sdk/pb/c1/reader/v2"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
 )
 
 const entitlementsTableVersion = "1"
@@ -49,6 +50,9 @@ func (r *entitlementsTable) Schema() (string, []interface{}) {
 }
 
 func (c *C1File) ListEntitlements(ctx context.Context, request *v2.EntitlementsServiceListEntitlementsRequest) (*v2.EntitlementsServiceListEntitlementsResponse, error) {
+	ctx, span := tracer.Start(ctx, "C1File.ListEntitlements")
+	defer span.End()
+
 	objs, nextPageToken, err := c.listConnectorObjects(ctx, entitlements.Name(), request)
 	if err != nil {
 		return nil, fmt.Errorf("error listing entitlements: %w", err)
@@ -71,9 +75,15 @@ func (c *C1File) ListEntitlements(ctx context.Context, request *v2.EntitlementsS
 }
 
 func (c *C1File) GetEntitlement(ctx context.Context, request *reader_v2.EntitlementsReaderServiceGetEntitlementRequest) (*reader_v2.EntitlementsReaderServiceGetEntitlementResponse, error) {
-	ret := &v2.Entitlement{}
+	ctx, span := tracer.Start(ctx, "C1File.GetEntitlement")
+	defer span.End()
 
-	err := c.getConnectorObject(ctx, entitlements.Name(), request.EntitlementId, ret)
+	ret := &v2.Entitlement{}
+	syncId, err := annotations.GetSyncIdFromAnnotations(request.GetAnnotations())
+	if err != nil {
+		return nil, fmt.Errorf("error getting sync id from annotations for entitlement '%s': %w", request.EntitlementId, err)
+	}
+	err = c.getConnectorObject(ctx, entitlements.Name(), request.EntitlementId, syncId, ret)
 	if err != nil {
 		return nil, fmt.Errorf("error fetching entitlement '%s': %w", request.EntitlementId, err)
 	}
@@ -84,22 +94,18 @@ func (c *C1File) GetEntitlement(ctx context.Context, request *reader_v2.Entitlem
 }
 
 func (c *C1File) PutEntitlements(ctx context.Context, entitlementObjs ...*v2.Entitlement) error {
-	err := c.db.WithTx(func(tx *goqu.TxDatabase) error {
-		err := bulkPutConnectorObjectTx(ctx, c, tx, entitlements.Name(),
-			func(entitlement *v2.Entitlement) (goqu.Record, error) {
-				return goqu.Record{
-					"resource_id":      entitlement.Resource.Id.Resource,
-					"resource_type_id": entitlement.Resource.Id.ResourceType,
-				}, nil
-			},
-			entitlementObjs...,
-		)
-		if err != nil {
-			return err
-		}
+	ctx, span := tracer.Start(ctx, "C1File.PutEntitlements")
+	defer span.End()
 
-		return nil
-	})
+	err := bulkPutConnectorObject(ctx, c, entitlements.Name(),
+		func(entitlement *v2.Entitlement) (goqu.Record, error) {
+			return goqu.Record{
+				"resource_id":      entitlement.Resource.Id.Resource,
+				"resource_type_id": entitlement.Resource.Id.ResourceType,
+			}, nil
+		},
+		entitlementObjs...,
+	)
 	if err != nil {
 		return err
 	}

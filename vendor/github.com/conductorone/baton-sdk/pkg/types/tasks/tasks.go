@@ -44,6 +44,20 @@ func (tt TaskType) String() string {
 		return "get_metadata"
 	case ListEventsType:
 		return "list_events"
+	case StartDebugging:
+		return "set_log_file_event"
+	case BulkCreateTicketsType:
+		return "bulk_create_tickets"
+	case BulkGetTicketsType:
+		return "bulk_get_tickets"
+	case ActionListSchemasType:
+		return "list_action_schemas"
+	case ActionGetSchemaType:
+		return "get_action_schema"
+	case ActionInvokeType:
+		return "invoke_action"
+	case ActionStatusType:
+		return "action_status"
 	default:
 		return "unknown"
 	}
@@ -71,4 +85,11 @@ const (
 	ListGrantsType
 	GetMetadataType
 	ListEventsType
+	StartDebugging
+	BulkCreateTicketsType
+	BulkGetTicketsType
+	ActionListSchemasType
+	ActionGetSchemaType
+	ActionInvokeType
+	ActionStatusType
 )
