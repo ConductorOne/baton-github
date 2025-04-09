@@ -4,6 +4,7 @@ builds:
   - binary: baton-github
     env:
       - CGO_ENABLED=0
+      - BATON_LAMBDA_SUPPORT=1
     id: linux
     main: ./cmd/baton-github
     goos:
@@ -36,6 +37,19 @@ dockers:
       - "--label=org.opencontainers.image.title={{.ProjectName}}"
       - "--label=org.opencontainers.image.revision={{.FullCommit}}"
       - "--label=org.opencontainers.image.version={{.Version}}"
+    # ECR - arm64 only
+  - use: buildx
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:{{ .Version }}-arm64"
+      - "168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:latest-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64/v8"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
 docker_manifests:
   - name_template: ghcr.io/conductorone/baton-github:{{ .Version }}
     image_templates:
@@ -45,6 +59,9 @@ docker_manifests:
     image_templates:
       - ghcr.io/conductorone/baton-github:latest-amd64
       - ghcr.io/conductorone/baton-github:latest-arm64
+  - name_template: 168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:{{ .Version }}
+    image_templates:
+      - 168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:{{ .Version }}-arm64
 checksum:
   disable: true
 release:
