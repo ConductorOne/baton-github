@@ -156,7 +156,7 @@ github.com/benbjohnson/clock
 # github.com/cenkalti/backoff/v4 v4.3.0
 ## explicit; go 1.18
 github.com/cenkalti/backoff/v4
-# github.com/conductorone/baton-sdk v0.2.91
+# github.com/conductorone/baton-sdk v0.2.93
 ## explicit; go 1.23.4
 github.com/conductorone/baton-sdk/internal/connector
 github.com/conductorone/baton-sdk/pb/c1/c1z/v1
@@ -170,6 +170,7 @@ github.com/conductorone/baton-sdk/pb/c1/transport/v1
 github.com/conductorone/baton-sdk/pb/c1/utls/v1
 github.com/conductorone/baton-sdk/pkg/annotations
 github.com/conductorone/baton-sdk/pkg/auth
+github.com/conductorone/baton-sdk/pkg/bid
 github.com/conductorone/baton-sdk/pkg/cli
 github.com/conductorone/baton-sdk/pkg/config
 github.com/conductorone/baton-sdk/pkg/connectorbuilder
