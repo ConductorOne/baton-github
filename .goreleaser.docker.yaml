@@ -59,9 +59,6 @@ docker_manifests:
     image_templates:
       - ghcr.io/conductorone/baton-github:latest-amd64
       - ghcr.io/conductorone/baton-github:latest-arm64
-  - name_template: 168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:{{ .Version }}-arm64
-    image_templates:
-      - 168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:{{ .Version }}-arm64
 checksum:
   disable: true
 release:
