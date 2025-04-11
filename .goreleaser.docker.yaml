@@ -43,7 +43,6 @@ dockers:
     goarch: arm64
     image_templates:
       - "168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:{{ .Version }}-arm64"
-      - "168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:latest-arm64"
     build_flag_templates:
       - "--platform=linux/arm64/v8"
       - "--label=org.opencontainers.image.created={{.Date}}"
