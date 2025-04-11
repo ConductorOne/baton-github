@@ -4,7 +4,6 @@ builds:
   - binary: baton-github
     env:
       - CGO_ENABLED=0
-      - BATON_LAMBDA_SUPPORT=1
     id: linux
     main: ./cmd/baton-github
     goos:
@@ -12,8 +11,8 @@ builds:
     goarch:
       - amd64
       - arm64
-    flags:
-      - "-tags=baton_lambda_support"
+    tags:
+      - "baton_lambda_support"
 dockers:
   - use: buildx
     goos: linux
@@ -36,7 +35,6 @@ dockers:
       - "168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:{{ .Version }}-arm64"
       - "168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:latest-arm64"
     build_flag_templates:
-      - "-tags=baton_lambda_support"
       - "--platform=linux/arm64/v8"
       - "--label=org.opencontainers.image.created={{.Date}}"
       - "--label=org.opencontainers.image.title={{.ProjectName}}"
