@@ -12,6 +12,8 @@ builds:
     goarch:
       - amd64
       - arm64
+    flags:
+      - "-tags=baton_lambda_support"
 dockers:
   - use: buildx
     goos: linux
@@ -31,20 +33,10 @@ dockers:
     image_templates:
       - "ghcr.io/conductorone/baton-github:{{ .Version }}-arm64"
       - "ghcr.io/conductorone/baton-github:latest-arm64"
-    build_flag_templates:
-      - "--platform=linux/arm64/v8"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-    # ECR - arm64 only
-  - use: buildx
-    goos: linux
-    goarch: arm64
-    image_templates:
       - "168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:{{ .Version }}-arm64"
       - "168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github:latest-arm64"
     build_flag_templates:
+      - "-tags=baton_lambda_support"
       - "--platform=linux/arm64/v8"
       - "--label=org.opencontainers.image.created={{.Date}}"
       - "--label=org.opencontainers.image.title={{.ProjectName}}"
