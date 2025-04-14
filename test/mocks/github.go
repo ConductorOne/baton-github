@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/google/go-github/v63/github"
+	"github.com/google/go-github/v69/github"
 	"github.com/migueleliasweb/go-github-mock/src/mock"
 )
 
@@ -391,8 +391,8 @@ func (mgh MockGitHub) getMembers(
 func userToMembership(user *github.User) github.Membership {
 	return github.Membership{
 		User:  user,
-		Role:  github.String("admin"),
-		State: github.String("active"),
+		Role:  github.Ptr("admin"),
+		State: github.Ptr("active"),
 	}
 }
 

@@ -12,7 +12,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v63/github"
+	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
@@ -49,6 +49,12 @@ var (
 		},
 		Annotations: v1AnnotationsForResourceType("user"),
 	}
+	resourceTypeApiToken = &v2.ResourceType{
+		Id:          "api-key",
+		DisplayName: "API Key",
+		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_SECRET},
+		Annotations: annotations.New(&v2.SkipEntitlementsAndGrants{}),
+	}
 )
 
 type GitHub struct {
@@ -58,15 +64,21 @@ type GitHub struct {
 	graphqlClient  *githubv4.Client
 	hasSAMLEnabled *bool
 	orgCache       *orgNameCache
+	syncSecrets    bool
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
-	return []connectorbuilder.ResourceSyncer{
-		orgBuilder(gh.client, gh.orgCache, gh.orgs),
+	resourceSyncers := []connectorbuilder.ResourceSyncer{
+		orgBuilder(gh.client, gh.orgCache, gh.orgs, gh.syncSecrets),
 		teamBuilder(gh.client, gh.orgCache),
 		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache),
 		repositoryBuilder(gh.client, gh.orgCache),
 	}
+
+	if gh.syncSecrets {
+		resourceSyncers = append(resourceSyncers, apiTokenBuilder(gh.client, gh.hasSAMLEnabled, gh.orgCache))
+	}
+	return resourceSyncers
 }
 
 // Metadata returns metadata about the connector.
@@ -171,6 +183,7 @@ func New(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		orgs:          ghc.Orgs,
 		graphqlClient: graphqlClient,
 		orgCache:      newOrgNameCache(client),
+		syncSecrets:   ghc.SyncSecrets,
 	}
 
 	return gh, nil

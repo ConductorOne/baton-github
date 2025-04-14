@@ -18,6 +18,10 @@ var (
 		"instance-url",
 		field.WithDescription(`The GitHub instance URL to connect to. (default "https://github.com")`),
 	)
+	syncSecrets = field.BoolField(
+		"sync-secrets",
+		field.WithDescription(`Whether to sync secrets or not`),
+	)
 )
 
 //go:generate go run ./gen
@@ -25,4 +29,5 @@ var Config = field.NewConfiguration([]field.SchemaField{
 	accessTokenField,
 	orgsField,
 	instanceUrlField,
+	syncSecrets,
 })

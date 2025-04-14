@@ -13,7 +13,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	rType "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v63/github"
+	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -104,7 +104,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	}
 
 	for _, team := range teams {
-		fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID())
+		fullTeam, _, err := o.client.Teams.GetTeamBySlug(ctx, orgName, fmt.Sprintf("%v", team.GetName()))
 		if err != nil {
 			if isNotFoundError(resp) {
 				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("team: %d not found", team.GetID()))
@@ -248,13 +248,14 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 	// FIXME(jirwin): Now that we've flattened out the team hierarchy, we don't need to check the parent type.
 	// Leaving this check here for backwards compatability with the old model.
 	var orgId int64
-	if entitlement.Resource.ParentResourceId.ResourceType == resourceTypeOrg.Id {
+	switch entitlement.Resource.ParentResourceId.ResourceType {
+	case resourceTypeOrg.Id:
 		var err error
 		orgId, err = strconv.ParseInt(entitlement.Resource.ParentResourceId.Resource, 10, 64)
 		if err != nil {
 			return nil, err
 		}
-	} else if entitlement.Resource.ParentResourceId.ResourceType == resourceTypeTeam.Id {
+	case resourceTypeTeam.Id:
 		groupTrait, err := rType.GetGroupTrait(entitlement.Resource)
 		if err != nil {
 			return nil, err
