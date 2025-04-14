@@ -26,6 +26,3 @@ add-dep:
 .PHONY: lint
 lint:
 	golangci-lint run
-
-run:
-	go run ./cmd/baton-github
