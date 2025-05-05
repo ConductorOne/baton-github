@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -211,4 +212,11 @@ type hasSAMLQuery struct {
 			Id string
 		}
 	} `graphql:"organization(login: $orgLoginName)"`
+}
+
+func isNotFoundError(resp *github.Response) bool {
+	if resp == nil {
+		return false
+	}
+	return resp.StatusCode == http.StatusNotFound
 }

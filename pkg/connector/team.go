@@ -102,8 +102,11 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	}
 
 	for _, team := range teams {
-		fullTeam, _, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID())
+		fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID())
 		if err != nil {
+			if isNotFoundError(resp) {
+				continue
+			}
 			return nil, "", nil, err
 		}
 
@@ -178,6 +181,9 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 
 	users, resp, err := o.client.Teams.ListTeamMembersByID(ctx, org.GetID(), githubID, &opts)
 	if err != nil {
+		if isNotFoundError(resp) {
+			return nil, "", nil, nil
+		}
 		return nil, "", nil, fmt.Errorf("github-connectorv2: failed to fetch team members: %w", err)
 	}
 
@@ -195,6 +201,9 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 	for _, user := range users {
 		membership, _, err := o.client.Teams.GetTeamMembershipByID(ctx, org.GetID(), githubID, user.GetLogin())
 		if err != nil {
+			if isNotFoundError(resp) {
+				continue
+			}
 			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to get team membership for user: %w", err)
 		}
 
