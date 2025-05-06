@@ -16,7 +16,8 @@ var (
 	)
 	instanceUrlField = field.StringField(
 		"instance-url",
-		field.WithDescription(`The GitHub instance URL to connect to. (default "https://github.com")`),
+		field.WithDescription("The GitHub instance URL to connect to."),
+		field.WithDefaultValue("https://github.com"),
 	)
 )
 
