@@ -227,9 +227,18 @@ func (o *repositoryResourceType) Grants(
 					return nil, "", nil, err
 				}
 
-				rv = append(rv, grant.NewGrant(resource, permission, tr.Id, grant.WithAnnotation(&v2.V1Identifier{
-					Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, team.GetID(), permission),
-				})))
+				rv = append(rv, grant.NewGrant(resource, permission, tr.Id, grant.WithAnnotation(
+					&v2.V1Identifier{
+						Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, team.GetID(), permission),
+					},
+					&v2.GrantExpandable{
+						EntitlementIds: []string{
+							entitlement.NewEntitlementID(tr, teamRoleMaintainer),
+							entitlement.NewEntitlementID(tr, teamRoleMember),
+						},
+						Shallow: true,
+					},
+				)))
 			}
 		}
 	default:
