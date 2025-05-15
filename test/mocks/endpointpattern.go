@@ -41,3 +41,29 @@ var GetOrganizationsTeamsMembershipsByTeamIdByUsername = mock.EndpointPattern{
 	Pattern: "/organizations/{org_id}/team/{team_id}/memberships/{username}",
 	Method:  "GET",
 }
+
+// Organization role endpoints
+var GetOrgsRolesByOrg = mock.EndpointPattern{
+	Pattern: "/orgs/{org}/organization-roles",
+	Method:  "GET",
+}
+
+var GetOrgsRolesTeamsByOrgByRoleId = mock.EndpointPattern{
+	Pattern: "/orgs/{org}/organization-roles/{role_id}/teams",
+	Method:  "GET",
+}
+
+var GetOrgsRolesUsersByOrgByRoleId = mock.EndpointPattern{
+	Pattern: "/orgs/{org}/organization-roles/{role_id}/users",
+	Method:  "GET",
+}
+
+var PutOrgsRolesUsersByOrgByRoleIdByUsername = mock.EndpointPattern{
+	Pattern: "/orgs/{org}/organization-roles/users/{username}/{role_id}",
+	Method:  "PUT",
+}
+
+var DeleteOrgsRolesUsersByOrgByRoleIdByUsername = mock.EndpointPattern{
+	Pattern: "/orgs/{org}/organization-roles/users/{username}/{role_id}",
+	Method:  "DELETE",
+}
