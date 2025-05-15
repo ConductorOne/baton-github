@@ -167,7 +167,7 @@ func (o *orgRoleResourceType) Grants(
 	// First, get teams with this role
 	teams, resp, err := o.client.Organizations.ListTeamsAssignedToOrgRole(ctx, orgName, roleID, nil)
 	if err != nil {
-		// Handle permission errors gracefully
+		// Handle permission errors without erroring out. Some customers may not want to give us permissions to get org roles and members.
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 			// Return empty list with no error to indicate we skipped this resource
 			pageToken, err := bag.NextToken("")
@@ -179,14 +179,13 @@ func (o *orgRoleResourceType) Grants(
 		return nil, "", nil, fmt.Errorf("failed to list role teams: %w", err)
 	}
 
-	// Create expandable grants for teams
+	// Create expandable grants for teams. To show inherited roles, we need to show the teams that have the role.
 	for _, team := range teams {
 		teamResource, err := teamResource(team, resource.ParentResourceId)
 		if err != nil {
 			return nil, "", nil, err
 		}
 
-		// Create an expandable grant for the team
 		grant := grant.NewGrant(
 			resource,
 			"assigned",
@@ -202,9 +201,7 @@ func (o *orgRoleResourceType) Grants(
 	// Then, get direct user assignments
 	users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, nil)
 	if err != nil {
-		// Handle permission errors gracefully
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
-			// Return what we have so far (teams) with no error
 			pageToken, err := bag.NextToken("")
 			if err != nil {
 				return nil, "", nil, err
@@ -214,7 +211,7 @@ func (o *orgRoleResourceType) Grants(
 		return nil, "", nil, fmt.Errorf("failed to list role users: %w", err)
 	}
 
-	// Create regular grants for direct user assignments
+	// Create regular grants for direct user assignments.
 	for _, user := range users {
 		userResource, err := userResource(ctx, user, user.GetEmail(), nil)
 		if err != nil {
@@ -240,13 +237,14 @@ func (o *orgRoleResourceType) Grants(
 func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
+	// Needs review, I copied this from the team grant function, but roles can be granted to teams as well, but we don't necessarily support that so wasn't sure if this was the intended behavior.
 	if principal.Id.ResourceType != resourceTypeUser.Id {
 		l.Warn(
-			"github-connectorv2: only users can be granted organization roles",
+			"github-connector: only users can be granted organization roles",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
-		return nil, fmt.Errorf("github-connectorv2: only users can be granted organization roles")
+		return nil, fmt.Errorf("github-connector: only users can be granted organization roles")
 	}
 
 	roleID, err := strconv.ParseInt(entitlement.Resource.Id.Resource, 10, 64)
@@ -297,7 +295,7 @@ func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource,
 		zap.String("user", user.GetLogin()),
 	)
 
-	// Use the client's HTTP client to make the request with the correct URL format
+	// Use the client's HTTP client to make the request with the correct URL format. Couldn't find a built in function for this. Cursor suggested this approach.
 	url := fmt.Sprintf("orgs/%s/organization-roles/users/%s/%d", orgName, user.GetLogin(), roleID)
 	req, err := o.client.NewRequest("PUT", url, nil)
 	if err != nil {
@@ -345,13 +343,14 @@ func (o *orgRoleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (anno
 	entitlement := grant.Entitlement
 	principal := grant.Principal
 
+	// Needs review, I copied this from the team grant function, but roles can be granted to teams as well, but we don't necessarily support that so wasn't sure if this was the intended behavior.
 	if principal.Id.ResourceType != resourceTypeUser.Id {
 		l.Warn(
-			"github-connectorv2: only users can have organization roles revoked",
+			"github-connector: only users can have organization roles revoked",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
-		return nil, fmt.Errorf("github-connectorv2: only users can have organization roles revoked")
+		return nil, fmt.Errorf("github-connector: only users can have organization roles revoked")
 	}
 
 	roleID, err := strconv.ParseInt(entitlement.Resource.Id.Resource, 10, 64)
@@ -374,7 +373,6 @@ func (o *orgRoleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (anno
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	// Use the client's HTTP client to make the request with the correct URL format
 	url := fmt.Sprintf("orgs/%s/organization-roles/users/%s/%d", orgName, user.GetLogin(), roleID)
 	req, err := o.client.NewRequest("DELETE", url, nil)
 	if err != nil {
