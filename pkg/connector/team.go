@@ -154,7 +154,7 @@ func (o *teamResourceType) Entitlements(ctx context.Context, resource *v2.Resour
 	// Get organization roles for this team
 	orgName, err := o.orgCache.GetOrgName(ctx, resource.ParentResourceId)
 	if err != nil {
-		return rv, "", nil, nil // Return what we have so far if we can't get org name
+		return rv, "", nil, err
 	}
 
 	roles, resp, err := o.client.Organizations.ListRoles(ctx, orgName)
@@ -163,13 +163,13 @@ func (o *teamResourceType) Entitlements(ctx context.Context, resource *v2.Resour
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 			return rv, "", nil, nil // Return what we have so far if we don't have permission
 		}
-		return rv, "", nil, nil // Return what we have so far if request failed
+		return rv, "", nil, err
 	}
 
 	// Get team ID for checking role assignments
 	teamID, err := strconv.ParseInt(resource.Id.Resource, 10, 64)
 	if err != nil {
-		return rv, "", nil, nil // Return what we have so far if we can't parse team ID
+		return rv, "", nil, err
 	}
 
 	// Add organization role entitlements only for roles the team is assigned to
@@ -281,7 +281,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 	// Get organization roles for this team
 	orgName, err := o.orgCache.GetOrgName(ctx, resource.ParentResourceId)
 	if err != nil {
-		return rv, pageToken, reqAnnos, nil // Return what we have so far if we can't get org name
+		return rv, pageToken, reqAnnos, err
 	}
 
 	roles, resp, err := o.client.Organizations.ListRoles(ctx, orgName)
@@ -290,7 +290,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 			return rv, pageToken, reqAnnos, nil // Return what we have so far if we don't have permission
 		}
-		return rv, pageToken, reqAnnos, nil // Return what we have so far if request failed
+		return rv, pageToken, reqAnnos, err
 	}
 
 	// Add grants for organization roles
