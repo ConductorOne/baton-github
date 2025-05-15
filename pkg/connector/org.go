@@ -52,6 +52,7 @@ func organizationResource(
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeOrgRole.Id},
 		),
 	)
 }
