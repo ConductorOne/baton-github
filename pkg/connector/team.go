@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -128,8 +129,10 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	return rv, pageToken, reqAnnos, nil
 }
 
-func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (o *teamResourceType) Entitlements(ctx context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
 	rv := make([]*v2.Entitlement, 0, len(teamAccessLevels))
+
+	// Add team role entitlements
 	for _, level := range teamAccessLevels {
 		rv = append(
 			rv,
@@ -146,6 +149,60 @@ func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource
 				entitlement.WithGrantableTo(resourceTypeUser),
 			),
 		)
+	}
+
+	// Get organization roles for this team
+	orgName, err := o.orgCache.GetOrgName(ctx, resource.ParentResourceId)
+	if err != nil {
+		return rv, "", nil, nil // Return what we have so far if we can't get org name
+	}
+
+	roles, resp, err := o.client.Organizations.ListRoles(ctx, orgName)
+	if err != nil {
+		// Handle permission errors gracefully
+		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+			return rv, "", nil, nil // Return what we have so far if we don't have permission
+		}
+		return rv, "", nil, nil // Return what we have so far if request failed
+	}
+
+	// Get team ID for checking role assignments
+	teamID, err := strconv.ParseInt(resource.Id.Resource, 10, 64)
+	if err != nil {
+		return rv, "", nil, nil // Return what we have so far if we can't parse team ID
+	}
+
+	// Add organization role entitlements only for roles the team is assigned to
+	for _, role := range roles.CustomRepoRoles {
+		// Check if team is assigned to this role
+		teams, resp, err := o.client.Organizations.ListTeamsAssignedToOrgRole(ctx, orgName, role.GetID(), nil)
+		if err != nil {
+			// Skip this role if we can't check assignments
+			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+				continue
+			}
+			continue
+		}
+
+		// Check if this team is in the list of teams with this role
+		for _, team := range teams {
+			if team.GetID() == teamID {
+				rv = append(
+					rv,
+					entitlement.NewAssignmentEntitlement(
+						resource,
+						role.GetName(),
+						entitlement.WithDisplayName(role.GetName()),
+						entitlement.WithDescription(role.GetDescription()),
+						entitlement.WithAnnotation(&v2.V1Identifier{
+							Id: fmt.Sprintf("team:%s:org_role:%d", resource.Id.Resource, role.GetID()),
+						}),
+						entitlement.WithGrantableTo(resourceTypeUser),
+					),
+				)
+				break // Found the team, no need to check other teams
+			}
+		}
 	}
 
 	return rv, "", nil, nil
@@ -219,6 +276,57 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 				Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), membership.GetRole()),
 			}),
 		))
+	}
+
+	// Get organization roles for this team
+	orgName, err := o.orgCache.GetOrgName(ctx, resource.ParentResourceId)
+	if err != nil {
+		return rv, pageToken, reqAnnos, nil // Return what we have so far if we can't get org name
+	}
+
+	roles, resp, err := o.client.Organizations.ListRoles(ctx, orgName)
+	if err != nil {
+		// Handle permission errors gracefully
+		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+			return rv, pageToken, reqAnnos, nil // Return what we have so far if we don't have permission
+		}
+		return rv, pageToken, reqAnnos, nil // Return what we have so far if request failed
+	}
+
+	// Add grants for organization roles
+	for _, role := range roles.CustomRepoRoles {
+		// Check if team is assigned to this role
+		teams, resp, err := o.client.Organizations.ListTeamsAssignedToOrgRole(ctx, orgName, role.GetID(), nil)
+		if err != nil {
+			// Skip this role if we can't check assignments
+			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+				continue
+			}
+			continue
+		}
+
+		// Check if this team is in the list of teams with this role
+		for _, team := range teams {
+			if team.GetID() == githubID {
+				// Create a grant for each team member with this role
+				for _, user := range users {
+					ur, err := userResource(ctx, user, user.GetEmail(), nil)
+					if err != nil {
+						continue
+					}
+
+					rv = append(rv, grant.NewGrant(
+						resource,
+						role.GetName(),
+						ur.Id,
+						grant.WithAnnotation(&v2.V1Identifier{
+							Id: fmt.Sprintf("team-org-role-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), role.GetName()),
+						}),
+					))
+				}
+				break // Found the team, no need to check other teams
+			}
+		}
 	}
 
 	return rv, pageToken, reqAnnos, nil
