@@ -2,7 +2,6 @@ package connector
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -14,13 +13,14 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v63/github"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 )
 
 type OrganizationRole struct {
-	ID          int64    `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Permissions []string `json:"permissions"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 type OrganizationRoleResponse struct {
@@ -85,51 +85,33 @@ func (o *orgRoleResourceType) List(
 		return nil, "", nil, err
 	}
 
-	// Use REST API directly since the client doesn't support these endpoints yet
-	url := fmt.Sprintf("https://api.github.com/orgs/%s/organization-roles", orgName)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	roles, resp, err := o.client.Organizations.ListRoles(ctx, orgName)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
-	resp, err := o.client.Client().Do(req)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list organization roles: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Handle permission errors gracefully
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
-		// Return empty list with no error to indicate we skipped this resource
-		pageToken, err := bag.NextToken("")
-		if err != nil {
-			return nil, "", nil, err
+		// Handle permission errors gracefully
+		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+			// Return empty list with no error to indicate we skipped this resource
+			pageToken, err := bag.NextToken("")
+			if err != nil {
+				return nil, "", nil, err
+			}
+			return nil, pageToken, nil, nil
 		}
-		return nil, pageToken, nil, nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", nil, fmt.Errorf("failed to list organization roles: %s", resp.Status)
-	}
-
-	var roleResp OrganizationRoleResponse
-	if err := json.NewDecoder(resp.Body).Decode(&roleResp); err != nil {
-		return nil, "", nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to list organization roles: %w", err)
 	}
 
 	var ret []*v2.Resource
-	for _, role := range roleResp.Roles {
-		roleResource, err := orgRoleResource(ctx, &role, &v2.Resource{Id: parentID})
+	for _, role := range roles.CustomRepoRoles {
+		roleResource, err := orgRoleResource(ctx, &OrganizationRole{
+			ID:          role.GetID(),
+			Name:        role.GetName(),
+			Description: role.GetDescription(),
+		}, &v2.Resource{Id: parentID})
 		if err != nil {
 			return nil, "", nil, err
 		}
 		ret = append(ret, roleResource)
 	}
 
-	// Since the API doesn't support pagination for roles yet, we'll return an empty token
 	pageToken, err := bag.NextToken("")
 	if err != nil {
 		return nil, "", nil, err
@@ -183,43 +165,23 @@ func (o *orgRoleResourceType) Grants(
 	var ret []*v2.Grant
 
 	// First, get teams with this role
-	url := fmt.Sprintf("https://api.github.com/orgs/%s/organization-roles/%d/teams", orgName, roleID)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	teams, resp, err := o.client.Organizations.ListTeamsAssignedToOrgRole(ctx, orgName, roleID, nil)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
-	resp, err := o.client.Client().Do(req)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list role teams: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Handle permission errors gracefully
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
-		// Return empty list with no error to indicate we skipped this resource
-		pageToken, err := bag.NextToken("")
-		if err != nil {
-			return nil, "", nil, err
+		// Handle permission errors gracefully
+		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+			// Return empty list with no error to indicate we skipped this resource
+			pageToken, err := bag.NextToken("")
+			if err != nil {
+				return nil, "", nil, err
+			}
+			return nil, pageToken, nil, nil
 		}
-		return nil, pageToken, nil, nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", nil, fmt.Errorf("failed to list role teams: %s", resp.Status)
-	}
-
-	var teams []OrganizationRoleTeam
-	if err := json.NewDecoder(resp.Body).Decode(&teams); err != nil {
-		return nil, "", nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to list role teams: %w", err)
 	}
 
 	// Create expandable grants for teams
 	for _, team := range teams {
-		teamResource, err := teamResource(&github.Team{ID: &team.ID, Name: &team.Name}, resource.ParentResourceId)
+		teamResource, err := teamResource(team, resource.ParentResourceId)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -230,7 +192,7 @@ func (o *orgRoleResourceType) Grants(
 			"assigned",
 			teamResource.Id,
 			grant.WithAnnotation(&v2.GrantExpandable{
-				EntitlementIds: []string{fmt.Sprintf("team:%d:member", team.ID)},
+				EntitlementIds: []string{fmt.Sprintf("team:%d:member", team.GetID())},
 				Shallow:        true,
 			}),
 		)
@@ -238,63 +200,197 @@ func (o *orgRoleResourceType) Grants(
 	}
 
 	// Then, get direct user assignments
-	url = fmt.Sprintf("https://api.github.com/orgs/%s/organization-roles/%d/users", orgName, roleID)
-	req, err = http.NewRequestWithContext(ctx, "GET", url, nil)
+	users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, nil)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
-	resp, err = o.client.Client().Do(req)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list role users: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Handle permission errors gracefully
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
-		// Return what we have so far (teams) with no error
-		pageToken, err := bag.NextToken("")
-		if err != nil {
-			return nil, "", nil, err
+		// Handle permission errors gracefully
+		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+			// Return what we have so far (teams) with no error
+			pageToken, err := bag.NextToken("")
+			if err != nil {
+				return nil, "", nil, err
+			}
+			return ret, pageToken, nil, nil
 		}
-		return ret, pageToken, nil, nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", nil, fmt.Errorf("failed to list role users: %s", resp.Status)
-	}
-
-	var users []*github.User
-	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
-		return nil, "", nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to list role users: %w", err)
 	}
 
 	// Create regular grants for direct user assignments
 	for _, user := range users {
+		userResource, err := userResource(ctx, user, user.GetEmail(), nil)
+		if err != nil {
+			return nil, "", nil, err
+		}
+
 		grant := grant.NewGrant(
 			resource,
 			"assigned",
-			&v2.ResourceId{
-				ResourceType: resourceTypeUser.Id,
-				Resource:     fmt.Sprintf("%d", user.GetID()),
-			},
-			grant.WithAnnotation(&v2.V1Identifier{
-				Id: fmt.Sprintf("org_role_grant:%s:%d", resource.Id.Resource, user.GetID()),
-			}),
+			userResource.Id,
 		)
 		ret = append(ret, grant)
 	}
 
-	// Since the API doesn't support pagination for role teams/users yet, we'll return an empty token
 	pageToken, err := bag.NextToken("")
 	if err != nil {
 		return nil, "", nil, err
 	}
 
 	return ret, pageToken, nil, nil
+}
+
+func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	if principal.Id.ResourceType != resourceTypeUser.Id {
+		l.Warn(
+			"github-connectorv2: only users can be granted organization roles",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+		return nil, fmt.Errorf("github-connectorv2: only users can be granted organization roles")
+	}
+
+	roleID, err := strconv.ParseInt(entitlement.Resource.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid role ID: %w", err)
+	}
+
+	orgName, err := o.orgCache.GetOrgName(ctx, entitlement.Resource.ParentResourceId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get org name: %w", err)
+	}
+
+	// First verify that the role exists
+	roles, resp, err := o.client.Organizations.ListRoles(ctx, orgName)
+	if err != nil {
+		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+			return nil, fmt.Errorf("failed to verify role: organization not found or insufficient permissions")
+		}
+		return nil, fmt.Errorf("failed to verify role: %w", err)
+	}
+
+	// Check if the role exists
+	roleExists := false
+	for _, role := range roles.CustomRepoRoles {
+		if role.GetID() == roleID {
+			roleExists = true
+			break
+		}
+	}
+
+	if !roleExists {
+		return nil, fmt.Errorf("role with ID %d not found in organization %s", roleID, orgName)
+	}
+
+	userID, err := strconv.ParseInt(principal.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid user ID: %w", err)
+	}
+
+	user, _, err := o.client.Users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	l.Info("attempting to assign role",
+		zap.String("org", orgName),
+		zap.Int64("role_id", roleID),
+		zap.String("user", user.GetLogin()),
+	)
+
+	// Use the client's HTTP client to make the request with the correct URL format
+	url := fmt.Sprintf("orgs/%s/organization-roles/users/%s/%d", orgName, user.GetLogin(), roleID)
+	req, err := o.client.NewRequest("PUT", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err = o.client.Do(ctx, req, nil)
+	if err != nil {
+		if resp != nil {
+			l.Error("failed to assign role",
+				zap.String("org", orgName),
+				zap.Int64("role_id", roleID),
+				zap.String("user", user.GetLogin()),
+				zap.Int("status_code", resp.StatusCode),
+				zap.String("status", resp.Status),
+				zap.Error(err),
+			)
+		}
+		return nil, fmt.Errorf("failed to assign role: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		l.Error("failed to assign role",
+			zap.String("org", orgName),
+			zap.Int64("role_id", roleID),
+			zap.String("user", user.GetLogin()),
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("status", resp.Status),
+		)
+		return nil, fmt.Errorf("failed to assign role: %s", resp.Status)
+	}
+
+	l.Info("successfully assigned role",
+		zap.String("org", orgName),
+		zap.Int64("role_id", roleID),
+		zap.String("user", user.GetLogin()),
+	)
+
+	return nil, nil
+}
+
+func (o *orgRoleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	entitlement := grant.Entitlement
+	principal := grant.Principal
+
+	if principal.Id.ResourceType != resourceTypeUser.Id {
+		l.Warn(
+			"github-connectorv2: only users can have organization roles revoked",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+		return nil, fmt.Errorf("github-connectorv2: only users can have organization roles revoked")
+	}
+
+	roleID, err := strconv.ParseInt(entitlement.Resource.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid role ID: %w", err)
+	}
+
+	orgName, err := o.orgCache.GetOrgName(ctx, entitlement.Resource.ParentResourceId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get org name: %w", err)
+	}
+
+	userID, err := strconv.ParseInt(principal.Id.Resource, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid user ID: %w", err)
+	}
+
+	user, _, err := o.client.Users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	// Use the client's HTTP client to make the request with the correct URL format
+	url := fmt.Sprintf("orgs/%s/organization-roles/users/%s/%d", orgName, user.GetLogin(), roleID)
+	req, err := o.client.NewRequest("DELETE", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := o.client.Do(ctx, req, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to revoke role: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to revoke role: %s", resp.Status)
+	}
+
+	return nil, nil
 }
 
 func orgRoleBuilder(client *github.Client, orgCache *orgNameCache) *orgRoleResourceType {
