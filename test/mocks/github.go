@@ -545,8 +545,36 @@ func (mgh MockGitHub) getOrgRoleTeams(
 		return
 	}
 
-	// Return empty teams list for now
-	_, _ = w.Write(mock.MustMarshal([]*github.Team{}))
+	// Get pagination parameters
+	page := 1
+	perPage := 30
+	if pageStr, ok := variables["page"]; ok {
+		if p, err := strconv.Atoi(pageStr); err == nil {
+			page = p
+		}
+	}
+	if perPageStr, ok := variables["per_page"]; ok {
+		if pp, err := strconv.Atoi(perPageStr); err == nil {
+			perPage = pp
+		}
+	}
+
+	// Return paginated teams
+	teams := make([]*github.Team, 0)
+	start := (page - 1) * perPage
+	end := start + perPage
+	i := 0
+	for _, team := range mgh.teams {
+		if i >= start && i < end {
+			teams = append(teams, &team)
+		}
+		i++
+		if i >= end {
+			break
+		}
+	}
+
+	_, _ = w.Write(mock.MustMarshal(teams))
 }
 
 func (mgh MockGitHub) getOrgRoleUsers(
@@ -560,10 +588,34 @@ func (mgh MockGitHub) getOrgRoleUsers(
 		return
 	}
 
+	// Get pagination parameters
+	page := 1
+	perPage := 30
+	if pageStr, ok := variables["page"]; ok {
+		if p, err := strconv.Atoi(pageStr); err == nil {
+			page = p
+		}
+	}
+	if perPageStr, ok := variables["per_page"]; ok {
+		if pp, err := strconv.Atoi(perPageStr); err == nil {
+			perPage = pp
+		}
+	}
+
+	// Return paginated users
 	users := make([]github.User, 0)
+	start := (page - 1) * perPage
+	end := start + perPage
+	i := 0
 	for _, userID := range memberships.ToSlice() {
-		if user, ok := mgh.users[userID]; ok {
-			users = append(users, user)
+		if i >= start && i < end {
+			if user, ok := mgh.users[userID]; ok {
+				users = append(users, user)
+			}
+		}
+		i++
+		if i >= end {
+			break
 		}
 	}
 
@@ -654,4 +706,25 @@ func (mgh MockGitHub) Server() *http.Client {
 		options = append(options, addEndpointHandler(key, value))
 	}
 	return mock.NewMockedHTTPClient(options...)
+}
+
+// AddTeam adds a team to the mock server for testing purposes.
+func (mgh *MockGitHub) AddTeam(team github.Team) {
+	mgh.teams[*team.ID] = team
+}
+
+// AddUserToOrgRole adds a user to an org role for testing purposes.
+func (mgh *MockGitHub) AddUserToOrgRole(roleID int64, userID int64) {
+	if _, ok := mgh.orgRoles[roleID]; !ok {
+		mgh.orgRoles[roleID] = mapset.NewSet[int64]()
+	}
+	mgh.orgRoles[roleID].Add(userID)
+}
+
+// AddTeamToOrgRole adds a team to an org role for testing purposes.
+func (mgh *MockGitHub) AddTeamToOrgRole(roleID int64, teamID int64) {
+	if _, ok := mgh.orgRoles[roleID]; !ok {
+		mgh.orgRoles[roleID] = mapset.NewSet[int64]()
+	}
+	mgh.orgRoles[roleID].Add(teamID)
 }

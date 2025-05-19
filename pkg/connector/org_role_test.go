@@ -22,6 +22,10 @@ func TestOrgRole(t *testing.T) {
 
 		githubOrganization, _, _, githubUser, _ := mgh.Seed()
 
+		// Add user to org role
+		roleId := int64(1)
+		mgh.AddUserToOrgRole(roleId, *githubUser.ID)
+
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
 		client := orgRoleBuilder(githubClient, cache)
@@ -39,16 +43,19 @@ func TestOrgRole(t *testing.T) {
 			Resource: role,
 		}
 
+		// Grant the role to the user
 		grantAnnotations, err := client.Grant(ctx, user, &entitlement)
 		require.Nil(t, err)
 		require.Empty(t, grantAnnotations)
 
+		// Check that we can see both teams and users in the grants list
 		grants, nextToken, grantsAnnotations, err := client.Grants(ctx, role, &pagination.Token{})
 		require.Nil(t, err)
 		test.AssertNoRatelimitAnnotations(t, grantsAnnotations)
-		require.Equal(t, "", nextToken)
-		require.Len(t, grants, 1)
+		require.Empty(t, nextToken) // No next token since we don't have a full page
+		require.Len(t, grants, 2)   // Should get both the team and user
 
+		// Revoke the role from the user
 		grant := v2.Grant{
 			Entitlement: &entitlement,
 			Principal:   user,
@@ -90,5 +97,42 @@ func TestOrgRole(t *testing.T) {
 		require.Empty(t, grants)
 		require.Empty(t, nextToken)
 		test.AssertNoRatelimitAnnotations(t, grantsAnnotations)
+	})
+
+	t.Run("should handle pagination for teams and users", func(t *testing.T) {
+		mockGithub := mocks.NewMockGitHub()
+		githubOrganization, _, _, githubUser, _ := mockGithub.Seed()
+
+		// Add more teams to trigger pagination
+		for i := 0; i < 3; i++ {
+			teamId := int64(100 + i)
+			team := github.Team{
+				ID:           &teamId,
+				Organization: githubOrganization,
+			}
+			mockGithub.AddTeam(team)
+		}
+
+		// Add user to org role
+		roleId := int64(1)
+		mockGithub.AddUserToOrgRole(roleId, *githubUser.ID)
+
+		githubClient := github.NewClient(mockGithub.Server())
+		cache := newOrgNameCache(githubClient)
+		client := orgRoleBuilder(githubClient, cache)
+
+		organization, _ := organizationResource(ctx, githubOrganization, nil)
+		role, _ := orgRoleResource(ctx, &OrganizationRole{
+			ID:          1,
+			Name:        "Test Role",
+			Description: "Test Role Description",
+		}, organization)
+
+		// Test first page (should get all teams and users)
+		grants, nextToken, annotations, err := client.Grants(ctx, role, &pagination.Token{Size: 5})
+		require.Nil(t, err)
+		require.Empty(t, nextToken) // No next token since we got all results
+		require.Len(t, grants, 5)   // Should get all 4 teams (3 added + 1 from Seed) and 1 user
+		test.AssertNoRatelimitAnnotations(t, annotations)
 	})
 }
