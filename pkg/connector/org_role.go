@@ -75,11 +75,6 @@ func (o *orgRoleResourceType) List(
 		return nil, "", nil, nil
 	}
 
-	bag, _, err := parsePageToken(pToken.Token, &v2.ResourceId{ResourceType: resourceTypeOrgRole.Id})
-	if err != nil {
-		return nil, "", nil, err
-	}
-
 	orgName, err := o.orgCache.GetOrgName(ctx, parentID)
 	if err != nil {
 		return nil, "", nil, err
@@ -90,11 +85,7 @@ func (o *orgRoleResourceType) List(
 		// Handle permission errors gracefully
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 			// Return empty list with no error to indicate we skipped this resource
-			pageToken, err := bag.NextToken("")
-			if err != nil {
-				return nil, "", nil, err
-			}
-			return nil, pageToken, nil, nil
+			return nil, "", nil, nil
 		}
 		return nil, "", nil, fmt.Errorf("failed to list organization roles: %w", err)
 	}
@@ -112,12 +103,7 @@ func (o *orgRoleResourceType) List(
 		ret = append(ret, roleResource)
 	}
 
-	pageToken, err := bag.NextToken("")
-	if err != nil {
-		return nil, "", nil, err
-	}
-
-	return ret, pageToken, nil, nil
+	return ret, "", nil, nil
 }
 
 func (o *orgRoleResourceType) Entitlements(
@@ -147,7 +133,7 @@ func (o *orgRoleResourceType) Grants(
 		return nil, "", nil, nil
 	}
 
-	bag, _, err := parsePageToken(pToken.Token, &v2.ResourceId{ResourceType: resourceTypeOrgRole.Id})
+	bag, page, err := parsePageToken(pToken.Token, &v2.ResourceId{ResourceType: resourceTypeOrgRole.Id})
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -165,7 +151,11 @@ func (o *orgRoleResourceType) Grants(
 	var ret []*v2.Grant
 
 	// First, get teams with this role
-	teams, resp, err := o.client.Organizations.ListTeamsAssignedToOrgRole(ctx, orgName, roleID, nil)
+	opts := &github.ListOptions{
+		Page:    page,
+		PerPage: pToken.Size,
+	}
+	teams, resp, err := o.client.Organizations.ListTeamsAssignedToOrgRole(ctx, orgName, roleID, opts)
 	if err != nil {
 		// Handle permission errors without erroring out. Some customers may not want to give us permissions to get org roles and members.
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
@@ -198,22 +188,33 @@ func (o *orgRoleResourceType) Grants(
 		ret = append(ret, grant)
 	}
 
+	// If we got a full page of teams, return them and let the next page handle users
+	if len(teams) == pToken.Size {
+		pageToken, err := bag.NextToken(fmt.Sprintf("%d", page+1))
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return ret, pageToken, nil, nil
+	}
+
 	// Then, get direct user assignments
-	users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, nil)
+	users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, opts)
 	if err != nil {
+		// Handle permission errors without erroring out. Some customers may not want to give us permissions to get org roles and members.
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+			// Return empty list with no error to indicate we skipped this resource
 			pageToken, err := bag.NextToken("")
 			if err != nil {
 				return nil, "", nil, err
 			}
-			return ret, pageToken, nil, nil
+			return nil, pageToken, nil, nil
 		}
 		return nil, "", nil, fmt.Errorf("failed to list role users: %w", err)
 	}
 
-	// Create regular grants for direct user assignments.
+	// Create grants for users
 	for _, user := range users {
-		userResource, err := userResource(ctx, user, user.GetEmail(), nil)
+		userResource, err := userResource(ctx, user, *user.Email, nil)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -226,11 +227,20 @@ func (o *orgRoleResourceType) Grants(
 		ret = append(ret, grant)
 	}
 
+	// If we got a full page of users, return them and let the next page handle more users
+	if len(users) == pToken.Size {
+		pageToken, err := bag.NextToken(fmt.Sprintf("%d", page+1))
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return ret, pageToken, nil, nil
+	}
+
+	// No more pages
 	pageToken, err := bag.NextToken("")
 	if err != nil {
 		return nil, "", nil, err
 	}
-
 	return ret, pageToken, nil, nil
 }
 
