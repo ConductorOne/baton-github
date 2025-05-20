@@ -32,6 +32,7 @@ var orgAccessLevels = []string{
 type orgResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
+	appClient    *github.Client
 	orgs         map[string]struct{}
 	orgCache     *orgNameCache
 }
@@ -56,6 +57,26 @@ func organizationResource(
 	)
 }
 
+func organizationResourceFromInstallation(
+	ctx context.Context,
+	account *github.User,
+	parentResourceID *v2.ResourceId,
+) (*v2.Resource, error) {
+	return resource.NewResource(
+		account.GetLogin(),
+		resourceTypeOrg,
+		account.GetID(),
+		resource.WithParentResourceID(parentResourceID),
+		resource.WithAnnotation(
+			&v2.ExternalLink{Url: account.GetHTMLURL()},
+			&v2.V1Identifier{Id: fmt.Sprintf("org:%d", account.GetID())},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
+		),
+	)
+}
+
 func (o *orgResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return o.resourceType
 }
@@ -65,6 +86,10 @@ func (o *orgResourceType) List(
 	parentResourceID *v2.ResourceId,
 	pToken *pagination.Token,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
+	if o.appClient != nil {
+		return o.listOrganizationsFromAppInstallations(ctx, parentResourceID, pToken)
+	}
+
 	l := ctxzap.Extract(ctx)
 
 	bag, page, err := parsePageToken(pToken.Token, &v2.ResourceId{ResourceType: resourceTypeOrg.Id})
@@ -373,7 +398,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	return nil, nil
 }
 
-func orgBuilder(client *github.Client, orgCache *orgNameCache, orgs []string) *orgResourceType {
+func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string) *orgResourceType {
 	orgMap := make(map[string]struct{})
 
 	for _, o := range orgs {
@@ -384,6 +409,59 @@ func orgBuilder(client *github.Client, orgCache *orgNameCache, orgs []string) *o
 		resourceType: resourceTypeOrg,
 		orgs:         orgMap,
 		client:       client,
+		appClient:    appClient,
 		orgCache:     orgCache,
 	}
+}
+
+func (o *orgResourceType) listOrganizationsFromAppInstallations(
+	ctx context.Context,
+	parentResourceID *v2.ResourceId,
+	pToken *pagination.Token,
+) ([]*v2.Resource, string, annotations.Annotations, error) {
+	bag, page, err := parsePageToken(pToken.Token, &v2.ResourceId{ResourceType: resourceTypeOrg.Id})
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	opts := &github.ListOptions{
+		Page:    page,
+		PerPage: pToken.Size,
+	}
+
+	installations, resp, err := o.appClient.Apps.ListInstallations(ctx, opts)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("github-connector: failed to fetch installations: %w", err)
+	}
+
+	nextPage, reqAnnos, err := parseResp(resp)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	pageToken, err := bag.NextToken(nextPage)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	var ret []*v2.Resource
+	for _, installation := range installations {
+		if installation.Account == nil || installation.Account.Type == nil || *installation.Account.Type != "Organization" {
+			continue
+		}
+
+		if _, ok := o.orgs[installation.Account.GetLogin()]; !ok && len(o.orgs) > 0 {
+			continue
+		}
+
+		orgResource, err := organizationResourceFromInstallation(ctx, installation.Account, parentResourceID)
+		if err != nil {
+			return nil, "", nil, err
+		}
+
+		ret = append(ret, orgResource)
+	}
+
+	return ret, pageToken, reqAnnos, nil
+
 }
