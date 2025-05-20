@@ -168,8 +168,8 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 }
 
 type getAllInstallationsResp struct {
-	installationIds map[int64]*github.Installation
-	accountIds      map[int64]struct{}
+	installationIDs map[int64]*github.Installation
+	accountIDs      map[int64]struct{}
 	accountNames    map[string]struct{}
 }
 
@@ -203,8 +203,8 @@ func getAllInstallations(ctx context.Context, c *github.Client) (getAllInstallat
 		page = resp.NextPage
 	}
 	return getAllInstallationsResp{
-		installationIds: installationsIDToInstallation,
-		accountIds:      AccountIDMap,
+		installationIDs: installationsIDToInstallation,
+		accountIDs:      AccountIDMap,
 		accountNames:    AccountNameMap,
 	}, nil
 }
@@ -292,10 +292,10 @@ func newAppClient(ctx context.Context, ghc *cfg.Github) (gitHubApp, error) {
 	}
 
 	var (
-		installationsClient   = make(map[int64]*github.Client, len(iResp.installationIds))
-		installationsGLClient = make(map[int64]*githubv4.Client, len(iResp.accountIds))
+		installationsClient   = make(map[int64]*github.Client, len(iResp.installationIDs))
+		installationsGLClient = make(map[int64]*githubv4.Client, len(iResp.accountIDs))
 	)
-	for id, installation := range iResp.installationIds {
+	for id, installation := range iResp.installationIDs {
 		c, glc, err := getInstallationClient(ctx, ghc.InstanceUrl, id, token)
 		if err != nil {
 			return gitHubApp{}, err

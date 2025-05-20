@@ -467,5 +467,4 @@ func (o *orgResourceType) listOrganizationsFromAppInstallations(
 	}
 
 	return ret, pageToken, reqAnnos, nil
-
 }
