@@ -54,7 +54,52 @@ var (
 		WithPersistent(true), WithExportTarget(ExportTargetNone))
 	logLevelField = StringField("log-level", WithDefaultValue("info"), WithDescription("The log level: debug, info, warn, error"), WithPersistent(true),
 		WithExportTarget(ExportTargetOps))
-	skipFullSync = BoolField("skip-full-sync", WithDescription("This must be set to skip a full sync"), WithPersistent(true), WithExportTarget(ExportTargetNone))
+	skipFullSync            = BoolField("skip-full-sync", WithDescription("This must be set to skip a full sync"), WithPersistent(true), WithExportTarget(ExportTargetNone))
+	targetedSyncResourceIDs = StringSliceField("sync-resources", WithDescription("The resource IDs to sync"), WithPersistent(true), WithExportTarget(ExportTargetNone))
+	diffSyncsField          = BoolField(
+		"diff-syncs",
+		WithDescription("Create a new partial SyncID from a base and applied sync."),
+		WithHidden(true),
+		WithPersistent(true),
+		WithExportTarget(ExportTargetNone),
+	)
+	diffSyncsBaseSyncField = StringField("base-sync-id",
+		WithDescription("The base sync to diff from."),
+		WithHidden(true),
+		WithPersistent(true),
+		WithExportTarget(ExportTargetNone),
+	)
+	diffSyncsAppliedSyncField = StringField("applied-sync-id",
+		WithDescription("The sync to show diffs when applied to the base sync."),
+		WithHidden(true),
+		WithPersistent(true),
+		WithExportTarget(ExportTargetNone),
+	)
+
+	compactSyncsField = BoolField("compact-syncs",
+		WithDescription("Provide a list of sync files to compact into a single c1z file and sync ID."),
+		WithHidden(true),
+		WithPersistent(true),
+		WithExportTarget(ExportTargetNone),
+	)
+	compactOutputDirectoryField = StringField("compact-output-path",
+		WithDescription("The directory to store the results in"),
+		WithHidden(true),
+		WithPersistent(true),
+		WithExportTarget(ExportTargetNone),
+	)
+	compactFilePathsField = StringSliceField("compact-file-paths",
+		WithDescription("A comma-separated list of file paths to sync from."),
+		WithHidden(true),
+		WithPersistent(true),
+		WithExportTarget(ExportTargetNone),
+	)
+	compactSyncIDsField = StringSliceField("compact-sync-ids",
+		WithDescription("A comma-separated list of file ids to sync from. Must match sync IDs from each file provided. Order matters."),
+		WithHidden(true),
+		WithPersistent(true),
+		WithExportTarget(ExportTargetNone),
+	)
 
 	otelCollectorEndpoint = StringField(OtelCollectorEndpointFieldName,
 		WithDescription("The endpoint of the OpenTelemetry collector to send observability data to (used for both tracing and logging if specific endpoints are not provided)"),
@@ -160,8 +205,16 @@ var DefaultFields = []SchemaField{
 	ticketTemplatePathField,
 	logLevelField,
 	skipFullSync,
+	targetedSyncResourceIDs,
 	externalResourceC1ZField,
 	externalResourceEntitlementIdFilter,
+	diffSyncsField,
+	diffSyncsBaseSyncField,
+	diffSyncsAppliedSyncField,
+	compactSyncIDsField,
+	compactFilePathsField,
+	compactOutputDirectoryField,
+	compactSyncsField,
 
 	otelCollectorEndpoint,
 	otelCollectorEndpointTLSCertPath,

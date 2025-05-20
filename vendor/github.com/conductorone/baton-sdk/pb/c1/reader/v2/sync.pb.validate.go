@@ -118,6 +118,10 @@ func (m *SyncRun) validate(all bool) error {
 
 	// no validation rules for SyncToken
 
+	// no validation rules for SyncType
+
+	// no validation rules for ParentSyncId
+
 	if len(errors) > 0 {
 		return SyncRunMultiError(errors)
 	}
@@ -918,6 +922,8 @@ func (m *SyncsReaderServiceGetLatestFinishedSyncRequest) validate(all bool) erro
 		}
 
 	}
+
+	// no validation rules for SyncType
 
 	if len(errors) > 0 {
 		return SyncsReaderServiceGetLatestFinishedSyncRequestMultiError(errors)
