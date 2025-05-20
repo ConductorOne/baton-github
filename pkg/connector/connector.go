@@ -2,16 +2,24 @@ package connector
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	cfg "github.com/conductorone/baton-github/pkg/config"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
@@ -66,6 +74,7 @@ var (
 type GitHub struct {
 	orgs           []string
 	client         *github.Client
+	appClient      *github.Client
 	instanceURL    string
 	graphqlClient  *githubv4.Client
 	hasSAMLEnabled *bool
@@ -75,7 +84,7 @@ type GitHub struct {
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
 	resourceSyncers := []connectorbuilder.ResourceSyncer{
-		orgBuilder(gh.client, gh.orgCache, gh.orgs, gh.syncSecrets),
+		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
 		teamBuilder(gh.client, gh.orgCache),
 		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache),
 		repositoryBuilder(gh.client, gh.orgCache),
@@ -97,6 +106,10 @@ func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 
 // Validate hits the GitHub API to validate that the configured credentials are still valid.
 func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error) {
+	if gh.appClient != nil {
+		return gh.validateAppCredentials(ctx)
+	}
+
 	page := 0
 	orgLogins := gh.orgs
 	filterOrgs := true
@@ -118,7 +131,6 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 			if resp.NextPage == 0 {
 				break
 			}
-
 			page = resp.NextPage
 		}
 	}
@@ -151,6 +163,40 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 	return nil, nil
 }
 
+func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annotations, error) {
+	page := 0
+	orgLogins := gh.orgs
+
+	installationsMap := make(map[string]struct{})
+	for {
+		installations, resp, err := gh.appClient.Apps.ListInstallations(ctx, &github.ListOptions{Page: page})
+		if err != nil {
+			return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, status.Error(codes.Unauthenticated, "github token is not authorized")
+		}
+		for _, installation := range installations {
+			if installation.Account == nil {
+				continue
+			}
+			installationsMap[installation.Account.GetLogin()] = struct{}{}
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		page = resp.NextPage
+	}
+
+	for _, o := range orgLogins {
+		if _, ok := installationsMap[o]; !ok {
+			return nil, fmt.Errorf("access token must be an admin on the %s organization", o)
+		}
+	}
+	return nil, nil
+}
+
 // newGitHubClient returns a new GitHub API client authenticated with an access token via oauth2.
 func newGitHubClient(ctx context.Context, instanceURL string, accessToken string) (*github.Client, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
@@ -176,23 +222,36 @@ func newGitHubClient(ctx context.Context, instanceURL string, accessToken string
 
 // New returns the GitHub connector configured to sync against the instance URL.
 func New(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
-	client, err := newGitHubClient(ctx, ghc.InstanceUrl, ghc.Token)
+	jwttoken, token, err := getClientToken(ghc)
 	if err != nil {
 		return nil, err
 	}
-	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ghc.Token)
+
+	client, err := newGitHubClient(ctx, ghc.InstanceUrl, token)
 	if err != nil {
 		return nil, err
+	}
+	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, token)
+	if err != nil {
+		return nil, err
+	}
+
+	var appClient *github.Client
+	if jwttoken != "" {
+		appClient, err = newGitHubClient(ctx, ghc.InstanceUrl, jwttoken)
+		if err != nil {
+			return nil, err
+		}
 	}
 	gh := &GitHub{
 		client:        client,
+		appClient:     appClient,
 		instanceURL:   ghc.InstanceUrl,
 		orgs:          ghc.Orgs,
 		graphqlClient: graphqlClient,
 		orgCache:      newOrgNameCache(client),
 		syncSecrets:   ghc.SyncSecrets,
 	}
-
 	return gh, nil
 }
 
@@ -222,4 +281,73 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, accessToken
 	}
 
 	return githubv4.NewClient(tc), nil
+}
+
+func loadPrivateKeyFromString(p string) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(p))
+	if block == nil || (block.Type != "PRIVATE KEY" && block.Type != "RSA PRIVATE KEY") {
+		return nil, errors.New("invalid private key PEM format")
+	}
+
+	// PKCS8 format
+	if block.Type == "PRIVATE KEY" {
+		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		rsaKey, ok := key.(*rsa.PrivateKey)
+		if !ok {
+			return nil, errors.New("not an RSA private key")
+		}
+		return rsaKey, nil
+	}
+
+	// PKCS1 format
+	return x509.ParsePKCS1PrivateKey(block.Bytes)
+}
+
+// getClientToken returns
+// 1. fine-grained personal access tokens if any.
+// 2. (JWT token, installation access tokens) if using github app.
+func getClientToken(ghc *cfg.Github) (string, string, error) {
+	if ghc.Token != "" {
+		return "", ghc.Token, nil
+	}
+
+	key, err := loadPrivateKeyFromString(ghc.AppPrivatekey)
+	if err != nil {
+		return "", "", err
+	}
+	now := time.Now()
+	token, err := jwtv5.NewWithClaims(jwtv5.SigningMethodRS256, jwtv5.MapClaims{
+		"iat": now.Unix() - 60,                  // issued at
+		"exp": now.Add(time.Minute * 10).Unix(), // expires
+		"iss": ghc.AppId,                        // GitHub App ID
+	}).SignedString(key)
+	if err != nil {
+		return "", "", err
+	}
+
+	url := fmt.Sprintf("https://api.github.com/app/installations/%s/access_tokens", "67110013")
+
+	req, _ := http.NewRequest("POST", url, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 201 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", "", fmt.Errorf("GitHub API error: %s", body)
+	}
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	return token, result.Token, err
 }

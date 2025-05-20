@@ -6,6 +6,7 @@ require (
 	github.com/conductorone/baton-sdk v0.3.8
 	github.com/deckarep/golang-set/v2 v2.8.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/go-github/v69 v69.2.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/migueleliasweb/go-github-mock v1.1.0
