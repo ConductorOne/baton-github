@@ -160,7 +160,7 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 	}
 
 	for _, o := range gh.orgs {
-		if _, ok := iResp.names[o]; !ok {
+		if _, ok := iResp.accountNames[o]; !ok {
 			return nil, fmt.Errorf("access token must be an admin on the %s organization", o)
 		}
 	}
@@ -168,17 +168,17 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 }
 
 type getAllInstallationsResp struct {
-	ids             map[int64]struct{}
 	installationIds map[int64]*github.Installation
-	names           map[string]struct{}
+	accountIds      map[int64]struct{}
+	accountNames    map[string]struct{}
 }
 
 func getAllInstallations(ctx context.Context, c *github.Client) (getAllInstallationsResp, error) {
 	var (
-		installationsMap     = make(map[int64]struct{})
-		installationsIDMap   = make(map[int64]*github.Installation)
-		installationsNameMap = make(map[string]struct{})
-		page                 = 0
+		AccountIDMap                  = make(map[int64]struct{})
+		installationsIDToInstallation = make(map[int64]*github.Installation)
+		AccountNameMap                = make(map[string]struct{})
+		page                          = 0
 	)
 	for {
 		installations, resp, err := c.Apps.ListInstallations(ctx, &github.ListOptions{Page: page})
@@ -192,9 +192,9 @@ func getAllInstallations(ctx context.Context, c *github.Client) (getAllInstallat
 			if installation.GetAccount().GetType() != "Organization" {
 				continue
 			}
-			installationsMap[installation.GetAccount().GetID()] = struct{}{}
-			installationsIDMap[installation.GetID()] = installation
-			installationsNameMap[installation.GetAccount().GetLogin()] = struct{}{}
+			installationsIDToInstallation[installation.GetID()] = installation
+			AccountIDMap[installation.GetAccount().GetID()] = struct{}{}
+			AccountNameMap[installation.GetAccount().GetLogin()] = struct{}{}
 		}
 
 		if resp.NextPage == 0 {
@@ -203,9 +203,9 @@ func getAllInstallations(ctx context.Context, c *github.Client) (getAllInstallat
 		page = resp.NextPage
 	}
 	return getAllInstallationsResp{
-		ids:             installationsMap,
-		installationIds: installationsIDMap,
-		names:           installationsNameMap,
+		installationIds: installationsIDToInstallation,
+		accountIds:      AccountIDMap,
+		accountNames:    AccountNameMap,
 	}, nil
 }
 
@@ -293,7 +293,7 @@ func newAppClient(ctx context.Context, ghc *cfg.Github) (gitHubApp, error) {
 
 	var (
 		installationsClient   = make(map[int64]*github.Client, len(iResp.installationIds))
-		installationsGLClient = make(map[int64]*githubv4.Client, len(iResp.ids))
+		installationsGLClient = make(map[int64]*githubv4.Client, len(iResp.accountIds))
 	)
 	for id, installation := range iResp.installationIds {
 		c, glc, err := getInstallationClient(ctx, ghc.InstanceUrl, id, token)

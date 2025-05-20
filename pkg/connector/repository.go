@@ -86,18 +86,11 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 		},
 	}
 
-	cli := o.client
-	if len(o.app.appInstallationClient) > 0 {
-		i, err := strconv.ParseInt(parentID.GetResource(), 10, 64)
-		if err != nil {
-			return nil, "", nil, err
-		}
-		var ok bool
-		cli, ok = o.app.appInstallationClient[i]
-		if !ok {
-			return nil, "", nil, fmt.Errorf("organization: %d doesn't exist", i)
-		}
+	cli, err := getClient(o.client, o.app, parentID.GetResource())
+	if err != nil {
+		return nil, "", nil, err
 	}
+
 	repos, resp, err := cli.Repositories.ListByOrg(ctx, orgName, opts)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("github-connector: failed to list repositories: %w", err)
@@ -159,18 +152,11 @@ func (o *repositoryResourceType) Grants(
 	var rv []*v2.Grant
 	var reqAnnos annotations.Annotations
 
-	cli := o.client
-	if len(o.app.appInstallationClient) > 0 {
-		i, err := strconv.ParseInt(resource.GetParentResourceId().GetResource(), 10, 64)
-		if err != nil {
-			return nil, "", nil, err
-		}
-		var ok bool
-		cli, ok = o.app.appInstallationClient[i]
-		if !ok {
-			return nil, "", nil, fmt.Errorf("organization: %d doesn't exist", i)
-		}
+	cli, err := getClient(o.client, o.app, resource.GetParentResourceId().GetResource())
+	if err != nil {
+		return nil, "", nil, err
 	}
+
 	switch bag.ResourceTypeID() {
 	case resourceTypeRepository.Id:
 		bag.Pop()
@@ -287,18 +273,11 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 		return nil, err
 	}
 
-	cli := o.client
-	if len(o.app.appInstallationClient) > 0 {
-		i, err := strconv.ParseInt(en.Resource.ParentResourceId.GetResource(), 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		var ok bool
-		cli, ok = o.app.appInstallationClient[i]
-		if !ok {
-			return nil, fmt.Errorf("organization: %d doesn't exist", i)
-		}
+	cli, err := getClient(o.client, o.app, en.Resource.ParentResourceId.GetResource())
+	if err != nil {
+		return nil, err
 	}
+
 	repo, _, err := cli.Repositories.GetByID(ctx, repoID)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get repository: %w", err)
@@ -370,18 +349,11 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 		return nil, err
 	}
 
-	cli := o.client
-	if len(o.app.appInstallationClient) > 0 {
-		i, err := strconv.ParseInt(grant.GetEntitlement().GetResource().GetParentResourceId().GetResource(), 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		var ok bool
-		cli, ok = o.app.appInstallationClient[i]
-		if !ok {
-			return nil, fmt.Errorf("organization: %d doesn't exist", i)
-		}
+	cli, err := getClient(o.client, o.app, grant.GetEntitlement().GetResource().GetParentResourceId().GetResource())
+	if err != nil {
+		return nil, err
 	}
+
 	repo, _, err := cli.Repositories.GetByID(ctx, repoID)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get repository: %w", err)

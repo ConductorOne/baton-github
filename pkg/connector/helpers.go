@@ -27,7 +27,7 @@ func titleCase(s string) string {
 type orgNameCache struct {
 	sync.RWMutex
 	c          *github.Client
-	appClients map[int64]*github.Client
+	appClients map[int64]*github.Client // org id -> app installation client.
 	orgNames   map[string]string
 }
 
@@ -230,4 +230,22 @@ func isNotFoundError(resp *github.Response) bool {
 		return false
 	}
 	return resp.StatusCode == http.StatusNotFound
+}
+
+// getClient returns PAT client if PAT is used.
+// otherwise it returns client using app installation token.
+func getClient(patClient *github.Client, app gitHubApp, orgId string) (*github.Client, error) {
+	client := patClient
+	if len(app.appInstallationClient) > 0 {
+		i, err := strconv.ParseInt(orgId, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		client, ok = app.appInstallationClient[i]
+		if !ok {
+			return nil, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
+	return client, nil
 }

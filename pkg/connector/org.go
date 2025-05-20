@@ -200,18 +200,11 @@ func (o *orgResourceType) Grants(
 		return nil, "", nil, err
 	}
 
-	cli := o.client
-	if len(o.app.appInstallationClient) > 0 {
-		i, err := strconv.ParseInt(resource.Id.GetResource(), 10, 64)
-		if err != nil {
-			return nil, "", nil, err
-		}
-		var ok bool
-		cli, ok = o.app.appInstallationClient[i]
-		if !ok {
-			return nil, "", nil, fmt.Errorf("organization: %d doesn't exist", i)
-		}
+	cli, err := getClient(o.client, o.app, resource.Id.GetResource())
+	if err != nil {
+		return nil, "", nil, err
 	}
+
 	users, resp, err := cli.Organizations.ListMembers(ctx, orgName, &opts)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("github-connectorv2: failed to list org members: %w", err)

@@ -94,18 +94,11 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		return nil, "", nil, err
 	}
 
-	cli := o.client
-	if len(o.app.appInstallationClient) > 0 {
-		i, err := strconv.ParseInt(parentID.GetResource(), 10, 64)
-		if err != nil {
-			return nil, "", nil, err
-		}
-		var ok bool
-		cli, ok = o.app.appInstallationClient[i]
-		if !ok {
-			return nil, "", nil, fmt.Errorf("organization: %d doesn't exist", i)
-		}
+	cli, err := getClient(o.client, o.app, parentID.GetResource())
+	if err != nil {
+		return nil, "", nil, err
 	}
+
 	teams, resp, err := cli.Teams.ListTeams(ctx, orgName, opts)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("github-connector: failed to list teams: %w", err)
@@ -180,17 +173,9 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 		return nil, "", nil, fmt.Errorf("error fetching orgID from team profile")
 	}
 
-	cli := o.client
-	if len(o.app.appInstallationClient) > 0 {
-		i, err := strconv.ParseInt(resource.GetParentResourceId().GetResource(), 10, 64)
-		if err != nil {
-			return nil, "", nil, err
-		}
-		var ok bool
-		cli, ok = o.app.appInstallationClient[i]
-		if !ok {
-			return nil, "", nil, fmt.Errorf("organization: %d doesn't exist", i)
-		}
+	cli, err := getClient(o.client, o.app, resource.GetParentResourceId().GetResource())
+	if err != nil {
+		return nil, "", nil, err
 	}
 
 	org, _, err := cli.Organizations.GetByID(ctx, orgID)
@@ -299,17 +284,9 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, err
 	}
 
-	cli := o.client
-	if len(o.app.appInstallationClient) > 0 {
-		i, err := strconv.ParseInt(entitlement.Resource.ParentResourceId.GetResource(), 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		var ok bool
-		cli, ok = o.app.appInstallationClient[i]
-		if !ok {
-			return nil, fmt.Errorf("organization: %d doesn't exist", i)
-		}
+	cli, err := getClient(o.client, o.app, entitlement.Resource.ParentResourceId.GetResource())
+	if err != nil {
+		return nil, err
 	}
 
 	user, _, err := cli.Users.GetByID(ctx, userId)
@@ -372,18 +349,11 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 		return nil, err
 	}
 
-	cli := o.client
-	if len(o.app.appInstallationClient) > 0 {
-		i, err := strconv.ParseInt(grant.GetEntitlement().GetResource().GetParentResourceId().GetResource(), 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		var ok bool
-		cli, ok = o.app.appInstallationClient[i]
-		if !ok {
-			return nil, fmt.Errorf("organization: %d doesn't exist", i)
-		}
+	cli, err := getClient(o.client, o.app, grant.GetEntitlement().GetResource().GetParentResourceId().GetResource())
+	if err != nil {
+		return nil, err
 	}
+
 	user, _, err := cli.Users.GetByID(ctx, userId)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get user %d, err: %w", userId, err)
