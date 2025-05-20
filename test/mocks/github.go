@@ -93,6 +93,7 @@ func (mgh MockGitHub) Seed() (
 	*github.Repository,
 	*github.Team,
 	*github.User,
+	*OrganizationRole,
 	error,
 ) {
 	organizationId := int64(12)
@@ -137,7 +138,16 @@ func (mgh MockGitHub) Seed() (
 	mgh.teamMemberships[teamId] = mapset.NewSet[int64](userId)
 	mgh.organizationMemberships[organizationId] = mapset.NewSet[int64](userId)
 
-	return &githubOrganization, &githubRepository, &githubTeam, &githubUser, nil
+	// Add a mock org role
+	roleId := int64(1)
+	orgRole := &OrganizationRole{
+		ID:          roleId,
+		Name:        "Test Role",
+		Description: "Test Role Description",
+	}
+	mgh.orgRoles[roleId] = mapset.NewSet[int64]() // Initialize the set for this role
+
+	return &githubOrganization, &githubRepository, &githubTeam, &githubUser, orgRole, nil
 }
 
 func getResource[T interface{}](
@@ -564,13 +574,29 @@ func (mgh MockGitHub) getOrgRoleTeams(
 	start := (page - 1) * perPage
 	end := start + perPage
 	i := 0
-	for _, team := range mgh.teams {
-		if i >= start && i < end {
-			teams = append(teams, &team)
+
+	// Get users with this role
+	roleUsers := mgh.orgRoles[roleID]
+
+	// Find teams that have members with this role
+	for teamID, team := range mgh.teams {
+		teamMembers := mgh.teamMemberships[teamID]
+		if teamMembers == nil {
+			continue
 		}
-		i++
-		if i >= end {
-			break
+
+		// Check if any team member has the role
+		for _, userID := range teamMembers.ToSlice() {
+			if roleUsers.Contains(userID) {
+				if i >= start && i < end {
+					teams = append(teams, &team)
+				}
+				i++
+				if i >= end {
+					break
+				}
+				break // Found a member with the role, no need to check other members
+			}
 		}
 	}
 
@@ -647,6 +673,30 @@ func (mgh MockGitHub) removeOrgRoleUser(
 	}
 }
 
+// Add a handler for GET /orgs/{org}/organization-roles/{role_id}
+func (mgh MockGitHub) getOrgRoleByID(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	orgID, _ := getCrossTableId(w, variables, "org")
+	roleID, _ := getCrossTableId(w, variables, "role_id")
+	if _, ok := mgh.organizations[orgID]; !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	// Only support role ID 1 for the mock
+	if roleID != 1 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	role := &OrganizationRole{
+		ID:          1,
+		Name:        "Test Role",
+		Description: "Test Role Description",
+	}
+	_, _ = w.Write(mock.MustMarshal(role))
+}
+
 type handler = func(w http.ResponseWriter, variables map[string]string)
 
 // addEndpointHandler takes a string interpolation pattern and a handler
@@ -694,9 +744,13 @@ func (mgh MockGitHub) Server() *http.Client {
 		DeleteOrganizationsTeamsMembershipsByOrganizationByTeamIdByUsername: mgh.removeMembership,
 		PutOrganizationsTeamsMembershipsByOrganizationByTeamIdByUsername:    mgh.addMembership,
 		// Add organization role endpoints
-		GetOrgsRolesByOrg:                           mgh.getOrgRoles,
-		GetOrgsRolesTeamsByOrgByRoleId:              mgh.getOrgRoleTeams,
-		GetOrgsRolesUsersByOrgByRoleId:              mgh.getOrgRoleUsers,
+		GetOrgsRolesByOrg:              mgh.getOrgRoles,
+		GetOrgsRolesTeamsByOrgByRoleId: mgh.getOrgRoleTeams,
+		GetOrgsRolesUsersByOrgByRoleId: mgh.getOrgRoleUsers,
+		mock.EndpointPattern{
+			Pattern: "/orgs/{org}/organization-roles/{role_id}",
+			Method:  "GET",
+		}: mgh.getOrgRoleByID,
 		PutOrgsRolesUsersByOrgByRoleIdByUsername:    mgh.addOrgRoleUser,
 		DeleteOrgsRolesUsersByOrgByRoleIdByUsername: mgh.removeOrgRoleUser,
 	}
@@ -721,10 +775,10 @@ func (mgh *MockGitHub) AddUserToOrgRole(roleID int64, userID int64) {
 	mgh.orgRoles[roleID].Add(userID)
 }
 
-// AddTeamToOrgRole adds a team to an org role for testing purposes.
-func (mgh *MockGitHub) AddTeamToOrgRole(roleID int64, teamID int64) {
-	if _, ok := mgh.orgRoles[roleID]; !ok {
-		mgh.orgRoles[roleID] = mapset.NewSet[int64]()
+// AddMembership adds a user to a team for testing purposes.
+func (mgh *MockGitHub) AddMembership(teamID int64, userID int64) {
+	if _, ok := mgh.teamMemberships[teamID]; !ok {
+		mgh.teamMemberships[teamID] = mapset.NewSet[int64]()
 	}
-	mgh.orgRoles[roleID].Add(teamID)
+	mgh.teamMemberships[teamID].Add(userID)
 }
