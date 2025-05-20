@@ -5,7 +5,7 @@ go 1.23.4
 toolchain go1.23.6
 
 require (
-	github.com/conductorone/baton-sdk v0.2.93
+	github.com/conductorone/baton-sdk v0.3.8
 	github.com/deckarep/golang-set/v2 v2.7.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/google/go-github/v63 v63.0.0
