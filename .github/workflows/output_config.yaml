@@ -1,0 +1,37 @@
+name: Output config schema
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  output-config-schema:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELENG_GITHUB_TOKEN }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build
+        run: go build -o connector ./cmd/baton-github
+
+      - name: Run and save output
+        # Sort the fields array by name to ensure consistent ordering
+        run: |
+          ./connector config | jq '{ fields: (.fields | sort_by(.name)) }' > config_schema.json
+
+      - name: Commit changes
+        uses: EndBug/add-and-commit@v9
+        with:
+          default_author: github_actions
+          message: 'Updating config schema.'
+          add: 'config_schema.json'
