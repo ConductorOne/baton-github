@@ -673,7 +673,7 @@ func (mgh MockGitHub) removeOrgRoleUser(
 	}
 }
 
-// Add a handler for GET /orgs/{org}/organization-roles/{role_id}
+// Add a handler for GET /orgs/{org}/organization-roles/{role_id}.
 func (mgh MockGitHub) getOrgRoleByID(
 	w http.ResponseWriter,
 	variables map[string]string,
