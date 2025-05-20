@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -270,7 +271,6 @@ func (o *orgRoleResourceType) Grants(
 func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
-	// Needs review, I copied this from the team grant function, but roles can be granted to teams as well, but we don't necessarily support that so wasn't sure if this was the intended behavior.
 	if principal.Id.ResourceType != resourceTypeUser.Id {
 		l.Warn(
 			"github-connector: only users can be granted organization roles",
@@ -291,24 +291,17 @@ func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource,
 	}
 
 	// First verify that the role exists
-	roles, resp, err := o.client.Organizations.ListRoles(ctx, orgName)
+	req, err := o.client.NewRequest("GET", fmt.Sprintf("orgs/%s/organization-roles/%d", orgName, roleID), nil)
 	if err != nil {
-		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
-			return nil, fmt.Errorf("failed to verify role: organization not found or insufficient permissions")
-		}
-		return nil, fmt.Errorf("failed to verify role: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Check if the role exists
-	roleExists := false
-	for _, role := range roles.CustomRepoRoles {
-		if role.GetID() == roleID {
-			roleExists = true
-			break
-		}
+	resp, err := o.client.Do(ctx, req, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get role existence: %w", err)
 	}
 
-	if !roleExists {
+	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("role with ID %d not found in organization %s", roleID, orgName)
 	}
 
@@ -317,25 +310,21 @@ func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource,
 		return nil, fmt.Errorf("invalid user ID: %w", err)
 	}
 
+	enIDParts := strings.Split(entitlement.Id, ":")
+	if len(enIDParts) != 3 {
+		return nil, fmt.Errorf("github-connectorv2: invalid entitlement ID: %s", entitlement.Id)
+	}
+
 	user, _, err := o.client.Users.GetByID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	l.Info("attempting to assign role",
-		zap.String("org", orgName),
-		zap.Int64("role_id", roleID),
-		zap.String("user", user.GetLogin()),
-	)
-
-	// Use the client's HTTP client to make the request with the correct URL format. Couldn't find a built in function for this. Cursor suggested this approach.
-	url := fmt.Sprintf("orgs/%s/organization-roles/users/%s/%d", orgName, user.GetLogin(), roleID)
-	req, err := o.client.NewRequest("PUT", url, nil)
+	reqs, err := o.client.NewRequest("PUT", fmt.Sprintf("orgs/%s/organization-roles/users/%s/%d", orgName, user.GetLogin(), roleID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-
-	resp, err = o.client.Do(ctx, req, nil)
+	resp, err = o.client.Do(ctx, reqs, nil)
 	if err != nil {
 		if resp != nil {
 			l.Error("failed to assign role",
