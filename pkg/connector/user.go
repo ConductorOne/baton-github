@@ -90,6 +90,7 @@ type userResourceType struct {
 	resourceType   *v2.ResourceType
 	client         *github.Client
 	graphqlClient  *githubv4.Client
+	app            gitHubApp
 	hasSAMLEnabled *bool
 	orgCache       *orgNameCache
 }
@@ -115,17 +116,30 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		return nil, "", nil, err
 	}
 
-	hasSamlBool, err := o.hasSAML(ctx, orgName)
+	hasSamlBool, err := o.hasSAML(ctx, parentID)
 	if err != nil {
 		return nil, "", nil, err
 	}
+
 	var restApiRateLimit *v2.RateLimitDescription
 
 	opts := github.ListMembersOptions{
 		ListOptions: github.ListOptions{Page: page, PerPage: pt.Size},
 	}
 
-	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &opts)
+	cli := o.client
+	if len(o.app.appInstallationClient) > 0 {
+		i, err := strconv.ParseInt(parentID.GetResource(), 10, 64)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		var ok bool
+		cli, ok = o.app.appInstallationClient[i]
+		if !ok {
+			return nil, "", nil, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
+	users, resp, err := cli.Organizations.ListMembers(ctx, orgName, &opts)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("github-connector: ListMembers failed: %w", err)
 	}
@@ -148,7 +162,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	q := listUsersQuery{}
 	rv := make([]*v2.Resource, 0, len(users))
 	for _, user := range users {
-		u, res, err := o.client.Users.GetByID(ctx, user.GetID())
+		u, res, err := cli.Users.GetByID(ctx, user.GetID())
 		if err != nil {
 			// This undocumented API can return 404 for some users. If this fails it means we won't get some of their details like email
 			if res == nil || res.StatusCode != http.StatusNotFound {
@@ -224,27 +238,45 @@ func (o *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ *paginati
 	return nil, "", nil, nil
 }
 
-func userBuilder(client *github.Client, hasSAMLEnabled *bool, graphqlClient *githubv4.Client, orgCache *orgNameCache) *userResourceType {
+func userBuilder(client *github.Client, app gitHubApp, hasSAMLEnabled *bool, graphqlClient *githubv4.Client, orgCache *orgNameCache) *userResourceType {
 	return &userResourceType{
 		resourceType:   resourceTypeUser,
 		client:         client,
 		graphqlClient:  graphqlClient,
+		app:            app,
 		hasSAMLEnabled: hasSAMLEnabled,
 		orgCache:       orgCache,
 	}
 }
 
-func (o *userResourceType) hasSAML(ctx context.Context, orgName string) (bool, error) {
+func (o *userResourceType) hasSAML(ctx context.Context, resource *v2.ResourceId) (bool, error) {
 	if o.hasSAMLEnabled != nil {
 		return *o.hasSAMLEnabled, nil
 	}
 
 	samlBool := false
 	q := hasSAMLQuery{}
+	orgName, err := o.orgCache.GetOrgName(ctx, resource)
+	if err != nil {
+		return false, err
+	}
 	variables := map[string]interface{}{
 		"orgLoginName": githubv4.String(orgName),
 	}
-	err := o.graphqlClient.Query(ctx, &q, variables)
+
+	cli := o.graphqlClient
+	if len(o.app.graphqlClient) > 0 {
+		i, err := strconv.ParseInt(resource.GetResource(), 10, 64)
+		if err != nil {
+			return false, err
+		}
+		var ok bool
+		cli, ok = o.app.graphqlClient[i]
+		if !ok {
+			return false, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
+	err = cli.Query(ctx, &q, variables)
 	if err != nil {
 		return false, err
 	}

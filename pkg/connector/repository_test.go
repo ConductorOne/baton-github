@@ -23,7 +23,7 @@ func TestRepository(t *testing.T) {
 		githubOrganization, githubRepository, _, githubUser, _ := mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
-		cache := newOrgNameCache(githubClient)
+		cache := newOrgNameCache(githubClient, nil)
 		client := repositoryBuilder(githubClient, cache)
 
 		organization, _ := organizationResource(ctx, githubOrganization, nil)

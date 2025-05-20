@@ -26,8 +26,9 @@ func titleCase(s string) string {
 
 type orgNameCache struct {
 	sync.RWMutex
-	c        *github.Client
-	orgNames map[string]string
+	c          *github.Client
+	appClients map[int64]*github.Client
+	orgNames   map[string]string
 }
 
 func (o *orgNameCache) GetOrgName(ctx context.Context, orgID *v2.ResourceId) (string, error) {
@@ -50,7 +51,16 @@ func (o *orgNameCache) GetOrgName(ctx context.Context, orgID *v2.ResourceId) (st
 		return "", err
 	}
 
-	org, _, err := o.c.Organizations.GetByID(ctx, oID)
+	client := o.c
+	if len(o.appClients) != 0 {
+		var ok bool
+		client, ok = o.appClients[oID]
+		if !ok {
+			return "", fmt.Errorf("organization: %d doesn't exist", oID)
+		}
+	}
+
+	org, _, err := client.Organizations.GetByID(ctx, oID)
 	if err != nil {
 		return "", err
 	}
@@ -60,10 +70,11 @@ func (o *orgNameCache) GetOrgName(ctx context.Context, orgID *v2.ResourceId) (st
 	return org.GetLogin(), nil
 }
 
-func newOrgNameCache(c *github.Client) *orgNameCache {
+func newOrgNameCache(c *github.Client, appClients map[int64]*github.Client) *orgNameCache {
 	return &orgNameCache{
-		c:        c,
-		orgNames: make(map[string]string),
+		c:          c,
+		appClients: appClients,
+		orgNames:   make(map[string]string),
 	}
 }
 

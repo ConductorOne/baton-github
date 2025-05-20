@@ -62,19 +62,28 @@ var (
 type GitHub struct {
 	orgs           []string
 	client         *github.Client
-	appClient      *github.Client
 	instanceURL    string
 	graphqlClient  *githubv4.Client
 	hasSAMLEnabled *bool
 	orgCache       *orgNameCache
+	app            gitHubApp
+}
+
+// gitHubApp has app clients that are used by the GitHub App.
+// Each app has a single JWT token shared across all organizations.
+// However, each organization has its own unique installation token.
+type gitHubApp struct {
+	appJWTClient          *github.Client
+	appInstallationClient map[int64]*github.Client
+	graphqlClient         map[int64]*githubv4.Client
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
 	return []connectorbuilder.ResourceSyncer{
-		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs),
-		teamBuilder(gh.client, gh.orgCache),
-		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache),
-		repositoryBuilder(gh.client, gh.orgCache),
+		orgBuilder(gh.client, gh.app, gh.orgCache, gh.orgs),
+		teamBuilder(gh.client, gh.app, gh.orgCache),
+		userBuilder(gh.client, gh.app, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache),
+		repositoryBuilder(gh.client, gh.app, gh.orgCache),
 	}
 }
 
@@ -87,7 +96,7 @@ func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 
 // Validate hits the GitHub API to validate that the configured credentials are still valid.
 func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error) {
-	if gh.appClient != nil {
+	if gh.app.appJWTClient != nil {
 		return gh.validateAppCredentials(ctx)
 	}
 
@@ -145,23 +154,47 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 }
 
 func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annotations, error) {
-	page := 0
-	orgLogins := gh.orgs
+	iResp, err := getAllInstallations(ctx, gh.app.appJWTClient)
+	if err != nil {
+		return nil, err
+	}
 
-	installationsMap := make(map[string]struct{})
+	for _, o := range gh.orgs {
+		if _, ok := iResp.names[o]; !ok {
+			return nil, fmt.Errorf("access token must be an admin on the %s organization", o)
+		}
+	}
+	return nil, nil
+}
+
+type getAllInstallationsResp struct {
+	ids             map[int64]struct{}
+	installationIds map[int64]*github.Installation
+	names           map[string]struct{}
+}
+
+func getAllInstallations(ctx context.Context, c *github.Client) (getAllInstallationsResp, error) {
+	var (
+		installationsMap     = make(map[int64]struct{})
+		installationsIDMap   = make(map[int64]*github.Installation)
+		installationsNameMap = make(map[string]struct{})
+		page                 = 0
+	)
 	for {
-		installations, resp, err := gh.appClient.Apps.ListInstallations(ctx, &github.ListOptions{Page: page})
+		installations, resp, err := c.Apps.ListInstallations(ctx, &github.ListOptions{Page: page})
 		if err != nil {
-			return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
+			return getAllInstallationsResp{}, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, status.Error(codes.Unauthenticated, "github token is not authorized")
+			return getAllInstallationsResp{}, status.Error(codes.Unauthenticated, "github token is not authorized")
 		}
 		for _, installation := range installations {
-			if installation.Account == nil {
+			if installation.GetAccount().GetType() != "Organization" {
 				continue
 			}
-			installationsMap[installation.Account.GetLogin()] = struct{}{}
+			installationsMap[installation.GetAccount().GetID()] = struct{}{}
+			installationsIDMap[installation.GetID()] = installation
+			installationsNameMap[installation.GetAccount().GetLogin()] = struct{}{}
 		}
 
 		if resp.NextPage == 0 {
@@ -169,13 +202,11 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 		}
 		page = resp.NextPage
 	}
-
-	for _, o := range orgLogins {
-		if _, ok := installationsMap[o]; !ok {
-			return nil, fmt.Errorf("access token must be an admin on the %s organization", o)
-		}
-	}
-	return nil, nil
+	return getAllInstallationsResp{
+		ids:             installationsMap,
+		installationIds: installationsIDMap,
+		names:           installationsNameMap,
+	}, nil
 }
 
 // newGitHubClient returns a new GitHub API client authenticated with an access token via oauth2.
@@ -203,36 +234,80 @@ func newGitHubClient(ctx context.Context, instanceURL string, accessToken string
 
 // New returns the GitHub connector configured to sync against the instance URL.
 func New(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
-	jwttoken, token, err := getClientToken(ghc)
+	if ghc.Token == "" {
+		app, err := newAppClient(ctx, ghc)
+		if err != nil {
+			return nil, err
+		}
+		return &GitHub{
+			instanceURL: ghc.InstanceUrl,
+			orgs:        ghc.Orgs,
+			app:         app,
+			orgCache:    newOrgNameCache(nil, app.appInstallationClient),
+		}, nil
+	}
+
+	client, err := newGitHubClient(ctx, ghc.InstanceUrl, ghc.Token)
 	if err != nil {
 		return nil, err
+	}
+	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ghc.Token)
+	if err != nil {
+		return nil, err
+	}
+	gh := &GitHub{
+		client:        client,
+		instanceURL:   ghc.InstanceUrl,
+		orgs:          ghc.Orgs,
+		graphqlClient: graphqlClient,
+		orgCache:      newOrgNameCache(client, nil),
+	}
+
+	return gh, nil
+}
+
+func newAppClient(ctx context.Context, ghc *cfg.Github) (gitHubApp, error) {
+	key, err := loadPrivateKeyFromString(ghc.AppPrivatekey)
+	if err != nil {
+		return gitHubApp{}, err
+	}
+	now := time.Now()
+	token, err := jwtv5.NewWithClaims(jwtv5.SigningMethodRS256, jwtv5.MapClaims{
+		"iat": now.Unix() - 60,                  // issued at
+		"exp": now.Add(time.Minute * 10).Unix(), // expires
+		"iss": ghc.AppId,                        // GitHub App ID
+	}).SignedString(key)
+	if err != nil {
+		return gitHubApp{}, err
 	}
 
 	client, err := newGitHubClient(ctx, ghc.InstanceUrl, token)
 	if err != nil {
-		return nil, err
-	}
-	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, token)
-	if err != nil {
-		return nil, err
+		return gitHubApp{}, err
 	}
 
-	var appClient *github.Client
-	if jwttoken != "" {
-		appClient, err = newGitHubClient(ctx, ghc.InstanceUrl, jwttoken)
+	iResp, err := getAllInstallations(ctx, client)
+	if err != nil {
+		return gitHubApp{}, err
+	}
+
+	var (
+		installationsClient   = make(map[int64]*github.Client, len(iResp.installationIds))
+		installationsGLClient = make(map[int64]*githubv4.Client, len(iResp.ids))
+	)
+	for id, installation := range iResp.installationIds {
+		c, glc, err := getInstallationClient(ctx, ghc.InstanceUrl, id, token)
 		if err != nil {
-			return nil, err
+			return gitHubApp{}, err
 		}
+		installationsClient[installation.GetAccount().GetID()] = c
+		installationsGLClient[installation.GetAccount().GetID()] = glc
 	}
-	gh := &GitHub{
-		client:        client,
-		appClient:     appClient,
-		instanceURL:   ghc.InstanceUrl,
-		orgs:          ghc.Orgs,
-		graphqlClient: graphqlClient,
-		orgCache:      newOrgNameCache(client),
-	}
-	return gh, nil
+	return gitHubApp{
+		appJWTClient:          client,
+		appInstallationClient: installationsClient,
+		graphqlClient:         installationsGLClient,
+	}, nil
 }
 
 func newGitHubGraphqlClient(ctx context.Context, instanceURL string, accessToken string) (*githubv4.Client, error) {
@@ -286,48 +361,38 @@ func loadPrivateKeyFromString(p string) (*rsa.PrivateKey, error) {
 	return x509.ParsePKCS1PrivateKey(block.Bytes)
 }
 
-// getClientToken returns
-// 1. fine-grained personal access tokens if any.
-// 2. (JWT token, installation access tokens) if using github app.
-func getClientToken(ghc *cfg.Github) (string, string, error) {
-	if ghc.Token != "" {
-		return "", ghc.Token, nil
-	}
-
-	key, err := loadPrivateKeyFromString(ghc.AppPrivatekey)
-	if err != nil {
-		return "", "", err
-	}
-	now := time.Now()
-	token, err := jwtv5.NewWithClaims(jwtv5.SigningMethodRS256, jwtv5.MapClaims{
-		"iat": now.Unix() - 60,                  // issued at
-		"exp": now.Add(time.Minute * 10).Unix(), // expires
-		"iss": ghc.AppId,                        // GitHub App ID
-	}).SignedString(key)
-	if err != nil {
-		return "", "", err
-	}
-
-	url := fmt.Sprintf("https://api.github.com/app/installations/%s/access_tokens", "67110013")
-
-	req, _ := http.NewRequest("POST", url, nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+func getInstallationClient(ctx context.Context, instanceURL string, orgId int64, jwtToken string) (*github.Client, *githubv4.Client, error) {
+	url := fmt.Sprintf("https://api.github.com/app/installations/%d/access_tokens", orgId)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	req.Header.Set("Authorization", "Bearer "+jwtToken)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", "", err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 201 {
+	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("GitHub API error: %s", body)
+		return nil, nil, fmt.Errorf("GitHub API error: %s", body)
 	}
 
 	var result struct {
 		Token string `json:"token"`
 	}
 	err = json.NewDecoder(resp.Body).Decode(&result)
-	return token, result.Token, err
+	if err != nil {
+		return nil, nil, err
+	}
+
+	client, err := newGitHubClient(ctx, instanceURL, result.Token)
+	if err != nil {
+		return nil, nil, err
+	}
+	gcclient, err := newGitHubGraphqlClient(ctx, instanceURL, result.Token)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client, gcclient, nil
 }

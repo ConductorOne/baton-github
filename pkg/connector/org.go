@@ -32,7 +32,7 @@ var orgAccessLevels = []string{
 type orgResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
-	appClient    *github.Client
+	app          gitHubApp
 	orgs         map[string]struct{}
 	orgCache     *orgNameCache
 }
@@ -86,7 +86,7 @@ func (o *orgResourceType) List(
 	parentResourceID *v2.ResourceId,
 	pToken *pagination.Token,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
-	if o.appClient != nil {
+	if o.app.appJWTClient != nil {
 		return o.listOrganizationsFromAppInstallations(ctx, parentResourceID, pToken)
 	}
 
@@ -143,7 +143,6 @@ func (o *orgResourceType) List(
 
 		ret = append(ret, orgResource)
 	}
-
 	return ret, pageToken, reqAnnos, nil
 }
 
@@ -201,7 +200,19 @@ func (o *orgResourceType) Grants(
 		return nil, "", nil, err
 	}
 
-	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &opts)
+	cli := o.client
+	if len(o.app.appInstallationClient) > 0 {
+		i, err := strconv.ParseInt(resource.Id.GetResource(), 10, 64)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		var ok bool
+		cli, ok = o.app.appInstallationClient[i]
+		if !ok {
+			return nil, "", nil, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
+	users, resp, err := cli.Organizations.ListMembers(ctx, orgName, &opts)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("github-connectorv2: failed to list org members: %w", err)
 	}
@@ -218,7 +229,7 @@ func (o *orgResourceType) Grants(
 
 	var rv []*v2.Grant
 	for _, user := range users {
-		membership, _, err := o.client.Organizations.GetOrgMembership(ctx, user.GetLogin(), orgName)
+		membership, _, err := cli.Organizations.GetOrgMembership(ctx, user.GetLogin(), orgName)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to get org memberships for user: %w", err)
 		}
@@ -398,7 +409,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	return nil, nil
 }
 
-func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string) *orgResourceType {
+func orgBuilder(client *github.Client, app gitHubApp, orgCache *orgNameCache, orgs []string) *orgResourceType {
 	orgMap := make(map[string]struct{})
 
 	for _, o := range orgs {
@@ -409,7 +420,7 @@ func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs [
 		resourceType: resourceTypeOrg,
 		orgs:         orgMap,
 		client:       client,
-		appClient:    appClient,
+		app:          app,
 		orgCache:     orgCache,
 	}
 }
@@ -429,7 +440,7 @@ func (o *orgResourceType) listOrganizationsFromAppInstallations(
 		PerPage: pToken.Size,
 	}
 
-	installations, resp, err := o.appClient.Apps.ListInstallations(ctx, opts)
+	installations, resp, err := o.app.appJWTClient.Apps.ListInstallations(ctx, opts)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("github-connector: failed to fetch installations: %w", err)
 	}

@@ -42,7 +42,7 @@ func TestUsersList(t *testing.T) {
 
 			githubClient := github.NewClient(mgh.Server())
 			graphQLClient := mocks.MockGraphQL()
-			cache := newOrgNameCache(githubClient)
+			cache := newOrgNameCache(githubClient, nil)
 			client := userBuilder(
 				githubClient,
 				testCase.hasSamlEnabled,

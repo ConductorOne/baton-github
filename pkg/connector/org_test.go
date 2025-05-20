@@ -22,8 +22,8 @@ func TestOrganization(t *testing.T) {
 		githubOrganization, _, _, githubUser, _ := mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
-		cache := newOrgNameCache(githubClient)
-		client := orgBuilder(githubClient, nil, cache, nil)
+		cache := newOrgNameCache(githubClient, nil)
+		client := orgBuilder(githubClient, gitHubApp{}, cache, nil)
 
 		organization, _ := organizationResource(ctx, githubOrganization, nil)
 		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)

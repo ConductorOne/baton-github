@@ -56,6 +56,7 @@ func repositoryResource(ctx context.Context, repo *github.Repository, parentReso
 type repositoryResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
+	app          gitHubApp
 	orgCache     *orgNameCache
 }
 
@@ -85,7 +86,19 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 		},
 	}
 
-	repos, resp, err := o.client.Repositories.ListByOrg(ctx, orgName, opts)
+	cli := o.client
+	if len(o.app.appInstallationClient) > 0 {
+		i, err := strconv.ParseInt(parentID.GetResource(), 10, 64)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		var ok bool
+		cli, ok = o.app.appInstallationClient[i]
+		if !ok {
+			return nil, "", nil, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
+	repos, resp, err := cli.Repositories.ListByOrg(ctx, orgName, opts)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("github-connector: failed to list repositories: %w", err)
 	}
@@ -146,6 +159,18 @@ func (o *repositoryResourceType) Grants(
 	var rv []*v2.Grant
 	var reqAnnos annotations.Annotations
 
+	cli := o.client
+	if len(o.app.appInstallationClient) > 0 {
+		i, err := strconv.ParseInt(resource.GetParentResourceId().GetResource(), 10, 64)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		var ok bool
+		cli, ok = o.app.appInstallationClient[i]
+		if !ok {
+			return nil, "", nil, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
 	switch bag.ResourceTypeID() {
 	case resourceTypeRepository.Id:
 		bag.Pop()
@@ -161,7 +186,8 @@ func (o *repositoryResourceType) Grants(
 			Affiliation: "all",
 			ListOptions: github.ListOptions{Page: page},
 		}
-		users, resp, err := o.client.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, opts)
+
+		users, resp, err := cli.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, opts)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
 		}
@@ -200,7 +226,7 @@ func (o *repositoryResourceType) Grants(
 		opts := &github.ListOptions{
 			Page: page,
 		}
-		teams, resp, err := o.client.Repositories.ListTeams(ctx, orgName, resource.DisplayName, opts)
+		teams, resp, err := cli.Repositories.ListTeams(ctx, orgName, resource.DisplayName, opts)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
 		}
@@ -261,7 +287,19 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 		return nil, err
 	}
 
-	repo, _, err := o.client.Repositories.GetByID(ctx, repoID)
+	cli := o.client
+	if len(o.app.appInstallationClient) > 0 {
+		i, err := strconv.ParseInt(en.Resource.ParentResourceId.GetResource(), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		cli, ok = o.app.appInstallationClient[i]
+		if !ok {
+			return nil, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
+	repo, _, err := cli.Repositories.GetByID(ctx, repoID)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get repository: %w", err)
 	}
@@ -281,12 +319,12 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 
 	switch principal.Id.ResourceType {
 	case resourceTypeUser.Id:
-		user, _, err := o.client.Users.GetByID(ctx, principalID)
+		user, _, err := cli.Users.GetByID(ctx, principalID)
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
 		}
 
-		_, _, e := o.client.Repositories.AddCollaborator(
+		_, _, e := cli.Repositories.AddCollaborator(
 			ctx,
 			repo.GetOwner().GetLogin(),
 			repo.GetName(),
@@ -298,12 +336,12 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			return nil, fmt.Errorf("github-connectorv2: failed to add user to a repository: %w", e)
 		}
 	case resourceTypeTeam.Id:
-		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID)
+		team, _, err := cli.Teams.GetTeamByID(ctx, org.GetID(), principalID)
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to get team: %w", err)
 		}
 
-		_, err = o.client.Teams.AddTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName(), &github.TeamAddTeamRepoOptions{
+		_, err = cli.Teams.AddTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName(), &github.TeamAddTeamRepoOptions{
 			Permission: permission,
 		})
 		if err != nil {
@@ -332,7 +370,19 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 		return nil, err
 	}
 
-	repo, _, err := o.client.Repositories.GetByID(ctx, repoID)
+	cli := o.client
+	if len(o.app.appInstallationClient) > 0 {
+		i, err := strconv.ParseInt(grant.GetEntitlement().GetResource().GetParentResourceId().GetResource(), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		cli, ok = o.app.appInstallationClient[i]
+		if !ok {
+			return nil, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
+	repo, _, err := cli.Repositories.GetByID(ctx, repoID)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get repository: %w", err)
 	}
@@ -346,22 +396,22 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 
 	switch principal.Id.ResourceType {
 	case resourceTypeUser.Id:
-		user, _, err := o.client.Users.GetByID(ctx, principalID)
+		user, _, err := cli.Users.GetByID(ctx, principalID)
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
 		}
 
-		_, e := o.client.Repositories.RemoveCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin())
+		_, e := cli.Repositories.RemoveCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin())
 		if e != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to remove user from repo: %w", e)
 		}
 	case resourceTypeTeam.Id:
-		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID)
+		team, _, err := cli.Teams.GetTeamByID(ctx, org.GetID(), principalID)
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to get team: %w", err)
 		}
 
-		_, err = o.client.Teams.RemoveTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName())
+		_, err = cli.Teams.RemoveTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName())
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to remove team from repo: %w", err)
 		}
@@ -377,10 +427,11 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 	return nil, nil
 }
 
-func repositoryBuilder(client *github.Client, orgCache *orgNameCache) *repositoryResourceType {
+func repositoryBuilder(client *github.Client, app gitHubApp, orgCache *orgNameCache) *repositoryResourceType {
 	return &repositoryResourceType{
 		resourceType: resourceTypeRepository,
 		client:       client,
+		app:          app,
 		orgCache:     orgCache,
 	}
 }

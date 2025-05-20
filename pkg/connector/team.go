@@ -59,6 +59,7 @@ func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resou
 type teamResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
+	app          gitHubApp
 	orgCache     *orgNameCache
 }
 
@@ -93,7 +94,19 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		return nil, "", nil, err
 	}
 
-	teams, resp, err := o.client.Teams.ListTeams(ctx, orgName, opts)
+	cli := o.client
+	if len(o.app.appInstallationClient) > 0 {
+		i, err := strconv.ParseInt(parentID.GetResource(), 10, 64)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		var ok bool
+		cli, ok = o.app.appInstallationClient[i]
+		if !ok {
+			return nil, "", nil, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
+	teams, resp, err := cli.Teams.ListTeams(ctx, orgName, opts)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("github-connector: failed to list teams: %w", err)
 	}
@@ -104,7 +117,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	}
 
 	for _, team := range teams {
-		fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID())
+		fullTeam, resp, err := cli.Teams.GetTeamByID(ctx, orgID, team.GetID())
 		if err != nil {
 			if isNotFoundError(resp) {
 				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("team: %d not found", team.GetID()))
@@ -167,7 +180,20 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 		return nil, "", nil, fmt.Errorf("error fetching orgID from team profile")
 	}
 
-	org, _, err := o.client.Organizations.GetByID(ctx, orgID)
+	cli := o.client
+	if len(o.app.appInstallationClient) > 0 {
+		i, err := strconv.ParseInt(resource.GetParentResourceId().GetResource(), 10, 64)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		var ok bool
+		cli, ok = o.app.appInstallationClient[i]
+		if !ok {
+			return nil, "", nil, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
+
+	org, _, err := cli.Organizations.GetByID(ctx, orgID)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -181,7 +207,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 		ListOptions: github.ListOptions{Page: page},
 	}
 
-	users, resp, err := o.client.Teams.ListTeamMembersByID(ctx, org.GetID(), githubID, &opts)
+	users, resp, err := cli.Teams.ListTeamMembersByID(ctx, org.GetID(), githubID, &opts)
 	if err != nil {
 		if isNotFoundError(resp) {
 			return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", org.GetID()))
@@ -201,7 +227,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 
 	var rv []*v2.Grant
 	for _, user := range users {
-		membership, _, err := o.client.Teams.GetTeamMembershipByID(ctx, org.GetID(), githubID, user.GetLogin())
+		membership, _, err := cli.Teams.GetTeamMembershipByID(ctx, org.GetID(), githubID, user.GetLogin())
 		if err != nil {
 			if isNotFoundError(resp) {
 				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("user: %s not found", user.GetLogin()))
@@ -273,7 +299,20 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, err
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, userId)
+	cli := o.client
+	if len(o.app.appInstallationClient) > 0 {
+		i, err := strconv.ParseInt(entitlement.Resource.ParentResourceId.GetResource(), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		cli, ok = o.app.appInstallationClient[i]
+		if !ok {
+			return nil, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
+
+	user, _, err := cli.Users.GetByID(ctx, userId)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get user %d, err: %w", userId, err)
 	}
@@ -284,7 +323,7 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 	}
 	permission := enIDParts[2]
 
-	_, _, e := o.client.Teams.AddTeamMembershipByID(
+	_, _, e := cli.Teams.AddTeamMembershipByID(
 		ctx,
 		orgId,
 		teamId,
@@ -333,11 +372,23 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 		return nil, err
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, userId)
+	cli := o.client
+	if len(o.app.appInstallationClient) > 0 {
+		i, err := strconv.ParseInt(grant.GetEntitlement().GetResource().GetParentResourceId().GetResource(), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		cli, ok = o.app.appInstallationClient[i]
+		if !ok {
+			return nil, fmt.Errorf("organization: %d doesn't exist", i)
+		}
+	}
+	user, _, err := cli.Users.GetByID(ctx, userId)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get user %d, err: %w", userId, err)
 	}
-	_, e := o.client.Teams.RemoveTeamMembershipByID(ctx, orgId, teamId, user.GetLogin())
+	_, e := cli.Teams.RemoveTeamMembershipByID(ctx, orgId, teamId, user.GetLogin())
 	if e != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to revoke user team membership: %w", e)
 	}
@@ -345,10 +396,11 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 	return nil, nil
 }
 
-func teamBuilder(client *github.Client, orgCache *orgNameCache) *teamResourceType {
+func teamBuilder(client *github.Client, app gitHubApp, orgCache *orgNameCache) *teamResourceType {
 	return &teamResourceType{
 		resourceType: resourceTypeTeam,
 		client:       client,
+		app:          app,
 		orgCache:     orgCache,
 	}
 }
