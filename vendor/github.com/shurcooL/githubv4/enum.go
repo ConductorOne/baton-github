@@ -80,12 +80,12 @@ type CheckStatusState string
 
 // The possible states for a check suite or run status.
 const (
+	CheckStatusStateRequested  CheckStatusState = "REQUESTED"   // The check suite or run has been requested.
 	CheckStatusStateQueued     CheckStatusState = "QUEUED"      // The check suite or run has been queued.
 	CheckStatusStateInProgress CheckStatusState = "IN_PROGRESS" // The check suite or run is in progress.
 	CheckStatusStateCompleted  CheckStatusState = "COMPLETED"   // The check suite or run has been completed.
 	CheckStatusStateWaiting    CheckStatusState = "WAITING"     // The check suite or run is in waiting state.
 	CheckStatusStatePending    CheckStatusState = "PENDING"     // The check suite or run is in pending state.
-	CheckStatusStateRequested  CheckStatusState = "REQUESTED"   // The check suite or run has been requested.
 )
 
 // CollaboratorAffiliation represents collaborators affiliation level with a subject.
@@ -203,6 +203,7 @@ type DeploymentProtectionRuleType string
 const (
 	DeploymentProtectionRuleTypeRequiredReviewers DeploymentProtectionRuleType = "REQUIRED_REVIEWERS" // Required reviewers.
 	DeploymentProtectionRuleTypeWaitTimer         DeploymentProtectionRuleType = "WAIT_TIMER"         // Wait timer.
+	DeploymentProtectionRuleTypeBranchPolicy      DeploymentProtectionRuleType = "BRANCH_POLICY"      // Branch policy.
 )
 
 // DeploymentReviewState represents the possible states for a deployment review.
@@ -377,6 +378,14 @@ const (
 	EnterpriseEnabledSettingValueNoPolicy EnterpriseEnabledSettingValue = "NO_POLICY" // There is no policy set for organizations in the enterprise.
 )
 
+// EnterpriseMemberInvitationOrderField represents properties by which enterprise member invitation connections can be ordered.
+type EnterpriseMemberInvitationOrderField string
+
+// Properties by which enterprise member invitation connections can be ordered.
+const (
+	EnterpriseMemberInvitationOrderFieldCreatedAt EnterpriseMemberInvitationOrderField = "CREATED_AT" // Order enterprise member invitations by creation time.
+)
+
 // EnterpriseMemberOrderField represents properties by which enterprise member connections can be ordered.
 type EnterpriseMemberOrderField string
 
@@ -498,6 +507,16 @@ const (
 	EnvironmentOrderFieldName EnvironmentOrderField = "NAME" // Order environments by name.
 )
 
+// EnvironmentPinnedFilterField represents properties by which environments connections can be ordered.
+type EnvironmentPinnedFilterField string
+
+// Properties by which environments connections can be ordered.
+const (
+	EnvironmentPinnedFilterFieldAll  EnvironmentPinnedFilterField = "ALL"  // All environments will be returned.
+	EnvironmentPinnedFilterFieldOnly EnvironmentPinnedFilterField = "ONLY" // Only pinned environment will be returned.
+	EnvironmentPinnedFilterFieldNone EnvironmentPinnedFilterField = "NONE" // Environments exclude pinned will be returned.
+)
+
 // FileViewedState represents the possible viewed states of a file .
 type FileViewedState string
 
@@ -521,8 +540,9 @@ const (
 	FundingPlatformCommunityBridge FundingPlatform = "COMMUNITY_BRIDGE" // Community Bridge funding platform.
 	FundingPlatformLiberapay       FundingPlatform = "LIBERAPAY"        // Liberapay funding platform.
 	FundingPlatformIssueHunt       FundingPlatform = "ISSUEHUNT"        // IssueHunt funding platform.
-	FundingPlatformOtechie         FundingPlatform = "OTECHIE"          // Otechie funding platform.
 	FundingPlatformLFXCrowdfunding FundingPlatform = "LFX_CROWDFUNDING" // LFX Crowdfunding funding platform.
+	FundingPlatformPolar           FundingPlatform = "POLAR"            // Polar funding platform.
+	FundingPlatformBuyMeACoffee    FundingPlatform = "BUY_ME_A_COFFEE"  // Buy Me a Coffee funding platform.
 	FundingPlatformCustom          FundingPlatform = "CUSTOM"           // Custom funding platform.
 )
 
@@ -759,6 +779,25 @@ const (
 	MergeQueueEntryStateLocked         MergeQueueEntryState = "LOCKED"          // The entry is currently locked.
 )
 
+// MergeQueueGroupingStrategy represents when set to ALLGREEN, the merge commit created by merge queue for each PR in the group must pass all required checks to merge. When set to HEADGREEN, only the commit at the head of the merge group, i.e. the commit containing changes from all of the PRs in the group, must pass its required checks to merge.
+type MergeQueueGroupingStrategy string
+
+// When set to ALLGREEN, the merge commit created by merge queue for each PR in the group must pass all required checks to merge. When set to HEADGREEN, only the commit at the head of the merge group, i.e. the commit containing changes from all of the PRs in the group, must pass its required checks to merge.
+const (
+	MergeQueueGroupingStrategyAllgreen  MergeQueueGroupingStrategy = "ALLGREEN"  // The merge commit created by merge queue for each PR in the group must pass all required checks to merge.
+	MergeQueueGroupingStrategyHeadgreen MergeQueueGroupingStrategy = "HEADGREEN" // Only the commit at the head of the merge group must pass its required checks to merge.
+)
+
+// MergeQueueMergeMethod represents method to use when merging changes from queued pull requests.
+type MergeQueueMergeMethod string
+
+// Method to use when merging changes from queued pull requests.
+const (
+	MergeQueueMergeMethodMerge  MergeQueueMergeMethod = "MERGE"  // Merge commit.
+	MergeQueueMergeMethodSquash MergeQueueMergeMethod = "SQUASH" // Squash and merge.
+	MergeQueueMergeMethodRebase MergeQueueMergeMethod = "REBASE" // Rebase and merge.
+)
+
 // MergeQueueMergingStrategy represents the possible merging strategies for a merge queue.
 type MergeQueueMergingStrategy string
 
@@ -766,6 +805,21 @@ type MergeQueueMergingStrategy string
 const (
 	MergeQueueMergingStrategyAllgreen  MergeQueueMergingStrategy = "ALLGREEN"  // Entries only allowed to merge if they are passing.
 	MergeQueueMergingStrategyHeadgreen MergeQueueMergingStrategy = "HEADGREEN" // Failing Entires are allowed to merge if they are with a passing entry.
+)
+
+// MergeStateStatus represents detailed status information about a pull request merge.
+type MergeStateStatus string
+
+// Detailed status information about a pull request merge.
+const (
+	MergeStateStatusDirty    MergeStateStatus = "DIRTY"     // The merge commit cannot be cleanly created.
+	MergeStateStatusUnknown  MergeStateStatus = "UNKNOWN"   // The state cannot currently be determined.
+	MergeStateStatusBlocked  MergeStateStatus = "BLOCKED"   // The merge is blocked.
+	MergeStateStatusBehind   MergeStateStatus = "BEHIND"    // The head ref is out of date.
+	MergeStateStatusDraft    MergeStateStatus = "DRAFT"     // The merge is blocked due to the pull request being a draft.
+	MergeStateStatusUnstable MergeStateStatus = "UNSTABLE"  // Mergeable with non-passing commit status.
+	MergeStateStatusHasHooks MergeStateStatus = "HAS_HOOKS" // Mergeable with passing commit status and pre-receive hooks.
+	MergeStateStatusClean    MergeStateStatus = "CLEAN"     // Mergeable and passing commit status.
 )
 
 // MergeableState represents whether or not a PullRequest can be merged.
@@ -1157,6 +1211,14 @@ const (
 	PinnedDiscussionPatternHeartFill PinnedDiscussionPattern = "HEART_FILL" // A heart pattern.
 )
 
+// PinnedEnvironmentOrderField represents properties by which pinned environments connections can be ordered.
+type PinnedEnvironmentOrderField string
+
+// Properties by which pinned environments connections can be ordered.
+const (
+	PinnedEnvironmentOrderFieldPosition PinnedEnvironmentOrderField = "POSITION" // Order pinned environments by position.
+)
+
 // ProjectCardArchivedState represents the possible archived states of a project card.
 type ProjectCardArchivedState string
 
@@ -1296,6 +1358,16 @@ const (
 	ProjectV2OrderFieldCreatedAt ProjectV2OrderField = "CREATED_AT" // The project's date and time of creation.
 )
 
+// ProjectV2PermissionLevel represents the possible roles of a collaborator on a project.
+type ProjectV2PermissionLevel string
+
+// The possible roles of a collaborator on a project.
+const (
+	ProjectV2PermissionLevelRead  ProjectV2PermissionLevel = "READ"  // The collaborator can view the project.
+	ProjectV2PermissionLevelWrite ProjectV2PermissionLevel = "WRITE" // The collaborator can view and edit the project.
+	ProjectV2PermissionLevelAdmin ProjectV2PermissionLevel = "ADMIN" // The collaborator can view, edit, and maange the settings of the project.
+)
+
 // ProjectV2Roles represents the possible roles of a collaborator on a project.
 type ProjectV2Roles string
 
@@ -1329,6 +1401,26 @@ type ProjectV2State string
 const (
 	ProjectV2StateOpen   ProjectV2State = "OPEN"   // A project v2 that is still open.
 	ProjectV2StateClosed ProjectV2State = "CLOSED" // A project v2 that has been closed.
+)
+
+// ProjectV2StatusUpdateOrderField represents properties by which project v2 status updates can be ordered.
+type ProjectV2StatusUpdateOrderField string
+
+// Properties by which project v2 status updates can be ordered.
+const (
+	ProjectV2StatusUpdateOrderFieldCreatedAt ProjectV2StatusUpdateOrderField = "CREATED_AT" // Allows chronological ordering of project v2 status updates.
+)
+
+// ProjectV2StatusUpdateStatus represents the possible statuses of a project v2.
+type ProjectV2StatusUpdateStatus string
+
+// The possible statuses of a project v2.
+const (
+	ProjectV2StatusUpdateStatusInactive ProjectV2StatusUpdateStatus = "INACTIVE"  // A project v2 that is inactive.
+	ProjectV2StatusUpdateStatusOnTrack  ProjectV2StatusUpdateStatus = "ON_TRACK"  // A project v2 that is on track with no risks.
+	ProjectV2StatusUpdateStatusAtRisk   ProjectV2StatusUpdateStatus = "AT_RISK"   // A project v2 that is at risk and encountering some challenges.
+	ProjectV2StatusUpdateStatusOffTrack ProjectV2StatusUpdateStatus = "OFF_TRACK" // A project v2 that is off track and needs attention.
+	ProjectV2StatusUpdateStatusComplete ProjectV2StatusUpdateStatus = "COMPLETE"  // A project v2 that is complete.
 )
 
 // ProjectV2ViewLayout represents the layout of a project v2 view.
@@ -1812,10 +1904,14 @@ const (
 	RepositoryRuleTypeCommitterEmailPattern          RepositoryRuleType = "COMMITTER_EMAIL_PATTERN"           // Committer email pattern.
 	RepositoryRuleTypeBranchNamePattern              RepositoryRuleType = "BRANCH_NAME_PATTERN"               // Branch name pattern.
 	RepositoryRuleTypeTagNamePattern                 RepositoryRuleType = "TAG_NAME_PATTERN"                  // Tag name pattern.
+	RepositoryRuleTypeFilePathRestriction            RepositoryRuleType = "FILE_PATH_RESTRICTION"             // Prevent commits that include changes in specified file paths from being pushed to the commit graph. NOTE: This rule is in beta and subject to change.
+	RepositoryRuleTypeMaxFilePathLength              RepositoryRuleType = "MAX_FILE_PATH_LENGTH"              // Prevent commits that include file paths that exceed a specified character limit from being pushed to the commit graph. NOTE: This rule is in beta and subject to change.
+	RepositoryRuleTypeFileExtensionRestriction       RepositoryRuleType = "FILE_EXTENSION_RESTRICTION"        // Prevent commits that include files with specified file extensions from being pushed to the commit graph. NOTE: This rule is in beta and subject to change.
+	RepositoryRuleTypeMaxFileSize                    RepositoryRuleType = "MAX_FILE_SIZE"                     // Prevent commits that exceed a specified file size limit from being pushed to the commit. NOTE: This rule is in beta and subject to change.
 	RepositoryRuleTypeWorkflows                      RepositoryRuleType = "WORKFLOWS"                         // Require all changes made to a targeted branch to pass the specified workflows before they can be merged.
-	RepositoryRuleTypeRulesetRequiredSignatures      RepositoryRuleType = "RULESET_REQUIRED_SIGNATURES"       // Commits pushed to matching refs must have verified signatures.
 	RepositoryRuleTypeSecretScanning                 RepositoryRuleType = "SECRET_SCANNING"                   // Secret scanning.
 	RepositoryRuleTypeWorkflowUpdates                RepositoryRuleType = "WORKFLOW_UPDATES"                  // Workflow files cannot be modified.
+	RepositoryRuleTypeCodeScanning                   RepositoryRuleType = "CODE_SCANNING"                     // Choose which tools must provide code scanning results before the reference is updated. When configured, code scanning must be enabled and have results for both the commit and the reference being updated.
 )
 
 // RepositoryRulesetBypassActorBypassMode represents the bypass mode for a specific actor on a ruleset.
@@ -1827,13 +1923,14 @@ const (
 	RepositoryRulesetBypassActorBypassModePullRequest RepositoryRulesetBypassActorBypassMode = "PULL_REQUEST" // The actor can only bypass rules via a pull request.
 )
 
-// RepositoryRulesetTarget represents the targets supported for rulesets.
+// RepositoryRulesetTarget represents the targets supported for rulesets. NOTE: The push target is in beta and subject to change.
 type RepositoryRulesetTarget string
 
-// The targets supported for rulesets.
+// The targets supported for rulesets. NOTE: The push target is in beta and subject to change.
 const (
 	RepositoryRulesetTargetBranch RepositoryRulesetTarget = "BRANCH" // Branch.
 	RepositoryRulesetTargetTag    RepositoryRulesetTarget = "TAG"    // Tag.
+	RepositoryRulesetTargetPush   RepositoryRulesetTarget = "PUSH"   // Push.
 )
 
 // RepositoryVisibility represents the repository's visibility level.
@@ -2020,6 +2117,16 @@ const (
 	SocialAccountProviderTwitter   SocialAccountProvider = "TWITTER"   // Microblogging website.
 	SocialAccountProviderYouTube   SocialAccountProvider = "YOUTUBE"   // Online video platform.
 	SocialAccountProviderNpm       SocialAccountProvider = "NPM"       // JavaScript package registry.
+)
+
+// SponsorAndLifetimeValueOrderField represents properties by which sponsor and lifetime value connections can be ordered.
+type SponsorAndLifetimeValueOrderField string
+
+// Properties by which sponsor and lifetime value connections can be ordered.
+const (
+	SponsorAndLifetimeValueOrderFieldSponsorLogin     SponsorAndLifetimeValueOrderField = "SPONSOR_LOGIN"     // Order results by the sponsor's login (username).
+	SponsorAndLifetimeValueOrderFieldSponsorRelevance SponsorAndLifetimeValueOrderField = "SPONSOR_RELEVANCE" // Order results by the sponsor's relevance to the viewer.
+	SponsorAndLifetimeValueOrderFieldLifetimeValue    SponsorAndLifetimeValueOrderField = "LIFETIME_VALUE"    // Order results by how much money the sponsor has paid in total.
 )
 
 // SponsorOrderField represents properties by which sponsor connections can be ordered.
@@ -2515,6 +2622,15 @@ const (
 	TeamRepositoryOrderFieldName       TeamRepositoryOrderField = "NAME"       // Order repositories by name.
 	TeamRepositoryOrderFieldPermission TeamRepositoryOrderField = "PERMISSION" // Order repositories by permission.
 	TeamRepositoryOrderFieldStargazers TeamRepositoryOrderField = "STARGAZERS" // Order repositories by number of stargazers.
+)
+
+// TeamReviewAssignmentAlgorithm represents the possible team review assignment algorithms.
+type TeamReviewAssignmentAlgorithm string
+
+// The possible team review assignment algorithms.
+const (
+	TeamReviewAssignmentAlgorithmRoundRobin  TeamReviewAssignmentAlgorithm = "ROUND_ROBIN"  // Alternate reviews between each team member.
+	TeamReviewAssignmentAlgorithmLoadBalance TeamReviewAssignmentAlgorithm = "LOAD_BALANCE" // Balance review load across the entire team.
 )
 
 // TeamRole represents the role of a user on a team.

@@ -7,7 +7,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	entitlement2 "github.com/conductorone/baton-sdk/pkg/types/entitlement"
-	"github.com/google/go-github/v63/github"
+	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
 
 	"github.com/conductorone/baton-github/test"
@@ -26,7 +26,7 @@ func TestTeam(t *testing.T) {
 		cache := newOrgNameCache(githubClient)
 		client := teamBuilder(githubClient, cache)
 
-		organization, _ := organizationResource(ctx, githubOrganization, nil)
+		organization, _ := organizationResource(ctx, githubOrganization, nil, false)
 		team, _ := teamResource(githubTeam, organization.Id)
 		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)
 

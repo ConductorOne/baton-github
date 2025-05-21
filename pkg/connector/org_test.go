@@ -9,7 +9,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
-	"github.com/google/go-github/v63/github"
+	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,9 +23,9 @@ func TestOrganization(t *testing.T) {
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
-		client := orgBuilder(githubClient, cache, nil)
+		client := orgBuilder(githubClient, cache, nil, false)
 
-		organization, _ := organizationResource(ctx, githubOrganization, nil)
+		organization, _ := organizationResource(ctx, githubOrganization, nil, false)
 		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)
 
 		entitlement := v2.Entitlement{

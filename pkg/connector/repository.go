@@ -12,7 +12,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/google/go-github/v63/github"
+	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 )
@@ -298,7 +298,7 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			return nil, fmt.Errorf("github-connectorv2: failed to add user to a repository: %w", e)
 		}
 	case resourceTypeTeam.Id:
-		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID)
+		team, _, err := o.client.Teams.GetTeamBySlug(ctx, fmt.Sprintf("%v", org.GetName()), fmt.Sprintf("%v", principalID))
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to get team: %w", err)
 		}
@@ -356,7 +356,7 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 			return nil, fmt.Errorf("github-connectorv2: failed to remove user from repo: %w", e)
 		}
 	case resourceTypeTeam.Id:
-		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID)
+		team, _, err := o.client.Teams.GetTeamBySlug(ctx, fmt.Sprintf("%v", org.GetName()), fmt.Sprintf("%v", principalID))
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to get team: %w", err)
 		}
