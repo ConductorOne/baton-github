@@ -22,6 +22,8 @@ type MockGitHub struct {
 	repositories            map[int64]github.Repository
 	teams                   map[int64]github.Team
 	users                   map[int64]github.User
+	orgRoles                map[int64]mapset.Set[int64] // Maps role ID to set of user IDs
+	SimulateOrgRolePermErr  bool                        // Simulate permission error for org roles
 }
 
 func NewMockGitHub() *MockGitHub {
@@ -33,6 +35,7 @@ func NewMockGitHub() *MockGitHub {
 		repositories:            map[int64]github.Repository{},
 		teams:                   map[int64]github.Team{},
 		users:                   map[int64]github.User{},
+		orgRoles:                map[int64]mapset.Set[int64]{},
 	}
 }
 
@@ -90,6 +93,7 @@ func (mgh MockGitHub) Seed() (
 	*github.Repository,
 	*github.Team,
 	*github.User,
+	*OrganizationRole,
 	error,
 ) {
 	organizationId := int64(12)
@@ -134,7 +138,16 @@ func (mgh MockGitHub) Seed() (
 	mgh.teamMemberships[teamId] = mapset.NewSet[int64](userId)
 	mgh.organizationMemberships[organizationId] = mapset.NewSet[int64](userId)
 
-	return &githubOrganization, &githubRepository, &githubTeam, &githubUser, nil
+	// Add a mock org role
+	roleId := int64(1)
+	orgRole := &OrganizationRole{
+		ID:          roleId,
+		Name:        "Test Role",
+		Description: "Test Role Description",
+	}
+	mgh.orgRoles[roleId] = mapset.NewSet[int64]() // Initialize the set for this role
+
+	return &githubOrganization, &githubRepository, &githubTeam, &githubUser, orgRole, nil
 }
 
 func getResource[T interface{}](
@@ -494,6 +507,196 @@ func (mgh MockGitHub) removeRepositoryCollaborator(
 	)
 }
 
+type OrganizationRole struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type OrganizationRoles struct {
+	CustomRepoRoles []*OrganizationRole `json:"roles"`
+}
+
+func (mgh MockGitHub) getOrgRoles(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	if mgh.SimulateOrgRolePermErr {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	orgID, _ := getCrossTableId(w, variables, "org")
+	if _, ok := mgh.organizations[orgID]; !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	// Return a mock role
+	role := &OrganizationRole{
+		ID:          1,
+		Name:        "Test Role",
+		Description: "Test Role Description",
+	}
+
+	roles := &OrganizationRoles{
+		CustomRepoRoles: []*OrganizationRole{role},
+	}
+
+	_, _ = w.Write(mock.MustMarshal(roles))
+}
+
+func (mgh MockGitHub) getOrgRoleTeams(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	roleID, _ := getCrossTableId(w, variables, "role_id")
+	if _, ok := mgh.orgRoles[roleID]; !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	// Get pagination parameters
+	page := 1
+	perPage := 30
+	if pageStr, ok := variables["page"]; ok {
+		if p, err := strconv.Atoi(pageStr); err == nil {
+			page = p
+		}
+	}
+	if perPageStr, ok := variables["per_page"]; ok {
+		if pp, err := strconv.Atoi(perPageStr); err == nil {
+			perPage = pp
+		}
+	}
+
+	// Return paginated teams
+	teams := make([]*github.Team, 0)
+	start := (page - 1) * perPage
+	end := start + perPage
+	i := 0
+
+	// Get users with this role
+	roleUsers := mgh.orgRoles[roleID]
+
+	// Find teams that have members with this role
+	for teamID, team := range mgh.teams {
+		teamMembers := mgh.teamMemberships[teamID]
+		if teamMembers == nil {
+			continue
+		}
+
+		// Check if any team member has the role
+		for _, userID := range teamMembers.ToSlice() {
+			if roleUsers.Contains(userID) {
+				if i >= start && i < end {
+					teams = append(teams, &team)
+				}
+				i++
+				if i >= end {
+					break
+				}
+				break // Found a member with the role, no need to check other members
+			}
+		}
+	}
+
+	_, _ = w.Write(mock.MustMarshal(teams))
+}
+
+func (mgh MockGitHub) getOrgRoleUsers(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	roleID, _ := getCrossTableId(w, variables, "role_id")
+	memberships, ok := mgh.orgRoles[roleID]
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	// Get pagination parameters
+	page := 1
+	perPage := 30
+	if pageStr, ok := variables["page"]; ok {
+		if p, err := strconv.Atoi(pageStr); err == nil {
+			page = p
+		}
+	}
+	if perPageStr, ok := variables["per_page"]; ok {
+		if pp, err := strconv.Atoi(perPageStr); err == nil {
+			perPage = pp
+		}
+	}
+
+	// Return paginated users
+	users := make([]github.User, 0)
+	start := (page - 1) * perPage
+	end := start + perPage
+	i := 0
+	for _, userID := range memberships.ToSlice() {
+		if i >= start && i < end {
+			if user, ok := mgh.users[userID]; ok {
+				users = append(users, user)
+			}
+		}
+		i++
+		if i >= end {
+			break
+		}
+	}
+
+	_, _ = w.Write(mock.MustMarshal(users))
+}
+
+func (mgh MockGitHub) addOrgRoleUser(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	roleID, _ := getCrossTableId(w, variables, "role_id")
+	userID, _ := getUserId(w, variables)
+
+	if _, ok := mgh.orgRoles[roleID]; !ok {
+		mgh.orgRoles[roleID] = mapset.NewSet[int64]()
+	}
+	mgh.orgRoles[roleID].Add(userID)
+}
+
+func (mgh MockGitHub) removeOrgRoleUser(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	roleID, _ := getCrossTableId(w, variables, "role_id")
+	userID, _ := getUserId(w, variables)
+
+	if memberships, ok := mgh.orgRoles[roleID]; ok {
+		memberships.Remove(userID)
+	}
+}
+
+// Add a handler for GET /orgs/{org}/organization-roles/{role_id}.
+func (mgh MockGitHub) getOrgRoleByID(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	orgID, _ := getCrossTableId(w, variables, "org")
+	roleID, _ := getCrossTableId(w, variables, "role_id")
+	if _, ok := mgh.organizations[orgID]; !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	// Only support role ID 1 for the mock
+	if roleID != 1 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	role := &OrganizationRole{
+		ID:          1,
+		Name:        "Test Role",
+		Description: "Test Role Description",
+	}
+	_, _ = w.Write(mock.MustMarshal(role))
+}
+
 type handler = func(w http.ResponseWriter, variables map[string]string)
 
 // addEndpointHandler takes a string interpolation pattern and a handler
@@ -540,6 +743,16 @@ func (mgh MockGitHub) Server() *http.Client {
 		mock.PutReposCollaboratorsByOwnerByRepoByUsername:                   mgh.addRepositoryCollaborator,
 		DeleteOrganizationsTeamsMembershipsByOrganizationByTeamIdByUsername: mgh.removeMembership,
 		PutOrganizationsTeamsMembershipsByOrganizationByTeamIdByUsername:    mgh.addMembership,
+		// Add organization role endpoints
+		GetOrgsRolesByOrg:              mgh.getOrgRoles,
+		GetOrgsRolesTeamsByOrgByRoleId: mgh.getOrgRoleTeams,
+		GetOrgsRolesUsersByOrgByRoleId: mgh.getOrgRoleUsers,
+		mock.EndpointPattern{
+			Pattern: "/orgs/{org}/organization-roles/{role_id}",
+			Method:  "GET",
+		}: mgh.getOrgRoleByID,
+		PutOrgsRolesUsersByOrgByRoleIdByUsername:    mgh.addOrgRoleUser,
+		DeleteOrgsRolesUsersByOrgByRoleIdByUsername: mgh.removeOrgRoleUser,
 	}
 
 	options := make([]mock.MockBackendOption, 0)
@@ -547,4 +760,25 @@ func (mgh MockGitHub) Server() *http.Client {
 		options = append(options, addEndpointHandler(key, value))
 	}
 	return mock.NewMockedHTTPClient(options...)
+}
+
+// AddTeam adds a team to the mock server for testing purposes.
+func (mgh *MockGitHub) AddTeam(team github.Team) {
+	mgh.teams[*team.ID] = team
+}
+
+// AddUserToOrgRole adds a user to an org role for testing purposes.
+func (mgh *MockGitHub) AddUserToOrgRole(roleID int64, userID int64) {
+	if _, ok := mgh.orgRoles[roleID]; !ok {
+		mgh.orgRoles[roleID] = mapset.NewSet[int64]()
+	}
+	mgh.orgRoles[roleID].Add(userID)
+}
+
+// AddMembership adds a user to a team for testing purposes.
+func (mgh *MockGitHub) AddMembership(teamID int64, userID int64) {
+	if _, ok := mgh.teamMemberships[teamID]; !ok {
+		mgh.teamMemberships[teamID] = mapset.NewSet[int64]()
+	}
+	mgh.teamMemberships[teamID].Add(userID)
 }

@@ -20,7 +20,7 @@ func TestRepository(t *testing.T) {
 	t.Run("should grant and revoke entitlements", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
 
-		githubOrganization, githubRepository, _, githubUser, _ := mgh.Seed()
+		githubOrganization, githubRepository, _, githubUser, _, _ := mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)

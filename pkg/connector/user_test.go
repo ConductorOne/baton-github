@@ -29,7 +29,7 @@ func TestUsersList(t *testing.T) {
 		t.Run(fmt.Sprintf("should get a list of users (SAML:%s)", testCase.message), func(t *testing.T) {
 			mgh := mocks.NewMockGitHub()
 
-			githubOrganization, _, _, githubUser, _ := mgh.Seed()
+			githubOrganization, _, _, githubUser, _, _ := mgh.Seed()
 
 			organization, err := organizationResource(
 				ctx,
