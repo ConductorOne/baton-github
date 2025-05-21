@@ -26,7 +26,7 @@ func TestOrgRole(t *testing.T) {
 		cache := newOrgNameCache(githubClient)
 		client := orgRoleBuilder(githubClient, cache)
 
-		organization, _ := organizationResource(ctx, githubOrganization, nil)
+		organization, _ := organizationResource(ctx, githubOrganization, nil, true)
 		roleResource, _ := orgRoleResource(ctx, &OrganizationRole{
 			ID:          orgRole.ID,
 			Name:        orgRole.Name,
@@ -91,7 +91,7 @@ func TestOrgRole(t *testing.T) {
 		cache := newOrgNameCache(githubClient)
 		client := orgRoleBuilder(githubClient, cache)
 
-		organization, _ := organizationResource(ctx, githubOrganization, nil)
+		organization, _ := organizationResource(ctx, githubOrganization, nil, true)
 
 		// Test List with permission error
 		resources, nextToken, annotations, err := client.List(ctx, organization.Id, &pagination.Token{})
