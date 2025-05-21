@@ -433,7 +433,6 @@ func (o *orgResourceType) listOrganizationsFromAppInstallations(
 	ctx context.Context,
 	parentResourceID *v2.ResourceId,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
-
 	installation, resp, err := o.appClient.Apps.GetInstallation(ctx, o.installationID)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("github-connector: failed to fetch installations: %w", err)
