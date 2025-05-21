@@ -1,8 +1,6 @@
 package config
 
 import (
-	"fmt"
-
 	"github.com/conductorone/baton-sdk/pkg/field"
 )
 
@@ -23,14 +21,30 @@ var (
 		"app-id",
 		field.WithDescription("The GitHub App to connect to."),
 	)
-	appPrivateKey = field.StringField(
-		"app-privatekey",
-		field.WithDescription("The private key used to connect to the GitHub App"),
+
+	appPrivateKeyPath = field.StringField(
+		"app-privatekey-path",
+		field.WithDescription("Path to private key that is used to connect to the GitHub App"),
 	)
 	syncSecrets = field.BoolField(
 		"sync-secrets",
 		field.WithDescription(`Whether to sync secrets or not`),
 	)
+	installationID = field.StringField(
+		"installation-id",
+		field.WithDescription("The GitHub app installation id"),
+	)
+	fieldRelationships = []field.SchemaFieldRelationship{
+		field.FieldsAtLeastOneUsed(
+			accessTokenField,
+			appPrivateKeyPath,
+		),
+		field.FieldsRequiredTogether(
+			appPrivateKeyPath,
+			appIDField,
+			installationID,
+		),
+	}
 )
 
 //go:generate go run ./gen
@@ -40,14 +54,6 @@ var Config = field.NewConfiguration([]field.SchemaField{
 	instanceUrlField,
 	syncSecrets,
 	appIDField,
-	appPrivateKey,
-})
-
-func ValidateConfig(cfg *Github) error {
-	apiKey := cfg.GetString(accessTokenField.FieldName)
-	appKey := cfg.GetString(appIDField.FieldName)
-	if len(apiKey) == 0 && len(appKey) == 0 {
-		return fmt.Errorf("api-key or app-privatekey is missing")
-	}
-	return nil
-}
+	appPrivateKeyPath,
+	installationID,
+}, fieldRelationships...)
