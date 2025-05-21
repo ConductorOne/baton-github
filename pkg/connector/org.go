@@ -100,7 +100,7 @@ func (o *orgResourceType) List(
 	pToken *pagination.Token,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
 	if o.appClient != nil {
-		return o.listOrganizationsFromAppInstallations(ctx, parentResourceID, pToken)
+		return o.listOrganizationsFromAppInstallations(ctx, parentResourceID)
 	}
 
 	l := ctxzap.Extract(ctx)
@@ -432,7 +432,6 @@ func orgBuilder(client, appClient *github.Client, installationID int64, orgCache
 func (o *orgResourceType) listOrganizationsFromAppInstallations(
 	ctx context.Context,
 	parentResourceID *v2.ResourceId,
-	pToken *pagination.Token,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
 
 	installation, resp, err := o.appClient.Apps.GetInstallation(ctx, o.installationID)

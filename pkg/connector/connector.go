@@ -234,20 +234,22 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 		}
 	}
 
-	i, err := strconv.ParseInt(ghc.InstallationId, 10, 64)
-	if err != nil {
-		return nil, err
+	gh := &GitHub{
+		client:        client,
+		appClient:     appClient,
+		instanceURL:   ghc.InstanceUrl,
+		orgs:          ghc.Orgs,
+		graphqlClient: graphqlClient,
+		orgCache:      newOrgNameCache(client),
+		syncSecrets:   ghc.SyncSecrets,
 	}
 
-	gh := &GitHub{
-		client:         client,
-		appClient:      appClient,
-		instanceURL:    ghc.InstanceUrl,
-		orgs:           ghc.Orgs,
-		graphqlClient:  graphqlClient,
-		orgCache:       newOrgNameCache(client),
-		syncSecrets:    ghc.SyncSecrets,
-		installationID: i,
+	if ghc.InstallationId != "" {
+		i, err := strconv.ParseInt(ghc.InstallationId, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		gh.installationID = i
 	}
 	return gh, nil
 }
