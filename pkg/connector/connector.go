@@ -49,6 +49,12 @@ var (
 		},
 		Annotations: v1AnnotationsForResourceType("user"),
 	}
+	resourceTypeOrgRole = &v2.ResourceType{
+		Id:          "org_role",
+		DisplayName: "Organization Role",
+		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_ROLE},
+		Annotations: v1AnnotationsForResourceType("org_role"),
+	}
 )
 
 type GitHub struct {
@@ -66,6 +72,7 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 		teamBuilder(gh.client, gh.orgCache),
 		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache),
 		repositoryBuilder(gh.client, gh.orgCache),
+		orgRoleBuilder(gh.client, gh.orgCache),
 	}
 }
 
