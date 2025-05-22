@@ -2,7 +2,6 @@ package connector
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -66,33 +65,6 @@ func organizationResource(
 		resource.WithAnnotation(
 			annotations...,
 		),
-	)
-}
-
-func organizationResourceFromInstallation(
-	ctx context.Context,
-	account *github.User,
-	parentResourceID *v2.ResourceId,
-	syncSecrets bool,
-) (*v2.Resource, error) {
-	annotations := []proto.Message{
-		&v2.ExternalLink{Url: account.GetHTMLURL()},
-		&v2.V1Identifier{Id: fmt.Sprintf("org:%d", account.GetID())},
-		&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
-		&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
-		&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
-	}
-
-	if syncSecrets {
-		annotations = append(annotations, &v2.ChildResourceType{ResourceTypeId: resourceTypeApiToken.Id})
-	}
-
-	return resource.NewResource(
-		account.GetLogin(),
-		resourceTypeOrg,
-		account.GetID(),
-		resource.WithParentResourceID(parentResourceID),
-		resource.WithAnnotation(annotations...),
 	)
 }
 
@@ -443,14 +415,14 @@ func (o *orgResourceType) listOrganizationsFromAppInstallations(
 	}
 
 	var (
-		installation *github.Installation
-		resp         *github.Response
-		err          error
+		org  *github.Organization
+		resp *github.Response
+		err  error
 	)
 	for orgName := range o.orgs {
-		installation, resp, err = findInstallation(ctx, o.appClient, orgName)
+		org, resp, err = o.client.Organizations.Get(ctx, orgName)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("github-connector: failed to fetch installations: %w", err)
+			return nil, "", nil, fmt.Errorf("github-connector: failed to fetch organization: %w", err)
 		}
 	}
 
@@ -459,11 +431,7 @@ func (o *orgResourceType) listOrganizationsFromAppInstallations(
 		return nil, "", nil, err
 	}
 
-	if installation.GetAccount().GetType() != "Organization" {
-		return nil, "", nil, errors.New("github-connector: GitHub installation with this ID is not associated with an organization account")
-	}
-
-	orgResource, err := organizationResourceFromInstallation(ctx, installation.Account, parentResourceID, o.syncSecrets)
+	orgResource, err := organizationResource(ctx, org, parentResourceID, o.syncSecrets)
 	if err != nil {
 		return nil, "", nil, err
 	}
