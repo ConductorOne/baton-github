@@ -32,13 +32,12 @@ var orgAccessLevels = []string{
 }
 
 type orgResourceType struct {
-	resourceType   *v2.ResourceType
-	client         *github.Client
-	appClient      *github.Client
-	orgs           map[string]struct{}
-	orgCache       *orgNameCache
-	syncSecrets    bool
-	installationID int64
+	resourceType *v2.ResourceType
+	client       *github.Client
+	appClient    *github.Client
+	orgs         map[string]struct{}
+	orgCache     *orgNameCache
+	syncSecrets  bool
 }
 
 func organizationResource(

@@ -200,7 +200,7 @@ func newGitHubClient(ctx context.Context, instanceURL string, accessToken string
 
 // New returns the GitHub connector configured to sync against the instance URL.
 func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
-	jwttoken, patToken, err := getClientToken(ctx, ghc, appKey)
+	jwttoken, patToken, err := getClientToken(ghc, appKey)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +302,7 @@ func loadPrivateKeyFromString(p string) (*rsa.PrivateKey, error) {
 // getClientToken returns
 // 1. fine-grained personal access tokens if any.
 // 2. JWT token if using github app.
-func getClientToken(ctx context.Context, ghc *cfg.Github, privateKey string) (string, string, error) {
+func getClientToken(ghc *cfg.Github, privateKey string) (string, string, error) {
 	if ghc.Token != "" {
 		return "", ghc.Token, nil
 	}
@@ -321,7 +321,6 @@ func getClientToken(ctx context.Context, ghc *cfg.Github, privateKey string) (st
 		return "", "", err
 	}
 	return token, "", nil
-
 }
 
 func findInstallation(ctx context.Context, c *github.Client, orgName string) (*github.Installation, *github.Response, error) {
