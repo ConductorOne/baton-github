@@ -3,10 +3,65 @@ name: Release
 on:
   push:
     tags:
-      - '*'
+      - "*"
 
 jobs:
+  generate-images-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELENG_GITHUB_TOKEN }}
+          fetch-depth: 0
+      - name: Generate images json
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          rm -f images.json  # Explicitly remove if exists
+          cat > images.json << EOF
+          {
+            "images": [
+              {
+                "href": "ghcr.io/conductorone/baton-github-test:${VERSION}-amd64",
+                "type": "linux-amd64"
+              },
+              {
+                "href": "ghcr.io/conductorone/baton-github-test:${VERSION}-arm64",
+                "type": "linux-arm64"
+              },
+              {
+                "href": "168442440833.dkr.ecr.us-west-2.amazonaws.com/baton-github-test:${VERSION}-arm64",
+                "type": "lambda-arm64"
+              }
+            ]
+          }
+          EOF
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Commit and push to tag
+        run: |
+          # create a new branch from the tag, make our changes, and then update the tag
+          # to make sure the file is accurate in the git history when we query by this tag later
+          TAG=${GITHUB_REF#refs/tags/}
+          git checkout -b temp-branch
+          # Force add the file even if it exists
+          git add -f images.json
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Add images.json for ${TAG}"
+            git tag -f ${TAG}
+            git push origin ${TAG} --force
+          fi
+          # Switch back to the original branch before cleanup
+          git checkout ${TAG}
+          # Clean up without touching main
+          git branch -D temp-branch
   goreleaser:
+    needs: generate-images-metadata
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -34,6 +89,7 @@ jobs:
           AC_PASSWORD: ${{ secrets.AC_PASSWORD }}
           AC_PROVIDER: ${{ secrets.AC_PROVIDER }}
   goreleaser-docker:
+    needs: generate-images-metadata
     permissions:
       id-token: write
       contents: read
