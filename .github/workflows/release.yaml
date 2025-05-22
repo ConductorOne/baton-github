@@ -4,9 +4,15 @@ on:
   push:
     tags:
       - "*"
+    paths-ignore:
+      - "images.json"
 
 jobs:
   generate-images-metadata:
+    # Add concurrency to prevent duplicate runs
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
