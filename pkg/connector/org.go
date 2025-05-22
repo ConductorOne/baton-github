@@ -418,7 +418,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	return nil, nil
 }
 
-func orgBuilder(client, appClient *github.Client, installationID int64, orgCache *orgNameCache, orgs []string, syncSecrets bool) *orgResourceType {
+func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool) *orgResourceType {
 	orgMap := make(map[string]struct{})
 
 	for _, o := range orgs {
@@ -426,13 +426,12 @@ func orgBuilder(client, appClient *github.Client, installationID int64, orgCache
 	}
 
 	return &orgResourceType{
-		resourceType:   resourceTypeOrg,
-		orgs:           orgMap,
-		client:         client,
-		appClient:      appClient,
-		orgCache:       orgCache,
-		syncSecrets:    syncSecrets,
-		installationID: installationID,
+		resourceType: resourceTypeOrg,
+		orgs:         orgMap,
+		client:       client,
+		appClient:    appClient,
+		orgCache:     orgCache,
+		syncSecrets:  syncSecrets,
 	}
 }
 
@@ -440,18 +439,25 @@ func (o *orgResourceType) listOrganizationsFromAppInstallations(
 	ctx context.Context,
 	parentResourceID *v2.ResourceId,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
-	installation, resp, err := o.appClient.Apps.GetInstallation(ctx, o.installationID)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("github-connector: failed to fetch installations: %w", err)
+	if len(o.orgs) != 1 {
+		return nil, "", nil, fmt.Errorf("github-connector: only one org should be specified")
+	}
+
+	var (
+		installation *github.Installation
+		resp         *github.Response
+		err          error
+	)
+	for orgName := range o.orgs {
+		installation, resp, err = findInstallation(ctx, o.appClient, orgName)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("github-connector: failed to fetch installations: %w", err)
+		}
 	}
 
 	_, reqAnnos, err := parseResp(resp)
 	if err != nil {
 		return nil, "", nil, err
-	}
-
-	if _, ok := o.orgs[installation.Account.GetLogin()]; !ok && len(o.orgs) > 0 {
-		return nil, "", nil, fmt.Errorf("github-connector: installation id doesn't match the org name")
 	}
 
 	if installation.GetAccount().GetType() != "Organization" {

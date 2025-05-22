@@ -10,7 +10,6 @@ type Github struct {
 	SyncSecrets bool `mapstructure:"sync-secrets"`
 	AppId string `mapstructure:"app-id"`
 	AppPrivatekeyPath string `mapstructure:"app-privatekey-path"`
-	InstallationId string `mapstructure:"installation-id"`
 }
 
 func (c* Github) findFieldByTag(tagValue string) (any, bool) {

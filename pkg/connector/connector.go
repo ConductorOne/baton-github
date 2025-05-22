@@ -4,14 +4,12 @@ import (
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -81,12 +79,11 @@ type GitHub struct {
 	hasSAMLEnabled *bool
 	orgCache       *orgNameCache
 	syncSecrets    bool
-	installationID int64
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
 	resourceSyncers := []connectorbuilder.ResourceSyncer{
-		orgBuilder(gh.client, gh.appClient, gh.installationID, gh.orgCache, gh.orgs, gh.syncSecrets),
+		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
 		teamBuilder(gh.client, gh.orgCache),
 		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache),
 		repositoryBuilder(gh.client, gh.orgCache),
@@ -168,22 +165,13 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annotations, error) {
 	orgLogins := gh.orgs
 	if len(orgLogins) > 1 {
-		return nil, fmt.Errorf("github-connector: Only one GitHub organization is allowed per group")
+		return nil, fmt.Errorf("github-connector: only one org is allowed when using github app")
 	}
 
-	installation, resp, err := gh.appClient.Apps.GetInstallation(ctx, gh.installationID)
+	_, _, err := findInstallation(ctx, gh.appClient, orgLogins[0])
 	if err != nil {
 		return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
 	}
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, status.Error(codes.Unauthenticated, "github token is not authorized")
-	}
-
-	if len(orgLogins) > 0 && installation.GetAccount().GetLogin() != orgLogins[0] {
-		return nil, fmt.Errorf("github-connector: installation id doesn't match the org name")
-	}
-
 	return nil, nil
 }
 
@@ -212,26 +200,40 @@ func newGitHubClient(ctx context.Context, instanceURL string, accessToken string
 
 // New returns the GitHub connector configured to sync against the instance URL.
 func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
-	jwttoken, token, err := getClientToken(ctx, ghc, appKey)
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := newGitHubClient(ctx, ghc.InstanceUrl, token)
-	if err != nil {
-		return nil, err
-	}
-	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, token)
+	jwttoken, patToken, err := getClientToken(ctx, ghc, appKey)
 	if err != nil {
 		return nil, err
 	}
 
 	var appClient *github.Client
 	if jwttoken != "" {
+		if len(ghc.Orgs) != 1 {
+			return nil, fmt.Errorf("github-connector: only one org should be specified")
+		}
+
 		appClient, err = newGitHubClient(ctx, ghc.InstanceUrl, jwttoken)
 		if err != nil {
 			return nil, err
 		}
+		installation, _, err := findInstallation(ctx, appClient, ghc.Orgs[0])
+		if err != nil {
+			return nil, err
+		}
+
+		token, err := getInstallationToken(ctx, appClient, installation.GetID())
+		if err != nil {
+			return nil, err
+		}
+		patToken = token
+	}
+
+	client, err := newGitHubClient(ctx, ghc.InstanceUrl, patToken)
+	if err != nil {
+		return nil, err
+	}
+	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, patToken)
+	if err != nil {
+		return nil, err
 	}
 
 	gh := &GitHub{
@@ -242,14 +244,6 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 		graphqlClient: graphqlClient,
 		orgCache:      newOrgNameCache(client),
 		syncSecrets:   ghc.SyncSecrets,
-	}
-
-	if ghc.InstallationId != "" {
-		i, err := strconv.ParseInt(ghc.InstallationId, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		gh.installationID = i
 	}
 	return gh, nil
 }
@@ -307,7 +301,7 @@ func loadPrivateKeyFromString(p string) (*rsa.PrivateKey, error) {
 
 // getClientToken returns
 // 1. fine-grained personal access tokens if any.
-// 2. (JWT token, installation access tokens) if using github app.
+// 2. JWT token if using github app.
 func getClientToken(ctx context.Context, ghc *cfg.Github, privateKey string) (string, string, error) {
 	if ghc.Token != "" {
 		return "", ghc.Token, nil
@@ -326,33 +320,28 @@ func getClientToken(ctx context.Context, ghc *cfg.Github, privateKey string) (st
 	if err != nil {
 		return "", "", err
 	}
+	return token, "", nil
 
-	req, err := http.NewRequestWithContext(ctx,
-		http.MethodPost,
-		fmt.Sprintf("https://api.github.com/app/installations/%s/access_tokens", ghc.InstallationId),
-		nil,
-	)
+}
+
+func findInstallation(ctx context.Context, c *github.Client, orgName string) (*github.Installation, *github.Response, error) {
+	installation, resp, err := c.Apps.FindOrganizationInstallation(ctx, orgName)
 	if err != nil {
-		return "", "", err
+		return nil, nil, err
 	}
+	return installation, resp, nil
+}
 
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := http.DefaultClient.Do(req)
+func getInstallationToken(ctx context.Context, c *github.Client, id int64) (string, error) {
+	token, resp, err := c.Apps.CreateInstallationToken(ctx, id, &github.InstallationTokenOptions{})
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("GitHub API error: %s", body)
+		return "", fmt.Errorf("GitHub API error: %s", body)
 	}
 
-	var result struct {
-		Token string `json:"token"`
-	}
-	err = json.NewDecoder(resp.Body).Decode(&result)
-	return token, result.Token, err
+	return token.GetToken(), nil
 }

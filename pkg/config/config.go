@@ -30,19 +30,14 @@ var (
 		"sync-secrets",
 		field.WithDescription(`Whether to sync secrets or not`),
 	)
-	installationID = field.StringField(
-		"installation-id",
-		field.WithDescription("The GitHub app installation id"),
-	)
 	fieldRelationships = []field.SchemaFieldRelationship{
-		field.FieldsAtLeastOneUsed(
+		field.FieldsMutuallyExclusive(
 			accessTokenField,
 			appPrivateKeyPath,
 		),
 		field.FieldsRequiredTogether(
 			appPrivateKeyPath,
 			appIDField,
-			installationID,
 		),
 	}
 )
@@ -55,5 +50,4 @@ var Config = field.NewConfiguration([]field.SchemaField{
 	syncSecrets,
 	appIDField,
 	appPrivateKeyPath,
-	installationID,
 }, fieldRelationships...)
