@@ -78,7 +78,11 @@ func (o *orgResourceType) List(
 	pToken *pagination.Token,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
 	if o.appClient != nil {
-		return o.listOrganizationsFromAppInstallations(ctx, parentResourceID)
+		orgResource, pageToken, anno, err := o.listOrganizationsFromAppInstallations(ctx, parentResourceID)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return []*v2.Resource{orgResource}, pageToken, anno, nil
 	}
 
 	l := ctxzap.Extract(ctx)
@@ -409,7 +413,7 @@ func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs [
 func (o *orgResourceType) listOrganizationsFromAppInstallations(
 	ctx context.Context,
 	parentResourceID *v2.ResourceId,
-) ([]*v2.Resource, string, annotations.Annotations, error) {
+) (*v2.Resource, string, annotations.Annotations, error) {
 	if len(o.orgs) != 1 {
 		return nil, "", nil, fmt.Errorf("github-connector: only one org should be specified")
 	}
@@ -436,7 +440,5 @@ func (o *orgResourceType) listOrganizationsFromAppInstallations(
 		return nil, "", nil, err
 	}
 
-	return []*v2.Resource{
-		orgResource,
-	}, "", reqAnnos, nil
+	return orgResource, "", reqAnnos, nil
 }
