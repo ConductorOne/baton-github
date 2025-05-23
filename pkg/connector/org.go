@@ -33,6 +33,7 @@ var orgAccessLevels = []string{
 type orgResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
+	appClient    *github.Client
 	orgs         map[string]struct{}
 	orgCache     *orgNameCache
 	syncSecrets  bool
@@ -76,6 +77,14 @@ func (o *orgResourceType) List(
 	parentResourceID *v2.ResourceId,
 	pToken *pagination.Token,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
+	if o.appClient != nil {
+		orgResource, pageToken, anno, err := o.listOrganizationsFromAppInstallations(ctx, parentResourceID)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return []*v2.Resource{orgResource}, pageToken, anno, nil
+	}
+
 	l := ctxzap.Extract(ctx)
 
 	bag, page, err := parsePageToken(pToken.Token, &v2.ResourceId{ResourceType: resourceTypeOrg.Id})
@@ -384,7 +393,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	return nil, nil
 }
 
-func orgBuilder(client *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool) *orgResourceType {
+func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool) *orgResourceType {
 	orgMap := make(map[string]struct{})
 
 	for _, o := range orgs {
@@ -395,7 +404,41 @@ func orgBuilder(client *github.Client, orgCache *orgNameCache, orgs []string, sy
 		resourceType: resourceTypeOrg,
 		orgs:         orgMap,
 		client:       client,
+		appClient:    appClient,
 		orgCache:     orgCache,
 		syncSecrets:  syncSecrets,
 	}
+}
+
+func (o *orgResourceType) listOrganizationsFromAppInstallations(
+	ctx context.Context,
+	parentResourceID *v2.ResourceId,
+) (*v2.Resource, string, annotations.Annotations, error) {
+	if len(o.orgs) != 1 {
+		return nil, "", nil, fmt.Errorf("github-connector: only one org should be specified")
+	}
+
+	var (
+		org  *github.Organization
+		resp *github.Response
+		err  error
+	)
+	for orgName := range o.orgs {
+		org, resp, err = o.client.Organizations.Get(ctx, orgName)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("github-connector: failed to fetch organization: %w", err)
+		}
+	}
+
+	_, reqAnnos, err := parseResp(resp)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	orgResource, err := organizationResource(ctx, org, parentResourceID, o.syncSecrets)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	return orgResource, "", reqAnnos, nil
 }

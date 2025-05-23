@@ -48,7 +48,17 @@ func getConnector(ctx context.Context, ghc *cfg.Github) (types.ConnectorServer, 
 		return nil, err
 	}
 
-	cb, err := connector.New(ctx, ghc)
+	privateKey := ""
+	if ghc.AppPrivatekeyPath != "" {
+		keyBytes, err := os.ReadFile(ghc.AppPrivatekeyPath)
+		if err != nil {
+			l.Error("error reading app private key file", zap.Error(err), zap.String("appPrivateKeyPath", ghc.AppPrivatekeyPath))
+			return nil, fmt.Errorf("failed to read app private key file: %w", err)
+		}
+		privateKey = string(keyBytes)
+	}
+
+	cb, err := connector.New(ctx, ghc, privateKey)
 	if err != nil {
 		l.Error("error creating connector", zap.Error(err))
 		return nil, err

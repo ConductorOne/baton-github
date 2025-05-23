@@ -8,7 +8,6 @@ var (
 	accessTokenField = field.StringField(
 		"token",
 		field.WithDescription("The GitHub access token used to connect to the GitHub API."),
-		field.WithRequired(true),
 	)
 	orgsField = field.StringSliceField(
 		"orgs",
@@ -18,10 +17,29 @@ var (
 		"instance-url",
 		field.WithDescription(`The GitHub instance URL to connect to. (default "https://github.com")`),
 	)
+	appIDField = field.StringField(
+		"app-id",
+		field.WithDescription("The GitHub App to connect to."),
+	)
+
+	appPrivateKeyPath = field.StringField(
+		"app-privatekey-path",
+		field.WithDescription("Path to private key that is used to connect to the GitHub App"),
+	)
 	syncSecrets = field.BoolField(
 		"sync-secrets",
 		field.WithDescription(`Whether to sync secrets or not`),
 	)
+	fieldRelationships = []field.SchemaFieldRelationship{
+		field.FieldsMutuallyExclusive(
+			accessTokenField,
+			appPrivateKeyPath,
+		),
+		field.FieldsRequiredTogether(
+			appPrivateKeyPath,
+			appIDField,
+		),
+	}
 )
 
 //go:generate go run ./gen
@@ -30,4 +48,6 @@ var Config = field.NewConfiguration([]field.SchemaField{
 	orgsField,
 	instanceUrlField,
 	syncSecrets,
-})
+	appIDField,
+	appPrivateKeyPath,
+}, fieldRelationships...)

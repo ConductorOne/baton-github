@@ -8,6 +8,8 @@ type Github struct {
 	Orgs []string `mapstructure:"orgs"`
 	InstanceUrl string `mapstructure:"instance-url"`
 	SyncSecrets bool `mapstructure:"sync-secrets"`
+	AppId string `mapstructure:"app-id"`
+	AppPrivatekeyPath string `mapstructure:"app-privatekey-path"`
 }
 
 func (c* Github) findFieldByTag(tagValue string) (any, bool) {
