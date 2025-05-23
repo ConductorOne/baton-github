@@ -1,6 +1,16 @@
 {
   "fields": [
     {
+      "name": "app-id",
+      "description": "The GitHub App to connect to.",
+      "stringField": {}
+    },
+    {
+      "name": "app-privatekey-path",
+      "description": "Path to private key that is used to connect to the GitHub App",
+      "stringField": {}
+    },
+    {
       "name": "instance-url",
       "description": "The GitHub instance URL to connect to. (default \"https://github.com\")",
       "stringField": {}
@@ -62,12 +72,7 @@
     {
       "name": "token",
       "description": "The GitHub access token used to connect to the GitHub API.",
-      "isRequired": true,
-      "stringField": {
-        "rules": {
-          "isRequired": true
-        }
-      }
+      "stringField": {}
     }
   ]
 }
