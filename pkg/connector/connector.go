@@ -203,7 +203,6 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 	}
 
 	var (
-		client    *github.Client
 		appClient *github.Client
 		ts        = oauth2.StaticTokenSource(
 			&oauth2.Token{AccessToken: patToken},
@@ -247,7 +246,7 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 		)
 	}
 
-	client, err = newGitHubClient(ctx, ghc.InstanceUrl, ts)
+	client, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
 	if err != nil {
 		return nil, err
 	}
