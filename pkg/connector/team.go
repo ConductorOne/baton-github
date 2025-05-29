@@ -106,9 +106,6 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	for _, team := range teams {
 		fullTeam, _, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
 		if err != nil {
-			if isNotFoundError(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("team: %d not found", team.GetID()))
-			}
 			return nil, "", nil, err
 		}
 
