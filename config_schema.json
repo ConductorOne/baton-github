@@ -7,6 +7,17 @@
       "stringField": {}
     },
     {
+      "name": "orgs",
+      "description": "Limit syncing to specific organizations.",
+      "stringSliceField": {}
+    },
+    {
+      "name": "otel-collector-endpoint-tls-cert",
+      "description": "A PEM-encoded certificate to use as a CA for TLS connections to the OpenTelemetry collector",
+      "isOps": true,
+      "stringField": {}
+    },
+    {
       "name": "otel-tracing-disabled",
       "description": "Disable OpenTelemetry tracing",
       "isOps": true,
@@ -27,24 +38,29 @@
       "stringField": {}
     },
     {
+      "name": "instance-url",
+      "description": "The GitHub instance URL to connect to. (default \"https://github.com\")",
+      "stringField": {}
+    },
+    {
+      "name": "app-privatekey-path",
+      "description": "Path to private key that is used to connect to the GitHub App",
+      "stringField": {}
+    },
+    {
       "name": "otel-logging-disabled",
       "description": "Disable OpenTelemetry logging",
       "isOps": true,
       "boolField": {}
     },
     {
+      "name": "sync-secrets",
+      "description": "Whether to sync secrets or not",
+      "boolField": {}
+    },
+    {
       "name": "app-id",
       "description": "The GitHub App to connect to.",
-      "stringField": {}
-    },
-    {
-      "name": "orgs",
-      "description": "Limit syncing to specific organizations.",
-      "stringSliceField": {}
-    },
-    {
-      "name": "token",
-      "description": "The GitHub access token used to connect to the GitHub API.",
       "stringField": {}
     },
     {
@@ -54,24 +70,8 @@
       "boolField": {}
     },
     {
-      "name": "app-privatekey-path",
-      "description": "Path to private key that is used to connect to the GitHub App",
-      "stringField": {}
-    },
-    {
-      "name": "otel-collector-endpoint-tls-cert",
-      "description": "A PEM-encoded certificate to use as a CA for TLS connections to the OpenTelemetry collector",
-      "isOps": true,
-      "stringField": {}
-    },
-    {
-      "name": "sync-secrets",
-      "description": "Whether to sync secrets or not",
-      "boolField": {}
-    },
-    {
-      "name": "instance-url",
-      "description": "The GitHub instance URL to connect to. (default \"https://github.com\")",
+      "name": "token",
+      "description": "The GitHub access token used to connect to the GitHub API.",
       "stringField": {}
     }
   ],
