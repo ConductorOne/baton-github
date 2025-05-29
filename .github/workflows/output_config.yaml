@@ -27,7 +27,7 @@ jobs:
       - name: Run and save output
         # Sort the fields array by name to ensure consistent ordering
         run: |
-          ./connector config | jq '{ fields: (.fields | sort_by(.name)) }' > config_schema.json
+          ./connector config | jq > config_schema.json
 
       - name: Commit changes
         uses: EndBug/add-and-commit@v9
