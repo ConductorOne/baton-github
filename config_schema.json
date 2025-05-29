@@ -1,15 +1,34 @@
 {
   "fields": [
     {
+      "name": "log-level",
+      "description": "The log level: debug, info, warn, error",
+      "isOps": true,
+      "stringField": {
+        "defaultValue": "info"
+      }
+    },
+    {
       "name": "otel-collector-endpoint-tls-cert",
       "description": "A PEM-encoded certificate to use as a CA for TLS connections to the OpenTelemetry collector",
       "isOps": true,
       "stringField": {}
     },
     {
+      "name": "app-id",
+      "description": "The GitHub App to connect to.",
+      "stringField": {}
+    },
+    {
       "name": "orgs",
       "description": "Limit syncing to specific organizations.",
       "stringSliceField": {}
+    },
+    {
+      "name": "otel-logging-disabled",
+      "description": "Disable OpenTelemetry logging",
+      "isOps": true,
+      "boolField": {}
     },
     {
       "name": "instance-url",
@@ -22,13 +41,9 @@
       "boolField": {}
     },
     {
-      "name": "app-privatekey-path",
-      "description": "Path to private key that is used to connect to the GitHub App",
-      "stringField": {}
-    },
-    {
-      "name": "token",
-      "description": "The GitHub access token used to connect to the GitHub API.",
+      "name": "otel-collector-endpoint-tls-cert-path",
+      "description": "Path to a file containing a PEM-encoded certificate to use as a CA for TLS connections to the OpenTelemetry collector",
+      "isOps": true,
       "stringField": {}
     },
     {
@@ -38,39 +53,24 @@
       "stringField": {}
     },
     {
-      "name": "otel-collector-endpoint-tls-cert-path",
-      "description": "Path to a file containing a PEM-encoded certificate to use as a CA for TLS connections to the OpenTelemetry collector",
-      "isOps": true,
-      "stringField": {}
-    },
-    {
-      "name": "app-id",
-      "description": "The GitHub App to connect to.",
-      "stringField": {}
-    },
-    {
-      "name": "log-level",
-      "description": "The log level: debug, info, warn, error",
-      "isOps": true,
-      "stringField": {
-        "defaultValue": "info"
-      }
-    },
-    {
       "name": "otel-collector-endpoint-tls-insecure",
       "description": "Allow insecure connections to the OpenTelemetry collector",
       "isOps": true,
       "boolField": {}
     },
     {
-      "name": "otel-tracing-disabled",
-      "description": "Disable OpenTelemetry tracing",
-      "isOps": true,
-      "boolField": {}
+      "name": "token",
+      "description": "The GitHub access token used to connect to the GitHub API.",
+      "stringField": {}
     },
     {
-      "name": "otel-logging-disabled",
-      "description": "Disable OpenTelemetry logging",
+      "name": "app-privatekey-path",
+      "description": "Path to private key that is used to connect to the GitHub App",
+      "stringField": {}
+    },
+    {
+      "name": "otel-tracing-disabled",
+      "description": "Disable OpenTelemetry tracing",
       "isOps": true,
       "boolField": {}
     }
