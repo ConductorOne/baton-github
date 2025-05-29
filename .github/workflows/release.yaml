@@ -3,10 +3,24 @@ name: Release
 on:
   push:
     tags:
-      - '*'
+      - "*"
 
 jobs:
+  set-release-draft:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set Release Draft
+        env:
+          GH_TOKEN: ${{ secrets.RELENG_GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          gh release edit ${VERSION} --draft=true
+
   goreleaser:
+    needs: set-release-draft
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -27,13 +41,15 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
-          version: "~> v2"
+          version: "~> v2.5"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.RELENG_GITHUB_TOKEN }}
           AC_PASSWORD: ${{ secrets.AC_PASSWORD }}
           AC_PROVIDER: ${{ secrets.AC_PROVIDER }}
+
   goreleaser-docker:
+    needs: set-release-draft
     permissions:
       id-token: write
       contents: read
@@ -66,7 +82,21 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
-          version: "~> v2"
+          version: "~> v2.5"
           args: release --clean -f .goreleaser.docker.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.RELENG_GITHUB_TOKEN }}
+
+  publish-new-release:
+    needs: [goreleaser, goreleaser-docker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Publish Release
+        env:
+          GH_TOKEN: ${{ secrets.RELENG_GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          gh release edit ${VERSION} --draft=false
