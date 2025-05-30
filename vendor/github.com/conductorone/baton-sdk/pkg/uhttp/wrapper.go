@@ -249,6 +249,50 @@ func WithResponse(response interface{}) DoOption {
 	}
 }
 
+// Handle anything that can be marshaled into JSON or XML.
+// If the response is a list, its values will be put into the "items" field.
+func WithGenericResponse(response *map[string]any) DoOption {
+	return func(resp *WrapperResponse) error {
+		if response == nil {
+			return status.Error(codes.InvalidArgument, "response is nil")
+		}
+		var v any
+		var err error
+
+		if IsJSONContentType(resp.Header.Get(ContentType)) {
+			err = WithJSONResponse(&v)(resp)
+			if err != nil {
+				return err
+			}
+			if list, ok := v.([]any); ok {
+				(*response)["items"] = list
+			} else if vMap, ok := v.(map[string]any); ok {
+				*response = vMap
+			} else {
+				return status.Errorf(codes.Internal, "unsupported content type: %T", v)
+			}
+			return nil
+		}
+
+		if IsXMLContentType(resp.Header.Get(ContentType)) {
+			err = WithXMLResponse(response)(resp)
+			if err != nil {
+				return err
+			}
+			if list, ok := v.([]any); ok {
+				(*response)["items"] = list
+			} else if vMap, ok := v.(map[string]any); ok {
+				*response = vMap
+			} else {
+				return status.Errorf(codes.Internal, "unsupported content type: %T", v)
+			}
+			return nil
+		}
+
+		return status.Error(codes.Unknown, "unsupported content type")
+	}
+}
+
 func WrapErrors(preferredCode codes.Code, statusMsg string, errs ...error) error {
 	st := status.New(preferredCode, statusMsg)
 

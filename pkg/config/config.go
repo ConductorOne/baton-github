@@ -50,4 +50,4 @@ var Config = field.NewConfiguration([]field.SchemaField{
 	syncSecrets,
 	appIDField,
 	appPrivateKeyPath,
-}, fieldRelationships...)
+}, field.WithConstraints(fieldRelationships...))
