@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -133,6 +134,7 @@ func (o *repositoryResourceType) Grants(
 	resource *v2.Resource,
 	pToken *pagination.Token,
 ) ([]*v2.Grant, string, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
 	bag, page, err := parsePageToken(pToken.Token, resource.Id)
 	if err != nil {
 		return nil, "", nil, err
@@ -163,6 +165,10 @@ func (o *repositoryResourceType) Grants(
 		}
 		users, resp, err := o.client.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, opts)
 		if err != nil {
+			if resp.StatusCode == http.StatusForbidden {
+				l.Warn("insufficient access to list collaborators", zap.String("repository", resource.DisplayName))
+				return nil, "", nil, nil
+			}
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
 		}
 
@@ -202,6 +208,10 @@ func (o *repositoryResourceType) Grants(
 		}
 		teams, resp, err := o.client.Repositories.ListTeams(ctx, orgName, resource.DisplayName, opts)
 		if err != nil {
+			if resp.StatusCode == http.StatusForbidden {
+				l.Warn("insufficient access to list teams", zap.String("repository", resource.DisplayName))
+				return nil, "", nil, nil
+			}
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
 		}
 
