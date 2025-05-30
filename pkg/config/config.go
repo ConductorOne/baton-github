@@ -4,12 +4,12 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/field"
 )
 
+// TODO (mb): Make sure we don't need field.WithRequired(true) for required fields.
 var (
 	accessTokenField = field.StringField(
 		"token",
 		field.WithDisplayName("Personal access token"),
 		field.WithDescription("The GitHub access token used to connect to the GitHub API."),
-		field.WithRequired(true),
 		field.WithIsSecret(true),
 	)
 	orgsField = field.StringSliceField(
