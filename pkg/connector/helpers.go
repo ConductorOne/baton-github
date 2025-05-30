@@ -220,10 +220,3 @@ func isNotFoundError(resp *github.Response) bool {
 	}
 	return resp.StatusCode == http.StatusNotFound
 }
-
-func isPermissionDeniedError(resp *github.Response) bool {
-	if resp == nil {
-		return false
-	}
-	return resp.StatusCode == http.StatusForbidden
-}
