@@ -32,7 +32,6 @@ var (
 		"app-privatekey-path",
 		field.WithDisplayName("GitHub App private key (.pem)"),
 		field.WithDescription("Path to private key that is used to connect to the GitHub App"),
-		field.WithIsSecret(true),
 	)
 	syncSecrets = field.BoolField(
 		"sync-secrets",
