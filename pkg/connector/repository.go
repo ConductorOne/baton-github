@@ -167,7 +167,11 @@ func (o *repositoryResourceType) Grants(
 		if err != nil {
 			if resp.StatusCode == http.StatusForbidden {
 				l.Warn("insufficient access to list collaborators", zap.String("repository", resource.DisplayName))
-				return nil, "", nil, nil
+				pageToken, err := skipGrantsForResourceType(bag)
+				if err != nil {
+					return nil, "", nil, err
+				}
+				return nil, pageToken, nil, nil
 			}
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
 		}
@@ -210,7 +214,11 @@ func (o *repositoryResourceType) Grants(
 		if err != nil {
 			if resp.StatusCode == http.StatusForbidden {
 				l.Warn("insufficient access to list teams", zap.String("repository", resource.DisplayName))
-				return nil, "", nil, nil
+				pageToken, err := skipGrantsForResourceType(bag)
+				if err != nil {
+					return nil, "", nil, err
+				}
+				return nil, pageToken, nil, nil
 			}
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
 		}
@@ -393,4 +401,16 @@ func repositoryBuilder(client *github.Client, orgCache *orgNameCache) *repositor
 		client:       client,
 		orgCache:     orgCache,
 	}
+}
+
+func skipGrantsForResourceType(bag *pagination.Bag) (string, error) {
+	err := bag.Next("")
+	if err != nil {
+		return "", err
+	}
+	pageToken, err := bag.Marshal()
+	if err != nil {
+		return "", err
+	}
+	return pageToken, nil
 }
