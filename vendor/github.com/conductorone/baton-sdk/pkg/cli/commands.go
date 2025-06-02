@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -131,7 +132,7 @@ func MakeMainCommand[T field.Configurable](
 						v.GetString("revoke-grant"),
 					))
 			case v.GetBool("event-feed"):
-				opts = append(opts, connectorrunner.WithOnDemandEventStream())
+				opts = append(opts, connectorrunner.WithOnDemandEventStream(v.GetString("event-feed-id"), v.GetTime("event-feed-start-at")))
 			case v.GetString("create-account-profile") != "":
 				profileMap := v.GetStringMap("create-account-profile")
 				if profileMap == nil {
@@ -556,7 +557,13 @@ func MakeConfigSchemaCommand[T field.Configurable](
 	getconnector GetConnectorFunc[T],
 ) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		pb, err := json.Marshal(&confschema)
+		// Sort fields by FieldName
+		sort.Slice(confschema.Fields, func(i, j int) bool {
+			return confschema.Fields[i].FieldName < confschema.Fields[j].FieldName
+		})
+
+		// Use MarshalIndent for pretty printing
+		pb, err := json.MarshalIndent(&confschema, "", "  ")
 		if err != nil {
 			return err
 		}
