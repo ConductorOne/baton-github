@@ -176,7 +176,7 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 }
 
 // newGitHubClient returns a new GitHub API client authenticated with an access token via oauth2.
-func newGitHubClient(ctx context.Context, instanceURL string, accessToken string) (*github.Client, error) {
+func newGitHubClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*github.Client, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
 		return nil, err
@@ -184,9 +184,6 @@ func newGitHubClient(ctx context.Context, instanceURL string, accessToken string
 
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: accessToken},
-	)
 	tc := oauth2.NewClient(ctx, ts)
 	gc := github.NewClient(tc)
 
@@ -205,13 +202,23 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 		return nil, err
 	}
 
-	var appClient *github.Client
+	var (
+		appClient *github.Client
+		ts        = oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: patToken},
+		)
+	)
 	if jwttoken != "" {
 		if len(ghc.Orgs) != 1 {
 			return nil, fmt.Errorf("github-connector: only one org should be specified")
 		}
 
-		appClient, err = newGitHubClient(ctx, ghc.InstanceUrl, jwttoken)
+		appClient, err = newGitHubClient(ctx,
+			ghc.InstanceUrl,
+			oauth2.StaticTokenSource(
+				&oauth2.Token{AccessToken: jwttoken},
+			),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -224,14 +231,26 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 		if err != nil {
 			return nil, err
 		}
-		patToken = token
+
+		ts = oauth2.ReuseTokenSource(
+			&oauth2.Token{
+				AccessToken: token.GetToken(),
+				Expiry:      token.GetExpiresAt().Time,
+			},
+			&appTokenRefresher{
+				ctx:            ctx,
+				instanceURL:    ghc.InstanceUrl,
+				installationID: installation.GetID(),
+				jwttoken:       jwttoken,
+			},
+		)
 	}
 
-	client, err := newGitHubClient(ctx, ghc.InstanceUrl, patToken)
+	client, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
 	if err != nil {
 		return nil, err
 	}
-	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, patToken)
+	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ts)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +267,7 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 	return gh, nil
 }
 
-func newGitHubGraphqlClient(ctx context.Context, instanceURL string, accessToken string) (*githubv4.Client, error) {
+func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
 		return nil, err
@@ -256,9 +275,6 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, accessToken
 
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: accessToken},
-	)
 	tc := oauth2.NewClient(ctx, ts)
 
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
@@ -331,16 +347,44 @@ func findInstallation(ctx context.Context, c *github.Client, orgName string) (*g
 	return installation, resp, nil
 }
 
-func getInstallationToken(ctx context.Context, c *github.Client, id int64) (string, error) {
+func getInstallationToken(ctx context.Context, c *github.Client, id int64) (*github.InstallationToken, error) {
 	token, resp, err := c.Apps.CreateInstallationToken(ctx, id, &github.InstallationTokenOptions{})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("GitHub API error: %s", body)
+		return nil, fmt.Errorf("GitHub API error: %s", body)
 	}
 
-	return token.GetToken(), nil
+	return token, nil
+}
+
+type appTokenRefresher struct {
+	ctx            context.Context
+	jwttoken       string
+	instanceURL    string
+	installationID int64
+}
+
+func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
+	appClient, err := newGitHubClient(r.ctx,
+		r.instanceURL,
+		oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: r.jwttoken},
+		),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := getInstallationToken(r.ctx, appClient, r.installationID)
+	if err != nil {
+		return nil, err
+	}
+	return &oauth2.Token{
+		AccessToken: token.GetToken(),
+		Expiry:      token.GetExpiresAt().Time,
+	}, nil
 }
