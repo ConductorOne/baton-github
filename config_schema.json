@@ -2,16 +2,19 @@
   "fields": [
     {
       "name": "app-id",
+      "displayName": "GitHub App ID",
       "description": "The GitHub App to connect to.",
       "stringField": {}
     },
     {
       "name": "app-privatekey-path",
+      "displayName": "GitHub App private key (.pem)",
       "description": "Path to private key that is used to connect to the GitHub App",
       "stringField": {}
     },
     {
       "name": "instance-url",
+      "displayName": "GitHub instance URL",
       "description": "The GitHub instance URL to connect to. (default \"https://github.com\")",
       "stringField": {}
     },
@@ -25,6 +28,7 @@
     },
     {
       "name": "orgs",
+      "displayName": "Organizations",
       "description": "Limit syncing to specific organizations.",
       "stringSliceField": {}
     },
@@ -66,12 +70,15 @@
     },
     {
       "name": "sync-secrets",
+      "displayName": "Sync secrets",
       "description": "Whether to sync secrets or not",
       "boolField": {}
     },
     {
       "name": "token",
+      "displayName": "Personal access token",
       "description": "The GitHub access token used to connect to the GitHub API.",
+      "isSecret": true,
       "stringField": {}
     }
   ],
@@ -90,5 +97,8 @@
         "app-id"
       ]
     }
-  ]
+  ],
+  "displayName": "GitHub v2",
+  "helpUrl": "/docs/baton/github-v2",
+  "iconUrl": "/static/app-icons/github.svg"
 }
