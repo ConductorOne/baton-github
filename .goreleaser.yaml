@@ -57,10 +57,8 @@ release:
   ids:
     - linux-archive
     - darwin-archive
-  draft: true
-  use_existing_draft: true
 snapshot:
-  name_template: "{{ incpatch .Version }}-dev"
+  name_template: '{{ incpatch .Version }}-dev'
 checksum:
   ids:
     - linux-archive
@@ -80,7 +78,7 @@ brews:
 changelog:
   filters:
     exclude:
-      - "^docs:"
+      - '^docs:'
       - typo
       - lint
       - Merge pull request
