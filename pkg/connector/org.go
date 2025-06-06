@@ -119,7 +119,7 @@ func (o *orgResourceType) List(
 		}
 		membership, resp, err := o.client.Organizations.GetOrgMembership(ctx, "", org.GetLogin())
 		if err != nil {
-			if resp.StatusCode == http.StatusForbidden {
+			if resp != nil && resp.StatusCode == http.StatusForbidden {
 				l.Warn("insufficient access to list org membership, skipping org", zap.String("org", org.GetLogin()))
 				continue
 			}
