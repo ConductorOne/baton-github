@@ -26,7 +26,7 @@ jobs:
       - name: Run and save output
         env:
           BATON_TOKEN: test
-        run: ./connector capabilities > baton_capabilities.json
+        run: ./connector --sync-secrets capabilities > baton_capabilities.json
 
       - name: Commit changes
         uses: EndBug/add-and-commit@v9
