@@ -3,6 +3,23 @@
   "resourceTypeCapabilities":  [
     {
       "resourceType":  {
+        "id":  "api-key",
+        "displayName":  "API Key",
+        "traits":  [
+          "TRAIT_SECRET"
+        ],
+        "annotations":  [
+          {
+            "@type":  "type.googleapis.com/c1.connector.v2.SkipEntitlementsAndGrants"
+          }
+        ]
+      },
+      "capabilities":  [
+        "CAPABILITY_SYNC"
+      ]
+    },
+    {
+      "resourceType":  {
         "id":  "org",
         "displayName":  "Org",
         "annotations":  [
