@@ -1,4 +1,4 @@
-name: Output config schema
+name: Generate capabilities and config schema
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  output-config-schema:
+  generate_outputs:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
 
@@ -19,7 +19,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: 'go.mod'
+          go-version-file: "go.mod"
 
       - name: Build
         run: go build -o connector ./cmd/baton-github
@@ -27,9 +27,16 @@ jobs:
       - name: Run and save output
         run: ./connector config > config_schema.json
 
+      - name: Run and save capabilities output
+        env:
+          BATON_TOKEN: test
+        run: ./connector --sync-secrets capabilities > baton_capabilities.json
+
       - name: Commit changes
         uses: EndBug/add-and-commit@v9
         with:
           default_author: github_actions
-          message: 'Updating config schema.'
-          add: 'config_schema.json'
+          message: "Updating baton config schema and capabilities."
+          add: |
+            config_schema.json
+            baton_capabilities.json
