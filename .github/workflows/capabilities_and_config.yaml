@@ -24,7 +24,7 @@ jobs:
       - name: Build
         run: go build -o connector ./cmd/baton-github
 
-      - name: Run and save output
+      - name: Run and save config output
         run: ./connector config > config_schema.json
 
       - name: Run and save capabilities output
