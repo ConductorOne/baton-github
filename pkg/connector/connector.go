@@ -100,6 +100,38 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 	return &v2.ConnectorMetadata{
 		DisplayName: "GitHub",
+		AccountCreationSchema: &v2.ConnectorAccountCreationSchema{
+			FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
+				"email": {
+					DisplayName: "Email",
+					Description: "This email will be used as the login for the user.",
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "Email",
+					Order:       1,
+				},
+				"org": {
+					DisplayName: "Org Name",
+					Required:    true,
+					Description: "organization name",
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "organization name",
+					Order:       2,
+				},
+				"userID": {
+					DisplayName: "github user ID",
+					Description: "Github User ID",
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "UserID",
+					Order:       3,
+				},
+			},
+		},
 	}, nil
 }
 
