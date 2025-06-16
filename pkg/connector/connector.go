@@ -56,6 +56,14 @@ var (
 		},
 		Annotations: v1AnnotationsForResourceType("user"),
 	}
+	resourceTypeInvitation = &v2.ResourceType{
+		Id:          "invitation",
+		DisplayName: "Invitation",
+		Traits: []v2.ResourceType_Trait{
+			v2.ResourceType_TRAIT_USER,
+		},
+		Annotations: v1AnnotationsForResourceType("invitation"),
+	}
 	resourceTypeApiToken = &v2.ResourceType{
 		Id:          "api-key",
 		DisplayName: "API Key",
@@ -104,6 +112,7 @@ func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 			FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
 				"email": {
 					DisplayName: "Email",
+					Required:    true,
 					Description: "This email will be used as the login for the user.",
 					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
 						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
@@ -120,15 +129,6 @@ func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 					},
 					Placeholder: "organization name",
 					Order:       2,
-				},
-				"userID": {
-					DisplayName: "github user ID",
-					Description: "Github User ID",
-					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
-						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
-					},
-					Placeholder: "UserID",
-					Order:       3,
 				},
 			},
 		},

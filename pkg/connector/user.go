@@ -28,7 +28,7 @@ func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, erro
 
 	ret, err := resource.NewUserResource(
 		login,
-		resourceTypeUser,
+		resourceTypeInvitation,
 		invitation.GetID(),
 		[]resource.UserTraitOption{
 			resource.WithEmail(invitation.GetEmail(), true),
@@ -263,8 +263,7 @@ func (o *userResourceType) CreateAccount(
 	}
 
 	invitation, resp, err := o.client.Organizations.CreateOrgInvitation(ctx, params.org, &github.CreateOrgInvitationOptions{
-		InviteeID: params.userID,
-		Email:     params.email,
+		Email: params.email,
 	})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("github-connectorv2: failed to invite user to org: %w", err)
@@ -288,45 +287,25 @@ func (o *userResourceType) CreateAccount(
 }
 
 type createUserParams struct {
-	org    string
-	email  *string
-	userID *int64
+	org   string
+	email *string
 }
 
 func getCreateUserParams(accountInfo *v2.AccountInfo) (*createUserParams, error) {
-	var (
-		pMap  = accountInfo.Profile.AsMap()
-		uID   *int64
-		email *string
-	)
-
+	pMap := accountInfo.Profile.AsMap()
 	org, ok := pMap["org"].(string)
 	if !ok || org == "" {
 		return nil, fmt.Errorf("org is required")
 	}
 
 	e, emailExisted := pMap["email"].(string)
-	if e != "" {
-		email = &e
-	}
-
-	userID, userIDExisted := pMap["userID"].(string)
-	if !emailExisted && !userIDExisted {
-		return nil, fmt.Errorf("either email or userID should be provided")
-	}
-
-	if userIDExisted {
-		i, err := strconv.ParseInt(userID, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		uID = &i
+	if !emailExisted || e == "" {
+		return nil, fmt.Errorf("email is required")
 	}
 
 	return &createUserParams{
-		org:    org,
-		email:  email,
-		userID: uID,
+		org:   org,
+		email: &e,
 	}, nil
 }
 
