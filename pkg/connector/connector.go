@@ -96,6 +96,10 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache),
 		repositoryBuilder(gh.client, gh.orgCache),
 		orgRoleBuilder(gh.client, gh.orgCache),
+		invitationBuilder(invitationBuilderParams{
+			client:   gh.client,
+			orgCache: gh.orgCache,
+		}),
 	}
 
 	if gh.syncSecrets {
