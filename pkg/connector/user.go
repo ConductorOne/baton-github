@@ -10,7 +10,6 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
@@ -19,32 +18,6 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
-
-func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, error) {
-	login := invitation.GetLogin()
-	if login == "" {
-		login = invitation.GetEmail()
-	}
-
-	ret, err := resource.NewUserResource(
-		login,
-		resourceTypeInvitation,
-		invitation.GetID(),
-		[]resource.UserTraitOption{
-			resource.WithEmail(invitation.GetEmail(), true),
-			resource.WithUserProfile(map[string]interface{}{
-				"login":   login,
-				"inviter": invitation.GetInviter().GetLogin(),
-			}),
-			resource.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED),
-			resource.WithUserLogin(login),
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	return ret, nil
-}
 
 // Create a new connector resource for a GitHub user.
 func userResource(ctx context.Context, user *github.User, userEmail string, extraEmails []string) (*v2.Resource, error) {
@@ -236,77 +209,6 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	}
 
 	return rv, pageToken, annotations, nil
-}
-
-func (o *userResourceType) CreateAccountCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {
-	return &v2.CredentialDetailsAccountProvisioning{
-		SupportedCredentialOptions: []v2.CapabilityDetailCredentialOption{
-			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
-		},
-		PreferredCredentialOption: v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
-	}, nil, nil
-}
-
-func (o *userResourceType) CreateAccount(
-	ctx context.Context,
-	accountInfo *v2.AccountInfo,
-	credentialOptions *v2.CredentialOptions,
-) (
-	connectorbuilder.CreateAccountResponse,
-	[]*v2.PlaintextData,
-	annotations.Annotations,
-	error,
-) {
-	params, err := getCreateUserParams(accountInfo)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("github-connectorv2: failed to get CreateUserParams: %w", err)
-	}
-
-	invitation, resp, err := o.client.Organizations.CreateOrgInvitation(ctx, params.org, &github.CreateOrgInvitationOptions{
-		Email: params.email,
-	})
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("github-connectorv2: failed to invite user to org: %w", err)
-	}
-
-	restApiRateLimit, err := extractRateLimitData(resp)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	var annotations annotations.Annotations
-	annotations.WithRateLimiting(restApiRateLimit)
-
-	r, err := invitationToUserResource(invitation)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("github-connectorv2: cannot create user resource: %w", err)
-	}
-	return &v2.CreateAccountResponse_SuccessResult{
-		Resource: r,
-	}, nil, nil, nil
-}
-
-type createUserParams struct {
-	org   string
-	email *string
-}
-
-func getCreateUserParams(accountInfo *v2.AccountInfo) (*createUserParams, error) {
-	pMap := accountInfo.Profile.AsMap()
-	org, ok := pMap["org"].(string)
-	if !ok || org == "" {
-		return nil, fmt.Errorf("org is required")
-	}
-
-	e, emailExisted := pMap["email"].(string)
-	if !emailExisted || e == "" {
-		return nil, fmt.Errorf("email is required")
-	}
-
-	return &createUserParams{
-		org:   org,
-		email: &e,
-	}, nil
 }
 
 func isEmail(email string) bool {
