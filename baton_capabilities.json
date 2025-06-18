@@ -20,6 +20,25 @@
     },
     {
       "resourceType": {
+        "id": "invitation",
+        "displayName": "Invitation",
+        "traits": [
+          "TRAIT_USER"
+        ],
+        "annotations": [
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.V1Identifier",
+            "id": "invitation"
+          }
+        ]
+      },
+      "capabilities": [
+        "CAPABILITY_SYNC",
+        "CAPABILITY_ACCOUNT_PROVISIONING"
+      ]
+    },
+    {
+      "resourceType": {
         "id": "org",
         "displayName": "Org",
         "annotations": [
@@ -103,8 +122,7 @@
         ]
       },
       "capabilities": [
-        "CAPABILITY_SYNC",
-        "CAPABILITY_ACCOUNT_PROVISIONING"
+        "CAPABILITY_SYNC"
       ]
     }
   ],
