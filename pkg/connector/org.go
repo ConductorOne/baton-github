@@ -52,6 +52,7 @@ func organizationResource(
 		&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
 		&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
 		&v2.ChildResourceType{ResourceTypeId: resourceTypeOrgRole.Id},
+		&v2.ChildResourceType{ResourceTypeId: resourceTypeInvitation.Id},
 	}
 	if syncSecrets {
 		annotations = append(annotations, &v2.ChildResourceType{ResourceTypeId: resourceTypeApiToken.Id})
