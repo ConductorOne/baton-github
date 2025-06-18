@@ -53,7 +53,7 @@ func (i *invitationResourceType) List(ctx context.Context, parentID *v2.Resource
 		return nil, "", nil, nil
 	}
 
-	bag, page, err := parsePageToken(pt.Token, &v2.ResourceId{ResourceType: resourceTypeUser.Id})
+	bag, page, err := parsePageToken(pt.Token, &v2.ResourceId{ResourceType: resourceTypeInvitation.Id})
 	if err != nil {
 		return nil, "", nil, err
 	}
