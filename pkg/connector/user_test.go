@@ -49,6 +49,7 @@ func TestUsersList(t *testing.T) {
 				testCase.hasSamlEnabled,
 				graphQLClient,
 				cache,
+				[]string{organization.DisplayName},
 			)
 
 			users, nextToken, annotations, err := client.List(
