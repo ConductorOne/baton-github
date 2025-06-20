@@ -92,6 +92,7 @@ type userResourceType struct {
 	graphqlClient  *githubv4.Client
 	hasSAMLEnabled *bool
 	orgCache       *orgNameCache
+	orgs           []string
 }
 
 func (o *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -224,13 +225,59 @@ func (o *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ *paginati
 	return nil, "", nil, nil
 }
 
-func userBuilder(client *github.Client, hasSAMLEnabled *bool, graphqlClient *githubv4.Client, orgCache *orgNameCache) *userResourceType {
+func (o *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {
+	if resourceId.ResourceType != resourceTypeUser.Id {
+		return nil, fmt.Errorf("baton-github: non-user resource passed to user delete")
+	}
+
+	orgs, err := getOrgs(ctx, o.client, o.orgs)
+	if err != nil {
+		return nil, err
+	}
+
+	userID, err := strconv.ParseInt(resourceId.GetResource(), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("baton-github: invalid invitation id")
+	}
+
+	u, _, err := o.client.Users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("baton-github: invalid userID")
+	}
+
+	var (
+		isRemoved = false
+		resp      *github.Response
+	)
+	for _, org := range orgs {
+		resp, err = o.client.Organizations.RemoveOrgMembership(ctx, u.GetLogin(), org)
+		if err == nil {
+			isRemoved = true
+		}
+	}
+
+	if !isRemoved {
+		return nil, fmt.Errorf("baton-github: failed to cancel user")
+	}
+
+	restApiRateLimit, err := extractRateLimitData(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	var annotations annotations.Annotations
+	annotations.WithRateLimiting(restApiRateLimit)
+	return annotations, nil
+}
+
+func userBuilder(client *github.Client, hasSAMLEnabled *bool, graphqlClient *githubv4.Client, orgCache *orgNameCache, orgs []string) *userResourceType {
 	return &userResourceType{
 		resourceType:   resourceTypeUser,
 		client:         client,
 		graphqlClient:  graphqlClient,
 		hasSAMLEnabled: hasSAMLEnabled,
 		orgCache:       orgCache,
+		orgs:           orgs,
 	}
 }
 

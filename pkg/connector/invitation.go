@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -41,6 +42,7 @@ func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, erro
 type invitationResourceType struct {
 	client   *github.Client
 	orgCache *orgNameCache
+	orgs     []string
 }
 
 func (i *invitationResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -153,6 +155,47 @@ func (i *invitationResourceType) CreateAccount(
 	}, nil, nil, nil
 }
 
+func (i *invitationResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {
+	if resourceId.ResourceType != resourceTypeInvitation.Id {
+		return nil, fmt.Errorf("baton-github: non-invitation resource passed to invitation delete")
+	}
+
+	orgs, err := getOrgs(ctx, i.client, i.orgs)
+	if err != nil {
+		return nil, err
+	}
+
+	invitationID, err := strconv.ParseInt(resourceId.GetResource(), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("baton-github: invalid invitation id")
+	}
+
+	var (
+		isRemoved = false
+		resp      *github.Response
+	)
+
+	for _, org := range orgs {
+		resp, err = i.client.Organizations.CancelInvite(ctx, org, invitationID)
+		if err == nil {
+			isRemoved = true
+		}
+	}
+
+	if !isRemoved {
+		return nil, fmt.Errorf("baton-github: failed to cancel invite")
+	}
+
+	restApiRateLimit, err := extractRateLimitData(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	var annotations annotations.Annotations
+	annotations.WithRateLimiting(restApiRateLimit)
+	return annotations, nil
+}
+
 type createUserParams struct {
 	org   string
 	email *string
@@ -179,11 +222,13 @@ func getCreateUserParams(accountInfo *v2.AccountInfo) (*createUserParams, error)
 type invitationBuilderParams struct {
 	client   *github.Client
 	orgCache *orgNameCache
+	orgs     []string
 }
 
 func invitationBuilder(p invitationBuilderParams) *invitationResourceType {
 	return &invitationResourceType{
 		client:   p.client,
 		orgCache: p.orgCache,
+		orgs:     p.orgs,
 	}
 }

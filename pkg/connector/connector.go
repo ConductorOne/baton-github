@@ -93,12 +93,13 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	resourceSyncers := []connectorbuilder.ResourceSyncer{
 		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
 		teamBuilder(gh.client, gh.orgCache),
-		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache),
+		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache, gh.orgs),
 		repositoryBuilder(gh.client, gh.orgCache),
 		orgRoleBuilder(gh.client, gh.orgCache),
 		invitationBuilder(invitationBuilderParams{
 			client:   gh.client,
 			orgCache: gh.orgCache,
+			orgs:     gh.orgs,
 		}),
 	}
 
@@ -145,28 +146,16 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		return gh.validateAppCredentials(ctx)
 	}
 
-	page := 0
 	orgLogins := gh.orgs
 	filterOrgs := true
 
 	if len(orgLogins) == 0 {
 		filterOrgs = false
-		for {
-			orgs, resp, err := gh.client.Organizations.List(ctx, "", &github.ListOptions{Page: page})
-			if err != nil {
-				return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
-			}
-			if resp.StatusCode == http.StatusUnauthorized {
-				return nil, status.Error(codes.Unauthenticated, "github token is not authorized")
-			}
-			for _, o := range orgs {
-				orgLogins = append(orgLogins, o.GetLogin())
-			}
 
-			if resp.NextPage == 0 {
-				break
-			}
-			page = resp.NextPage
+		var err error
+		orgLogins, err = getOrgs(ctx, gh.client, orgLogins)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -423,4 +412,33 @@ func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
 		AccessToken: token.GetToken(),
 		Expiry:      token.GetExpiresAt().Time,
 	}, nil
+}
+
+func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]string, error) {
+	if len(orgs) != 0 {
+		return orgs, nil
+	}
+
+	var (
+		page      = 0
+		orgLogins []string
+	)
+	for {
+		orgs, resp, err := client.Organizations.List(ctx, "", &github.ListOptions{Page: page})
+		if err != nil {
+			return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, status.Error(codes.Unauthenticated, "github token is not authorized")
+		}
+		for _, o := range orgs {
+			orgLogins = append(orgLogins, o.GetLogin())
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		page = resp.NextPage
+	}
+	return orgLogins, nil
 }
