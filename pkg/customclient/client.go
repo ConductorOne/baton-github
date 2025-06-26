@@ -24,7 +24,7 @@ func New(client *github.Client) *Client {
 
 // https://docs.github.com/en/enterprise-cloud@latest/rest/enterprise-admin/license?apiVersion=2022-11-28#list-enterprise-consumed-licenses
 func (c *Client) ListEnterpriseConsumedLicenses(ctx context.Context, enterprise string) (*EnterpriseConsumedLicense, *v2.RateLimitDescription, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/enterprises/%s/licenses", enterprise), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://api.github.com/enterprises/%s/consumed-licenses", enterprise), nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error creating request to list enterprise consumed licenses: %w", err)
 	}

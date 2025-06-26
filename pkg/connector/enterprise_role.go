@@ -23,28 +23,28 @@ type enterpriseRoleResourceType struct {
 	mu             *sync.Mutex
 }
 
-func enterpriseRoleResource(
-	ctx context.Context,
-	role *OrganizationRole,
-	org *v2.Resource,
-) (*v2.Resource, error) {
-	profile := map[string]interface{}{
-		"description": role.Description,
-	}
-
-	return resource.NewRoleResource(
-		role.Name,
-		resourceTypeOrgRole,
-		role.ID,
-		[]resource.RoleTraitOption{
-			resource.WithRoleProfile(profile),
-		},
-		resource.WithParentResourceID(org.Id),
-		resource.WithAnnotation(
-			&v2.V1Identifier{Id: fmt.Sprintf("org_role:%d", role.ID)},
-		),
-	)
-}
+// func enterpriseRoleResource(
+// 	ctx context.Context,
+// 	role *OrganizationRole,
+// 	org *v2.Resource,
+// ) (*v2.Resource, error) {
+// 	profile := map[string]interface{}{
+// 		"description": role.Description,
+// 	}
+//
+// 	return resource.NewRoleResource(
+// 		role.Name,
+// 		resourceTypeOrgRole,
+// 		role.ID,
+// 		[]resource.RoleTraitOption{
+// 			resource.WithRoleProfile(profile),
+// 		},
+// 		resource.WithParentResourceID(org.Id),
+// 		resource.WithAnnotation(
+// 			&v2.V1Identifier{Id: fmt.Sprintf("org_role:%d", role.ID)},
+// 		),
+// 	)
+// }
 
 func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return o.resourceType
@@ -110,9 +110,6 @@ func (o *enterpriseRoleResourceType) List(
 	parentID *v2.ResourceId,
 	pToken *pagination.Token,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
-	if parentID == nil {
-		return nil, "", nil, nil
-	}
 
 	var ret []*v2.Resource
 	for _, enterprise := range o.enterprises {
