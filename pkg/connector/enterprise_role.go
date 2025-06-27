@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/conductorone/baton-github/pkg/customclient"
@@ -10,7 +11,8 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
-	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/types/grant"
+	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 )
 
@@ -50,17 +52,17 @@ func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.Resourc
 	return o.resourceType
 }
 
-func (o *enterpriseRoleResourceType) AddRoleCache(userLogin string, roleId string) {
+func (o *enterpriseRoleResourceType) cacheRole(roleId string, userLogin string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if _, exists := o.userRolesCache[userLogin]; !exists {
-		o.userRolesCache[userLogin] = []string{}
+		o.userRolesCache[roleId] = []string{}
 	}
 
-	o.userRolesCache[userLogin] = append(o.userRolesCache[userLogin], roleId)
+	o.userRolesCache[roleId] = append(o.userRolesCache[userLogin], userLogin)
 }
 
-func (o *enterpriseRoleResourceType) cacheUserRoles() error {
+func (o *enterpriseRoleResourceType) fillCache() error {
 	for _, enterprise := range o.enterprises {
 		consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(context.Background(), enterprise)
 		if err != nil {
@@ -70,71 +72,85 @@ func (o *enterpriseRoleResourceType) cacheUserRoles() error {
 		for _, user := range consumedLicenses.Users {
 			for _, role := range user.GitHubComEnterpriseRoles {
 				roleId := fmt.Sprintf("%s:%s", enterprise, role)
-				o.AddRoleCache(user.GitHubComLogin, roleId)
+				o.cacheRole(roleId, user.GitHubComLogin)
 			}
 		}
 	}
 	return nil
 }
 
-func (o *enterpriseRoleResourceType) GetRoleCache(userLogin string) ([]string, error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
+func (o *enterpriseRoleResourceType) getRolesCache() (map[string][]string, error) {
 	if len(o.userRolesCache) == 0 {
-		if err := o.cacheUserRoles(); err != nil {
+		if err := o.fillCache(); err != nil {
 			return nil, fmt.Errorf("baton-github: error caching user roles: %w", err)
 		}
 	}
 
-	roles, exists := o.userRolesCache[userLogin]
-	if !exists {
-		return []string{}, nil
-	}
-
-	return roles, nil
-}
-
-func (o *enterpriseRoleResourceType) GetUserRolesCache() (map[string][]string, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if len(o.userRolesCache) == 0 {
-		if err := o.cacheUserRoles(); err != nil {
-			return nil, fmt.Errorf("baton-github: error caching user roles: %w", err)
-		}
-	}
 	return o.userRolesCache, nil
 }
+
+// func (o *enterpriseRoleResourceType) List(
+// 	ctx context.Context,
+// 	parentID *v2.ResourceId,
+// 	pToken *pagination.Token,
+// ) ([]*v2.Resource, string, annotations.Annotations, error) {
+//
+// 	var ret []*v2.Resource
+// 	for _, enterprise := range o.enterprises {
+// 		consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise)
+// 		if err != nil {
+// 			return nil, "", nil, fmt.Errorf("baton-github: error listing enterprise consumed licenses for %s: %w", enterprise, err)
+// 		}
+//
+// 		for _, user := range consumedLicenses.Users {
+// 			for _, role := range user.GitHubComEnterpriseRoles {
+// 				roleId := fmt.Sprintf("%s:%s", enterprise, role)
+// 				o.cacheRole(roleId, user.GitHubComLogin)
+//
+// 				roleResource, err := resourceSdk.NewRoleResource(
+// 					role,
+// 					resourceTypeEnterpriseRole,
+// 					roleId,
+// 					[]resourceSdk.RoleTraitOption{},
+// 				)
+// 				if err != nil {
+// 					return nil, "", nil, fmt.Errorf("baton-github: error creating role resource for %s in enterprise %s: %w", role, enterprise, err)
+// 				}
+// 				ret = append(ret, roleResource)
+// 			}
+// 		}
+// 	}
+//
+// 	return ret, "", nil, nil
+// }
 
 func (o *enterpriseRoleResourceType) List(
 	ctx context.Context,
 	parentID *v2.ResourceId,
 	pToken *pagination.Token,
 ) ([]*v2.Resource, string, annotations.Annotations, error) {
-
 	var ret []*v2.Resource
-	for _, enterprise := range o.enterprises {
-		consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise)
+	cache, err := o.getRolesCache()
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("baton-github: error getting user roles cache: %w", err)
+	}
+
+	for roleId := range cache {
+		roleName := strings.Split(roleId, ":")[1]
+		enterprise := strings.Split(roleId, ":")[0]
+
+		roleResource, err := resourceSdk.NewRoleResource(
+			roleName,
+			resourceTypeEnterpriseRole,
+			roleId,
+			[]resourceSdk.RoleTraitOption{},
+		)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("baton-github: error listing enterprise consumed licenses for %s: %w", enterprise, err)
+			return nil, "", nil, fmt.Errorf("baton-github: error creating role resource for %s in enterprise %s: %w", roleName, enterprise, err)
 		}
-
-		for _, user := range consumedLicenses.Users {
-			for _, role := range user.GitHubComEnterpriseRoles {
-				roleId := fmt.Sprintf("%s:%s", enterprise, role)
-				o.AddRoleCache(user.GitHubComLogin, roleId)
-
-				roleResource, err := resource.NewRoleResource(
-					role,
-					resourceTypeEnterpriseRole,
-					roleId,
-					[]resource.RoleTraitOption{},
-				)
-				if err != nil {
-					return nil, "", nil, fmt.Errorf("baton-github: error creating role resource for %s in enterprise %s: %w", role, enterprise, err)
-				}
-				ret = append(ret, roleResource)
-			}
-		}
+		ret = append(ret, roleResource)
 	}
 
 	return ret, "", nil, nil
@@ -150,7 +166,7 @@ func (o *enterpriseRoleResourceType) Entitlements(
 		entitlement.WithDisplayName(resource.DisplayName),
 		entitlement.WithDescription(fmt.Sprintf("Assignment to %s enterprise role in GitHub", resource.DisplayName)),
 		entitlement.WithAnnotation(&v2.V1Identifier{
-			Id: fmt.Sprintf("enterprise_role:%s", resource.Id.Resource),
+			Id: fmt.Sprintf(resource.Id.Resource),
 		}),
 		entitlement.WithGrantableTo(resourceTypeUser),
 	))
@@ -163,14 +179,38 @@ func (o *enterpriseRoleResourceType) Grants(
 	resource *v2.Resource,
 	pToken *pagination.Token,
 ) ([]*v2.Grant, string, annotations.Annotations, error) {
-	_, err := o.GetUserRolesCache()
+	_, err := o.getRolesCache()
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("baton-github: error getting enterprise role cache: %w", err)
 	}
 
-	// get all users, use organizations.List and then organizations.Members
+	cache, err := o.getRolesCache()
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("baton-github: error getting user roles cache: %w", err)
+	}
 
-	return nil, "", nil, nil
+	// __AUTO_GENERATED_PRINT_VAR_START__
+	fmt.Println(fmt.Sprintf("Grants resource.Id.Resource: %+v", resource.Id.Resource)) // __AUTO_GENERATED_PRINT_VAR_END__
+	ret := []*v2.Grant{}
+	for _, userLogin := range cache[resource.Id.Resource] {
+		user, _, err := o.client.Users.Get(ctx, userLogin)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("baton-github: error getting user %s: %w", userLogin, err)
+		}
+
+		principalId, err := resourceSdk.NewResourceID(resourceTypeUser, *user.ID)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("baton-github: error creating resource ID for user %s: %w", userLogin, err)
+		}
+
+		ret = append(ret, grant.NewGrant(
+			resource,
+			"assigned",
+			principalId,
+		))
+	}
+
+	return ret, "", nil, nil
 }
 
 // func (o *enterpriseRoleResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {

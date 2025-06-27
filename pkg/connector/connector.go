@@ -198,10 +198,14 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 	}
 
 	if len(gh.enterprises) > 0 {
+		// __AUTO_GENERATED_PRINTF_START__
+		fmt.Println("Validate 1") // __AUTO_GENERATED_PRINTF_END__
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0])
 		if err != nil {
 			return nil, fmt.Errorf("access token must be an admin on the enterprise to sync enterprise roles: %w", err)
 		}
+		// __AUTO_GENERATED_PRINTF_START__
+		fmt.Println("Validate 2") // __AUTO_GENERATED_PRINTF_END__
 	}
 	return nil, nil
 }
