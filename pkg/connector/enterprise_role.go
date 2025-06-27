@@ -32,7 +32,7 @@ func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.Resourc
 func (o *enterpriseRoleResourceType) cacheRole(roleId string, userLogin string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if _, exists := o.roleUsersCache[userLogin]; !exists {
+	if _, exists := o.roleUsersCache[roleId]; !exists {
 		o.roleUsersCache[roleId] = []string{}
 	}
 

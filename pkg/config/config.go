@@ -20,7 +20,7 @@ var (
 	EnterprisesField = field.StringSliceField(
 		"enterprises",
 		field.WithDisplayName("Enterprises"),
-		field.WithDescription("Sync enterprise roles, must be an edmin of the enterprise."),
+		field.WithDescription("Sync enterprise roles, must be an admin of the enterprise."),
 	)
 	instanceUrlField = field.StringField(
 		"instance-url",
