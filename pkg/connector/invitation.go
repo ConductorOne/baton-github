@@ -10,9 +10,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
-	"google.golang.org/grpc/codes"
 )
 
 func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, error) {
@@ -72,7 +70,7 @@ func (i *invitationResourceType) List(ctx context.Context, parentID *v2.Resource
 	})
 	if err != nil {
 		if isNotFoundError(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
+			return nil, "", nil, nil
 		}
 		return nil, "", nil, fmt.Errorf("github-connector: ListPendingOrgInvitatioins failed: %w", err)
 	}
