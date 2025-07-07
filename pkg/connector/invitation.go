@@ -69,6 +69,9 @@ func (i *invitationResourceType) List(ctx context.Context, parentID *v2.Resource
 		PerPage: pt.Size,
 	})
 	if err != nil {
+		if isNotFoundError(resp) {
+			return nil, "", nil, nil
+		}
 		return nil, "", nil, fmt.Errorf("github-connector: ListPendingOrgInvitatioins failed: %w", err)
 	}
 
