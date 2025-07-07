@@ -72,7 +72,7 @@ func (i *invitationResourceType) List(ctx context.Context, parentID *v2.Resource
 	})
 	if err != nil {
 		if isNotFoundError(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", orgName))
+			return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
 		}
 		return nil, "", nil, fmt.Errorf("github-connector: ListPendingOrgInvitatioins failed: %w", err)
 	}
