@@ -163,7 +163,8 @@ func (o *orgRoleResourceType) Grants(
 		})
 	case resourceTypeUser.Id:
 		opts := &github.ListOptions{
-			Page: page,
+			Page:    page,
+			PerPage: max_page_size,
 		}
 		users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, opts)
 		if err != nil {

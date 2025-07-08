@@ -29,7 +29,10 @@ import (
 
 const githubDotCom = "https://github.com"
 
-var ValidAssetDomains = []string{"avatars.githubusercontent.com"}
+var (
+	ValidAssetDomains     = []string{"avatars.githubusercontent.com"}
+	max_page_size     int = 100
+)
 
 var (
 	resourceTypeOrg = &v2.ResourceType{

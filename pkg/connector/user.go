@@ -123,7 +123,10 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	var restApiRateLimit *v2.RateLimitDescription
 
 	opts := github.ListMembersOptions{
-		ListOptions: github.ListOptions{Page: page, PerPage: pt.Size},
+		ListOptions: github.ListOptions{
+			Page:    page,
+			PerPage: max_page_size,
+		},
 	}
 
 	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &opts)
