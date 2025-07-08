@@ -78,7 +78,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 
 	opts := &github.ListOptions{
 		Page:    page,
-		PerPage: max_page_size,
+		PerPage: maxPageSize,
 	}
 
 	orgID, err := parseResourceToGitHub(parentID)
@@ -177,7 +177,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 	opts := github.TeamListTeamMembersOptions{
 		ListOptions: github.ListOptions{
 			Page:    page,
-			PerPage: max_page_size,
+			PerPage: maxPageSize,
 		},
 	}
 

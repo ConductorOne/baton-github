@@ -95,7 +95,7 @@ func (o *orgResourceType) List(
 
 	opts := &github.ListOptions{
 		Page:    page,
-		PerPage: max_page_size,
+		PerPage: maxPageSize,
 	}
 
 	orgs, resp, err := o.client.Organizations.List(ctx, "", opts)
@@ -188,7 +188,7 @@ func (o *orgResourceType) Grants(
 	opts := github.ListMembersOptions{
 		ListOptions: github.ListOptions{
 			Page:    page,
-			PerPage: max_page_size,
+			PerPage: maxPageSize,
 		},
 	}
 

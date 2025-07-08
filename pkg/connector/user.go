@@ -125,7 +125,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	opts := github.ListMembersOptions{
 		ListOptions: github.ListOptions{
 			Page:    page,
-			PerPage: max_page_size,
+			PerPage: maxPageSize,
 		},
 	}
 
