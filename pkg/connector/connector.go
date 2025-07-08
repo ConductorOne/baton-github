@@ -31,7 +31,7 @@ const githubDotCom = "https://github.com"
 
 var (
 	ValidAssetDomains     = []string{"avatars.githubusercontent.com"}
-	max_page_size     int = 100
+	max_page_size     int = 100 // maximum page size github supported.
 )
 
 var (
@@ -427,7 +427,7 @@ func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]strin
 		orgLogins []string
 	)
 	for {
-		orgs, resp, err := client.Organizations.List(ctx, "", &github.ListOptions{Page: page})
+		orgs, resp, err := client.Organizations.List(ctx, "", &github.ListOptions{Page: page, PerPage: max_page_size})
 		if err != nil {
 			return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
 		}

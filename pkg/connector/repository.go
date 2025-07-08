@@ -211,7 +211,8 @@ func (o *repositoryResourceType) Grants(
 
 	case resourceTypeTeam.Id:
 		opts := &github.ListOptions{
-			Page: page,
+			Page:    page,
+			PerPage: max_page_size,
 		}
 		teams, resp, err := o.client.Repositories.ListTeams(ctx, orgName, resource.DisplayName, opts)
 		if err != nil {
