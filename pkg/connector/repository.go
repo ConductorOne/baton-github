@@ -82,7 +82,7 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 	opts := &github.RepositoryListByOrgOptions{
 		ListOptions: github.ListOptions{
 			Page:    page,
-			PerPage: pt.Size,
+			PerPage: maxPageSize,
 		},
 	}
 
@@ -161,7 +161,10 @@ func (o *repositoryResourceType) Grants(
 	case resourceTypeUser.Id:
 		opts := &github.ListCollaboratorsOptions{
 			Affiliation: "all",
-			ListOptions: github.ListOptions{Page: page},
+			ListOptions: github.ListOptions{
+				Page:    page,
+				PerPage: maxPageSize,
+			},
 		}
 		users, resp, err := o.client.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, opts)
 		if err != nil {
@@ -208,7 +211,8 @@ func (o *repositoryResourceType) Grants(
 
 	case resourceTypeTeam.Id:
 		opts := &github.ListOptions{
-			Page: page,
+			Page:    page,
+			PerPage: maxPageSize,
 		}
 		teams, resp, err := o.client.Repositories.ListTeams(ctx, orgName, resource.DisplayName, opts)
 		if err != nil {
