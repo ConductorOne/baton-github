@@ -13,6 +13,12 @@
       "stringField": {}
     },
     {
+      "name": "enterprises",
+      "displayName": "Enterprises",
+      "description": "Sync enterprise roles, must be an admin of the enterprise.",
+      "stringSliceField": {}
+    },
+    {
       "name": "instance-url",
       "displayName": "GitHub instance URL",
       "description": "The GitHub instance URL to connect to. (default \"https://github.com\")",
