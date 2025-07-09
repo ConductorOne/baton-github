@@ -7,7 +7,7 @@ on:
 
 jobs:
   release:
-    uses: ConductorOne/github-workflows/.github/workflows/release.yaml@v1
+    uses: ConductorOne/github-workflows/.github/workflows/release.yaml@v2
     with:
       tag: ${{ github.ref_name }}
     secrets:
@@ -16,3 +16,4 @@ jobs:
       APPLE_SIGNING_KEY_P12_PASSWORD: ${{ secrets.APPLE_SIGNING_KEY_P12_PASSWORD }}
       AC_PASSWORD: ${{ secrets.AC_PASSWORD }}
       AC_PROVIDER: ${{ secrets.AC_PROVIDER }}
+      DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
