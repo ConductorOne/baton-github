@@ -17,6 +17,11 @@ var (
 		field.WithDisplayName("Organizations"),
 		field.WithDescription("Limit syncing to specific organizations."),
 	)
+	EnterprisesField = field.StringSliceField(
+		"enterprises",
+		field.WithDisplayName("Enterprises"),
+		field.WithDescription("Sync enterprise roles, must be an admin of the enterprise."),
+	)
 	instanceUrlField = field.StringField(
 		"instance-url",
 		field.WithDisplayName("GitHub instance URL"),
@@ -55,6 +60,7 @@ var Config = field.NewConfiguration(
 	[]field.SchemaField{
 		accessTokenField,
 		orgsField,
+		EnterprisesField,
 		instanceUrlField,
 		syncSecrets,
 		appIDField,

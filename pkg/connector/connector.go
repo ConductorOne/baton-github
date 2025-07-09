@@ -14,6 +14,7 @@ import (
 	"time"
 
 	cfg "github.com/conductorone/baton-github/pkg/config"
+	"github.com/conductorone/baton-github/pkg/customclient"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
@@ -79,17 +80,25 @@ var (
 		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_ROLE},
 		Annotations: v1AnnotationsForResourceType("org_role"),
 	}
+	resourceTypeEnterpriseRole = &v2.ResourceType{
+		Id:          "enterprise_role",
+		DisplayName: "Enterprise Role",
+		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_ROLE},
+		Annotations: v1AnnotationsForResourceType("enterprise_role"),
+	}
 )
 
 type GitHub struct {
 	orgs           []string
 	client         *github.Client
 	appClient      *github.Client
+	customClient   *customclient.Client
 	instanceURL    string
 	graphqlClient  *githubv4.Client
 	hasSAMLEnabled *bool
 	orgCache       *orgNameCache
 	syncSecrets    bool
+	enterprises    []string
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
@@ -108,6 +117,10 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 
 	if gh.syncSecrets {
 		resourceSyncers = append(resourceSyncers, apiTokenBuilder(gh.client, gh.hasSAMLEnabled, gh.orgCache))
+	}
+
+	if len(gh.enterprises) > 0 {
+		resourceSyncers = append(resourceSyncers, enterpriseRoleBuilder(gh.client, gh.customClient, gh.enterprises))
 	}
 	return resourceSyncers
 }
@@ -187,6 +200,12 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		return nil, fmt.Errorf("access token must be an admin on at least one organization")
 	}
 
+	if len(gh.enterprises) > 0 {
+		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 0)
+		if err != nil {
+			return nil, fmt.Errorf("access token must be an admin on the enterprise to sync enterprise roles: %w", err)
+		}
+	}
 	return nil, nil
 }
 
@@ -274,7 +293,7 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 		)
 	}
 
-	client, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
+	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
 	if err != nil {
 		return nil, err
 	}
@@ -284,12 +303,14 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 	}
 
 	gh := &GitHub{
-		client:        client,
+		client:        ghClient,
 		appClient:     appClient,
+		customClient:  customclient.New(ghClient),
 		instanceURL:   ghc.InstanceUrl,
 		orgs:          ghc.Orgs,
+		enterprises:   ghc.Enterprises,
 		graphqlClient: graphqlClient,
-		orgCache:      newOrgNameCache(client),
+		orgCache:      newOrgNameCache(ghClient),
 		syncSecrets:   ghc.SyncSecrets,
 	}
 	return gh, nil

@@ -6,6 +6,7 @@ import "reflect"
 type Github struct {
 	Token string `mapstructure:"token"`
 	Orgs []string `mapstructure:"orgs"`
+	Enterprises []string `mapstructure:"enterprises"`
 	InstanceUrl string `mapstructure:"instance-url"`
 	SyncSecrets bool `mapstructure:"sync-secrets"`
 	AppId string `mapstructure:"app-id"`
