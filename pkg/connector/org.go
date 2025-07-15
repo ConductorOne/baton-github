@@ -22,7 +22,7 @@ import (
 const (
 	orgRoleMember       = "member"
 	orgRoleDirectMember = "direct_member" // invite
-	orgRoleAdmin        = "admin"
+	orgRoleAdmin        = "owner"
 )
 
 var orgAccessLevels = []string{
@@ -159,7 +159,7 @@ func (o *orgResourceType) Entitlements(
 	))
 	rv = append(rv, entitlement.NewPermissionEntitlement(resource, orgRoleAdmin,
 		entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCase(orgRoleAdmin))),
-		entitlement.WithDescription(fmt.Sprintf("Access to %s org in GitHub", resource.DisplayName)),
+		entitlement.WithDescription(fmt.Sprintf("Owner of %s org in GitHub", resource.DisplayName)),
 		entitlement.WithAnnotation(&v2.V1Identifier{
 			Id: fmt.Sprintf("org:%s:role:%s", resource.Id.Resource, orgRoleAdmin),
 		}),
