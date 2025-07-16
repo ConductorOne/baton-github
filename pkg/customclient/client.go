@@ -41,7 +41,9 @@ func (c *Client) ListEnterpriseConsumedLicenses(ctx context.Context, enterprise 
 	)
 
 	if err != nil {
-		logBody(ctx, res.Body)
+		if res != nil {
+			logBody(ctx, res.Body)
+		}
 		return nil, &rateLimitData, fmt.Errorf("error listing enterprise consumed licenses: %w", err)
 	}
 
