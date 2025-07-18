@@ -39,7 +39,7 @@ func TestOrganization(t *testing.T) {
 
 		grants, nextToken, grantsAnnotations, err := client.Grants(ctx, organization, &pagination.Token{})
 		require.Nil(t, err)
-		test.AssertNoRatelimitAnnotations(t, grantsAnnotations)
+		test.AssertHasRatelimitAnnotations(t, grantsAnnotations)
 		require.Equal(t, "", nextToken)
 		require.Len(t, grants, 2)
 

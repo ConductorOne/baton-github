@@ -99,7 +99,7 @@ func (i *invitationResourceType) List(ctx context.Context, parentID *v2.Resource
 		invitationResources = append(invitationResources, ir)
 	}
 	annotations.WithRateLimiting(restApiRateLimit)
-	return invitationResources, pageToken, nil, nil
+	return invitationResources, pageToken, annotations, nil
 }
 
 func (i *invitationResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
@@ -155,7 +155,7 @@ func (i *invitationResourceType) CreateAccount(
 	}
 	return &v2.CreateAccountResponse_SuccessResult{
 		Resource: r,
-	}, nil, nil, nil
+	}, nil, annotations, nil
 }
 
 func (i *invitationResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {

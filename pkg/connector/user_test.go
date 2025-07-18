@@ -58,7 +58,7 @@ func TestUsersList(t *testing.T) {
 				&pagination.Token{},
 			)
 			require.Nil(t, err)
-			test.AssertNoRatelimitAnnotations(t, annotations)
+			test.AssertHasRatelimitAnnotations(t, annotations)
 			require.Equal(t, "", nextToken)
 			require.Len(t, users, 1)
 			require.Equal(t, *githubUser.Login, users[0].Id.Resource)

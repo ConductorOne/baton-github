@@ -170,7 +170,12 @@ func extractRateLimitData(response *github.Response) (*v2.RateLimitDescription, 
 		ra = &timestamppb.Timestamp{Seconds: ts}
 	}
 
+	status := v2.RateLimitDescription_STATUS_OK
+	if r <= 0 {
+		status = v2.RateLimitDescription_STATUS_OVERLIMIT
+	}
 	return &v2.RateLimitDescription{
+		Status:    status,
 		Limit:     l,
 		Remaining: r,
 		ResetAt:   ra,
