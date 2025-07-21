@@ -18,6 +18,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -204,7 +205,11 @@ func (o *orgResourceType) Grants(
 		if isNotFoundError(resp) {
 			return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
 		}
-		return nil, "", nil, fmt.Errorf("github-connectorv2: failed to list org members: %w", err)
+		errMsg := "github-connectorv2: failed to list org members"
+		if isRatelimited(resp) {
+			return nil, "", nil, fmt.Errorf("%s: %w", errMsg, status.Error(codes.Unavailable, "too many requests"))
+		}
+		return nil, "", nil, fmt.Errorf("%s: %w", errMsg, err)
 	}
 
 	nextPage, reqAnnos, err := parseResp(resp)

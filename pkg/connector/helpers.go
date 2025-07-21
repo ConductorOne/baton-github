@@ -225,3 +225,10 @@ func isNotFoundError(resp *github.Response) bool {
 	}
 	return resp.StatusCode == http.StatusNotFound
 }
+
+func isRatelimited(resp *github.Response) bool {
+	if resp == nil {
+		return false
+	}
+	return resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests
+}
