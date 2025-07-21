@@ -13,9 +13,11 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
 )
 
 // outside collaborators are given one of these roles too.
@@ -176,6 +178,9 @@ func (o *repositoryResourceType) Grants(
 				}
 				return nil, pageToken, nil, nil
 			}
+			if isNotFoundError(resp) {
+				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
+			}
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
 		}
 
@@ -223,6 +228,10 @@ func (o *repositoryResourceType) Grants(
 					return nil, "", nil, err
 				}
 				return nil, pageToken, nil, nil
+			}
+
+			if isNotFoundError(resp) {
+				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
 			}
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
 		}
