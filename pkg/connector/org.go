@@ -18,7 +18,6 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -207,7 +206,7 @@ func (o *orgResourceType) Grants(
 		}
 		errMsg := "github-connectorv2: failed to list org members"
 		if isRatelimited(resp) {
-			return nil, "", nil, fmt.Errorf("%s: %w", errMsg, status.Error(codes.Unavailable, "too many requests"))
+			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
 		}
 		return nil, "", nil, fmt.Errorf("%s: %w", errMsg, err)
 	}
