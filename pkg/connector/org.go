@@ -13,9 +13,11 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -199,6 +201,9 @@ func (o *orgResourceType) Grants(
 
 	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &opts)
 	if err != nil {
+		if isNotFoundError(resp) {
+			return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
+		}
 		return nil, "", nil, fmt.Errorf("github-connectorv2: failed to list org members: %w", err)
 	}
 
