@@ -53,7 +53,7 @@ func TestRepository(t *testing.T) {
 			grants = append(grants, nextGrants...)
 
 			require.Nil(t, err)
-			test.AssertNoRatelimitAnnotations(t, grantsAnnotations)
+			test.AssertHasRatelimitAnnotations(t, grantsAnnotations)
 			if nextToken == "" {
 				break
 			}

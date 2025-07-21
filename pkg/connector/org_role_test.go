@@ -58,7 +58,7 @@ func TestOrgRole(t *testing.T) {
 			grants = append(grants, nextGrants...)
 
 			require.Nil(t, err)
-			test.AssertNoRatelimitAnnotations(t, grantsAnnotations)
+			test.AssertHasRatelimitAnnotations(t, grantsAnnotations)
 			if nextToken == "" {
 				break
 			}
@@ -98,7 +98,7 @@ func TestOrgRole(t *testing.T) {
 		require.Nil(t, err)
 		require.Empty(t, resources)
 		require.Empty(t, nextToken)
-		test.AssertNoRatelimitAnnotations(t, annotations)
+		test.AssertHasRatelimitAnnotations(t, annotations)
 
 		// Test Grants with permission error
 		role, _ := orgRoleResource(ctx, &OrganizationRole{
@@ -112,6 +112,6 @@ func TestOrgRole(t *testing.T) {
 		require.Empty(t, grants)
 		// The token should contain the initial state for users
 		require.NotEmpty(t, nextToken)
-		test.AssertNoRatelimitAnnotations(t, grantsAnnotations)
+		test.AssertHasRatelimitAnnotations(t, grantsAnnotations)
 	})
 }

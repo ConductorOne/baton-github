@@ -186,6 +186,9 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 		if isNotFoundError(resp) {
 			return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", org.GetID()))
 		}
+		if isRatelimited(resp) {
+			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+		}
 		return nil, "", nil, fmt.Errorf("github-connectorv2: failed to fetch team members: %w", err)
 	}
 

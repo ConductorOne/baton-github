@@ -1,14 +1,13 @@
 package test
 
 import (
-	"slices"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 )
 
-func AssertNoRatelimitAnnotations(
+func AssertHasRatelimitAnnotations(
 	t *testing.T,
 	actualAnnotations annotations.Annotations,
 ) {
@@ -22,13 +21,7 @@ func AssertNoRatelimitAnnotations(
 		if err != nil {
 			continue
 		}
-		if slices.Contains(
-			[]v2.RateLimitDescription_Status{
-				v2.RateLimitDescription_STATUS_ERROR,
-				v2.RateLimitDescription_STATUS_OVERLIMIT,
-			},
-			ratelimitDescription.Status,
-		) {
+		if ratelimitDescription.Status != v2.RateLimitDescription_STATUS_OVERLIMIT {
 			t.Fatal("request was ratelimited, expected not to be ratelimited")
 		}
 	}
