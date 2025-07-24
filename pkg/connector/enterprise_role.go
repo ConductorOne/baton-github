@@ -142,7 +142,7 @@ func (o *enterpriseRoleResourceType) Grants(
 		user, resp, err := o.client.Users.Get(ctx, userLogin)
 		if err != nil {
 			if isRatelimited(resp) {
-				return ret, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
 			}
 			return nil, "", nil, fmt.Errorf("baton-github: error getting user %s: %w", userLogin, err)
 		}
