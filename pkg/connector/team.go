@@ -174,56 +174,72 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 		return nil, "", nil, err
 	}
 
-	opts := github.TeamListTeamMembersOptions{
-		ListOptions: github.ListOptions{
-			Page:    page,
-			PerPage: maxPageSize,
-		},
-	}
-
-	users, resp, err := o.client.Teams.ListTeamMembersByID(ctx, org.GetID(), githubID, &opts)
-	if err != nil {
-		if isNotFoundError(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", org.GetID()))
+	var (
+		reqAnnos  annotations.Annotations
+		pageToken string
+		rv        = []*v2.Grant{}
+	)
+	switch rId := bag.ResourceTypeID(); rId {
+	case resourceTypeTeam.Id:
+		bag.Pop()
+		bag.Push(pagination.PageState{
+			ResourceTypeID: teamRoleMember,
+		})
+		bag.Push(pagination.PageState{
+			ResourceTypeID: teamRoleMaintainer,
+		})
+	case teamRoleMember, teamRoleMaintainer:
+		opts := github.TeamListTeamMembersOptions{
+			ListOptions: github.ListOptions{
+				Page:    page,
+				PerPage: maxPageSize,
+			},
+			Role: rId,
 		}
-		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-		}
-		return nil, "", nil, fmt.Errorf("github-connectorv2: failed to fetch team members: %w", err)
-	}
 
-	nextPage, reqAnnos, err := parseResp(resp)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
-	}
-
-	pageToken, err := bag.NextToken(nextPage)
-	if err != nil {
-		return nil, "", nil, err
-	}
-
-	var rv []*v2.Grant
-	for _, user := range users {
-		membership, _, err := o.client.Teams.GetTeamMembershipByID(ctx, org.GetID(), githubID, user.GetLogin())
+		users, resp, err := o.client.Teams.ListTeamMembersByID(ctx, org.GetID(), githubID, &opts)
 		if err != nil {
 			if isNotFoundError(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("user: %s not found", user.GetLogin()))
+				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", org.GetID()))
 			}
-			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to get team membership for user: %w", err)
+			if isRatelimited(resp) {
+				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			}
+			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to fetch team members: %w", err)
 		}
 
-		ur, err := userResource(ctx, user, user.GetEmail(), nil)
+		var nextPage string
+		nextPage, reqAnnos, err = parseResp(resp)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
+		}
+
+		err = bag.Next(nextPage)
 		if err != nil {
 			return nil, "", nil, err
 		}
 
-		rv = append(rv, grant.NewGrant(resource, membership.GetRole(), ur.Id,
-			grant.WithAnnotation(&v2.V1Identifier{
-				Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), membership.GetRole()),
-			}),
-		))
+		for _, user := range users {
+			ur, err := userResource(ctx, user, user.GetEmail(), nil)
+			if err != nil {
+				return nil, "", nil, err
+			}
+			rv = append(rv, grant.NewGrant(resource, rId, ur.Id,
+				grant.WithAnnotation(&v2.V1Identifier{
+					Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), rId),
+				}),
+			))
+		}
+	default:
+		ctxzap.Extract(ctx).Warn("Unknown GitHub Role Name",
+			zap.String("role_name", rId),
+		)
 	}
 
+	pageToken, err = bag.Marshal()
+	if err != nil {
+		return nil, "", nil, err
+	}
 	return rv, pageToken, reqAnnos, nil
 }
 
