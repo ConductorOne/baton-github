@@ -187,72 +187,78 @@ func (o *orgResourceType) Grants(
 		return nil, "", nil, err
 	}
 
-	opts := github.ListMembersOptions{
-		ListOptions: github.ListOptions{
-			Page:    page,
-			PerPage: maxPageSize,
-		},
-	}
+	var (
+		reqAnnos  annotations.Annotations
+		pageToken string
+		rv        = []*v2.Grant{}
+	)
 
-	orgName, err := o.orgCache.GetOrgName(ctx, resource.Id)
-	if err != nil {
-		return nil, "", nil, err
-	}
+	switch rId := bag.ResourceTypeID(); rId {
+	case resourceTypeOrg.Id:
+		bag.Pop()
+		bag.Push(pagination.PageState{
+			ResourceTypeID: orgRoleAdmin,
+		})
+		bag.Push(pagination.PageState{
+			ResourceTypeID: orgRoleMember,
+		})
+	case orgRoleAdmin, orgRoleMember:
 
-	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &opts)
-	if err != nil {
-		if isNotFoundError(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
-		}
-		errMsg := "github-connectorv2: failed to list org members"
-		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-		}
-		return nil, "", nil, fmt.Errorf("%s: %w", errMsg, err)
-	}
-
-	nextPage, reqAnnos, err := parseResp(resp)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
-	}
-
-	pageToken, err := bag.NextToken(nextPage)
-	if err != nil {
-		return nil, "", nil, err
-	}
-
-	var rv []*v2.Grant
-	for _, user := range users {
-		membership, _, err := o.client.Organizations.GetOrgMembership(ctx, user.GetLogin(), orgName)
+		orgName, err := o.orgCache.GetOrgName(ctx, resource.Id)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to get org memberships for user: %w", err)
+			return nil, "", nil, err
 		}
-		if membership.GetState() == "pending" {
-			continue
+		opts := github.ListMembersOptions{
+			Role: rId,
+			ListOptions: github.ListOptions{
+				Page:    page,
+				PerPage: maxPageSize,
+			},
+		}
+		users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &opts)
+		if err != nil {
+			if isNotFoundError(resp) {
+				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
+			}
+			errMsg := "github-connectorv2: failed to list org members"
+			if isRatelimited(resp) {
+				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			}
+			return nil, "", nil, fmt.Errorf("%s: %w", errMsg, err)
 		}
 
-		ur, err := userResource(ctx, user, user.GetEmail(), nil)
+		var nextPage string
+		nextPage, reqAnnos, err = parseResp(resp)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
+		}
+
+		err = bag.Next(nextPage)
 		if err != nil {
 			return nil, "", nil, err
 		}
 
-		roleName := strings.ToLower(membership.GetRole())
-		switch roleName {
-		case orgRoleAdmin:
-			rv = append(rv, o.orgRoleGrant(orgRoleAdmin, resource, ur.Id, user.GetID()))
-			rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, ur.Id, user.GetID()))
+		for _, user := range users {
+			ur, err := userResource(ctx, user, user.GetEmail(), nil)
+			if err != nil {
+				return nil, "", nil, err
+			}
 
-		case orgRoleMember:
-			rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, ur.Id, user.GetID()))
-
-		default:
-			ctxzap.Extract(ctx).Warn("Unknown GitHub Role Name",
-				zap.String("role_name", roleName),
-				zap.String("github_username", user.GetLogin()),
-			)
+			if rId == orgRoleAdmin {
+				rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, ur.Id, user.GetID()))
+			}
+			rv = append(rv, o.orgRoleGrant(rId, resource, ur.Id, user.GetID()))
 		}
+	default:
+		ctxzap.Extract(ctx).Warn("Unknown GitHub Role Name",
+			zap.String("role_name", rId),
+		)
 	}
 
+	pageToken, err = bag.Marshal()
+	if err != nil {
+		return nil, "", nil, err
+	}
 	return rv, pageToken, reqAnnos, nil
 }
 
