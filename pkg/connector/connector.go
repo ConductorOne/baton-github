@@ -180,7 +180,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		membership, _, err := gh.client.Organizations.GetOrgMembership(ctx, "", o)
 		if err != nil {
 			if filterOrgs {
-				return nil, fmt.Errorf("access token must be an admin on the %s organization", o)
+				return nil, fmt.Errorf("access token must be an admin on the %s organization: %w", o, err)
 			}
 			continue
 		}
@@ -188,7 +188,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		// Only sync orgs that we are an admin for
 		if strings.ToLower(membership.GetRole()) != orgRoleAdmin {
 			if filterOrgs {
-				return nil, fmt.Errorf("access token must be an admin on the %s organization", o)
+				return nil, fmt.Errorf("access token must be an admin on the %s organization: %w", o, err)
 			}
 			continue
 		}
