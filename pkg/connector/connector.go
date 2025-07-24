@@ -171,6 +171,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		var err error
 		orgLogins, err = getOrgs(ctx, gh.client, orgLogins)
 		if err != nil {
+			if err.
 			return nil, err
 		}
 	}
@@ -450,6 +451,9 @@ func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]strin
 	for {
 		orgs, resp, err := client.Organizations.List(ctx, "", &github.ListOptions{Page: page, PerPage: maxPageSize})
 		if err != nil {
+			if isRatelimited(resp) {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
 		}
 		if resp.StatusCode == http.StatusUnauthorized {

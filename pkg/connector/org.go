@@ -102,6 +102,9 @@ func (o *orgResourceType) List(
 
 	orgs, resp, err := o.client.Organizations.List(ctx, "", opts)
 	if err != nil {
+		if isRatelimited(resp) {
+			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+		}
 		return nil, "", nil, fmt.Errorf("github-connector: failed to fetch org: %w", err)
 	}
 
@@ -125,6 +128,10 @@ func (o *orgResourceType) List(
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
 				l.Warn("insufficient access to list org membership, skipping org", zap.String("org", org.GetLogin()))
 				continue
+			}
+
+			if isRatelimited(resp) {
+				return ret, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
 			}
 			return nil, "", nil, err
 		}

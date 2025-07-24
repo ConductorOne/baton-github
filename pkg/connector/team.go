@@ -95,6 +95,9 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 
 	teams, resp, err := o.client.Teams.ListTeams(ctx, orgName, opts)
 	if err != nil {
+		if isRatelimited(resp) {
+			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+		}
 		return nil, "", nil, fmt.Errorf("github-connector: failed to list teams: %w", err)
 	}
 
@@ -104,8 +107,11 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	}
 
 	for _, team := range teams {
-		fullTeam, _, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
+		fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
 		if err != nil {
+			if isRatelimited(resp) {
+				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			}
 			return nil, "", nil, err
 		}
 
@@ -164,8 +170,11 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 		return nil, "", nil, fmt.Errorf("error fetching orgID from team profile")
 	}
 
-	org, _, err := o.client.Organizations.GetByID(ctx, orgID)
+	org, resp, err := o.client.Organizations.GetByID(ctx, orgID)
 	if err != nil {
+		if isRatelimited(resp) {
+			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+		}
 		return nil, "", nil, err
 	}
 
