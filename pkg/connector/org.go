@@ -131,7 +131,7 @@ func (o *orgResourceType) List(
 			}
 
 			if isRatelimited(resp) {
-				return ret, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
 			}
 			return nil, "", nil, err
 		}

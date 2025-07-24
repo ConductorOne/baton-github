@@ -163,7 +163,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 			if res == nil || res.StatusCode != http.StatusNotFound {
 				return nil, "", nil, err
 			}
-			if isRatelimited(resp) {
+			if isRatelimited(res) {
 				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
 			}
 			l.Error("error fetching user by id", zap.Error(err), zap.Int64("user_id", user.GetID()))

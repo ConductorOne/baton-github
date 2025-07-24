@@ -91,7 +91,7 @@ func (o *orgRoleResourceType) List(
 			return nil, "", nil, nil
 		}
 		if isRatelimited(resp) {
-			uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
 		}
 		return nil, "", nil, fmt.Errorf("failed to list organization roles: %w", err)
 	}
