@@ -13,9 +13,11 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
 )
 
 type OrganizationRole struct {
@@ -87,6 +89,9 @@ func (o *orgRoleResourceType) List(
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 			// Return empty list with no error to indicate we skipped this resource
 			return nil, "", nil, nil
+		}
+		if isRatelimited(resp) {
+			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
 		}
 		return nil, "", nil, fmt.Errorf("failed to list organization roles: %w", err)
 	}
@@ -221,6 +226,9 @@ func (o *orgRoleResourceType) Grants(
 					return nil, "", nil, err
 				}
 				return nil, pageToken, nil, nil
+			}
+			if isRatelimited(resp) {
+				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
 			}
 			return nil, "", nil, fmt.Errorf("failed to list role teams: %w", err)
 		}

@@ -13,7 +13,9 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
+	"google.golang.org/grpc/codes"
 )
 
 type enterpriseRoleResourceType struct {
@@ -137,8 +139,11 @@ func (o *enterpriseRoleResourceType) Grants(
 
 	ret := []*v2.Grant{}
 	for _, userLogin := range cache[resource.Id.Resource] {
-		user, _, err := o.client.Users.Get(ctx, userLogin)
+		user, resp, err := o.client.Users.Get(ctx, userLogin)
 		if err != nil {
+			if isRatelimited(resp) {
+				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			}
 			return nil, "", nil, fmt.Errorf("baton-github: error getting user %s: %w", userLogin, err)
 		}
 

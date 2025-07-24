@@ -180,7 +180,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		membership, _, err := gh.client.Organizations.GetOrgMembership(ctx, "", o)
 		if err != nil {
 			if filterOrgs {
-				return nil, fmt.Errorf("access token must be an admin on the %s organization", o)
+				return nil, fmt.Errorf("access token must be an admin on the %s organization: %w", o, err)
 			}
 			continue
 		}
@@ -450,6 +450,9 @@ func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]strin
 	for {
 		orgs, resp, err := client.Organizations.List(ctx, "", &github.ListOptions{Page: page, PerPage: maxPageSize})
 		if err != nil {
+			if isRatelimited(resp) {
+				return nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			}
 			return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
