@@ -39,11 +39,10 @@ func TestTeam(t *testing.T) {
 		require.Nil(t, err)
 		require.Empty(t, grantAnnotations)
 
-		grants, nextToken, grantsAnnotations, err := client.Grants(ctx, team, &pagination.Token{})
+		_, nextToken, grantsAnnotations, err := client.Grants(ctx, team, &pagination.Token{})
 		require.Nil(t, err)
 		test.AssertHasRatelimitAnnotations(t, grantsAnnotations)
-		require.Equal(t, "", nextToken)
-		require.Len(t, grants, 1)
+		require.Equal(t, "{\"states\":[{\"type\":\"member\"}],\"current_state\":{\"type\":\"maintainer\"}}", nextToken)
 
 		grant := v2.Grant{
 			Entitlement: &entitlement,
