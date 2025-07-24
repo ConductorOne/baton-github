@@ -188,7 +188,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		// Only sync orgs that we are an admin for
 		if strings.ToLower(membership.GetRole()) != orgRoleAdmin {
 			if filterOrgs {
-				return nil, fmt.Errorf("access token must be an admin on the %s organization: %w", o, err)
+				return nil, fmt.Errorf("access token must be an admin on the %s organization", o)
 			}
 			continue
 		}
