@@ -173,7 +173,7 @@ func (o *orgRoleResourceType) Grants(
 		}
 		users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, opts)
 		if err != nil {
-			if isRatelimited(resp) || isNotFoundError(resp) {
+			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 				pageToken, err := bag.NextToken("")
 				if err != nil {
 					return nil, "", nil, err

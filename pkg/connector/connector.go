@@ -171,7 +171,6 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		var err error
 		orgLogins, err = getOrgs(ctx, gh.client, orgLogins)
 		if err != nil {
-			if err.
 			return nil, err
 		}
 	}
