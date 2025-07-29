@@ -230,8 +230,5 @@ func isRatelimited(resp *github.Response) bool {
 	if resp == nil {
 		return false
 	}
-	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-Ratelimit-Remaining") == "0" {
-		return true
-	}
-	return resp.StatusCode == http.StatusTooManyRequests
+	return resp.Header.Get("X-Ratelimit-Remaining") == "0"
 }
