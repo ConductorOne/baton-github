@@ -230,5 +230,8 @@ func isRatelimited(resp *github.Response) bool {
 	if resp == nil {
 		return false
 	}
-	return resp.Header.Get("X-Ratelimit-Remaining") == "0"
+	if resp.Header.Get("X-Ratelimit-Remaining") == "0" {
+		return true
+	}
+	return resp.StatusCode == http.StatusTooManyRequests
 }
