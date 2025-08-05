@@ -1,9 +1,11 @@
 package field
 
 import (
+	"os"
 	"time"
 
 	"github.com/conductorone/baton-sdk/pkg/logging"
+	"golang.org/x/term"
 )
 
 const (
@@ -15,6 +17,14 @@ const (
 	OtelLoggingDisabledFieldName              = "otel-logging-disabled"
 )
 
+func defaultLogFormat() any {
+	// If stdout is a TTY, use console format, otherwise use JSON
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		return logging.LogFormatConsole
+	}
+	return logging.LogFormatJSON
+}
+
 var (
 	createTicketField           = BoolField("create-ticket", WithHidden(true), WithDescription("Create ticket"), WithPersistent(true), WithExportTarget(ExportTargetNone))
 	bulkCreateTicketField       = BoolField("bulk-create-ticket", WithHidden(true), WithDescription("Bulk create tickets"), WithPersistent(true), WithExportTarget(ExportTargetNone))
@@ -24,7 +34,11 @@ var (
 	ListTicketSchemasField = BoolField("list-ticket-schemas", WithHidden(true), WithDescription("List ticket schemas"), WithPersistent(true), WithExportTarget(ExportTargetNone))
 	provisioningField      = BoolField("provisioning", WithShortHand("p"), WithDescription("This must be set in order for provisioning actions to be enabled"),
 		WithPersistent(true), WithExportTarget(ExportTargetNone))
-	TicketingField = BoolField("ticketing", WithDescription("This must be set to enable ticketing support"), WithPersistent(true), WithExportTarget(ExportTargetNone))
+	TicketingField = BoolField("ticketing",
+		WithDisplayName("Enable external ticket provisioning"),
+		WithDescription("This must be set to enable ticketing support"),
+		WithPersistent(true),
+		WithExportTarget(ExportTargetNone))
 	c1zTmpDirField = StringField("c1z-temp-dir", WithHidden(true), WithDescription("The directory to store temporary files in. It must exist, "+
 		"and write access is required. Defaults to the OS temporary directory."), WithPersistent(true), WithExportTarget(ExportTargetNone))
 	clientIDField             = StringField("client-id", WithDescription("The client ID used to authenticate with ConductorOne"), WithPersistent(true), WithExportTarget(ExportTargetNone))
@@ -53,7 +67,7 @@ var (
 		WithPersistent(true), WithExportTarget(ExportTargetNone))
 	grantPrincipalTypeField = StringField("grant-principal-type", WithHidden(true), WithDescription("The resource type of the principal to grant the entitlement to"),
 		WithPersistent(true), WithExportTarget(ExportTargetNone))
-	logFormatField = StringField("log-format", WithDefaultValue(logging.LogFormatJSON), WithDescription("The output format for logs: json, console"),
+	logFormatField = StringField("log-format", WithDefaultValueFunc(defaultLogFormat), WithDescription("The output format for logs: json, console"),
 		WithPersistent(true), WithExportTarget(ExportTargetNone))
 	revokeGrantField       = StringField("revoke-grant", WithHidden(true), WithDescription("The grant to revoke"), WithPersistent(true), WithExportTarget(ExportTargetNone))
 	rotateCredentialsField = StringField("rotate-credentials", WithHidden(true), WithDescription("The id of the resource to rotate credentials on"),
@@ -64,6 +78,10 @@ var (
 	ticketTemplatePathField = StringField("ticket-template-path", WithHidden(true), WithDescription("A JSON file describing the ticket to create"),
 		WithPersistent(true), WithExportTarget(ExportTargetNone))
 	logLevelField = StringField("log-level", WithDefaultValue("info"), WithDescription("The log level: debug, info, warn, error"), WithPersistent(true),
+		WithExportTarget(ExportTargetOps))
+	logLevelDebugExpiresAtField = StringField("log-level-debug-expires-at",
+		WithDescription("The timestamp indicating when debug-level logging should expire"),
+		WithPersistent(true),
 		WithExportTarget(ExportTargetOps))
 	skipFullSync            = BoolField("skip-full-sync", WithDescription("This must be set to skip a full sync"), WithPersistent(true), WithExportTarget(ExportTargetNone))
 	targetedSyncResourceIDs = StringSliceField("sync-resources", WithDescription("The resource IDs to sync"), WithPersistent(true), WithExportTarget(ExportTargetNone))
@@ -108,6 +126,20 @@ var (
 	compactSyncIDsField = StringSliceField("compact-sync-ids",
 		WithDescription("A comma-separated list of file ids to sync from. Must match sync IDs from each file provided. Order matters."),
 		WithHidden(true),
+		WithPersistent(true),
+		WithExportTarget(ExportTargetNone),
+	)
+
+	invokeActionField = StringField("invoke-action",
+		WithDescription("The name of the custom action to invoke"),
+		WithHidden(true),
+		WithPersistent(true),
+		WithExportTarget(ExportTargetNone),
+	)
+	invokeActionArgsField = StringMapField("invoke-action-args",
+		WithHidden(true),
+		WithDescription("JSON-formatted object of map keys and values like '{ 'key': 'value' }'"),
+		WithDefaultValue(map[string]any{}),
 		WithPersistent(true),
 		WithExportTarget(ExportTargetNone),
 	)
@@ -217,6 +249,7 @@ var DefaultFields = []SchemaField{
 	ticketIDField,
 	ticketTemplatePathField,
 	logLevelField,
+	logLevelDebugExpiresAtField,
 	skipFullSync,
 	targetedSyncResourceIDs,
 	externalResourceC1ZField,
@@ -228,6 +261,8 @@ var DefaultFields = []SchemaField{
 	compactFilePathsField,
 	compactOutputDirectoryField,
 	compactSyncsField,
+	invokeActionField,
+	invokeActionArgsField,
 
 	otelCollectorEndpoint,
 	otelCollectorEndpointTLSCertPath,

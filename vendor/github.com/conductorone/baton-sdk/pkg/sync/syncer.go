@@ -107,12 +107,6 @@ func (p *ProgressCounts) LogEntitlementsProgress(ctx context.Context, resourceTy
 	percentComplete := (entitlementsProgress * 100) / resources
 
 	switch {
-	case entitlementsProgress > resources:
-		l.Error("more entitlement resources than resources",
-			zap.String("resource_type_id", resourceType),
-			zap.Int("synced", entitlementsProgress),
-			zap.Int("total", resources),
-		)
 	case percentComplete == 100:
 		l.Info("Synced entitlements",
 			zap.String("resource_type_id", resourceType),
@@ -121,12 +115,20 @@ func (p *ProgressCounts) LogEntitlementsProgress(ctx context.Context, resourceTy
 		)
 		p.LastEntitlementLog[resourceType] = time.Time{}
 	case time.Since(p.LastEntitlementLog[resourceType]) > maxLogFrequency:
-		l.Info("Syncing entitlements",
-			zap.String("resource_type_id", resourceType),
-			zap.Int("synced", entitlementsProgress),
-			zap.Int("total", resources),
-			zap.Int("percent_complete", percentComplete),
-		)
+		if entitlementsProgress > resources {
+			l.Warn("more entitlement resources than resources",
+				zap.String("resource_type_id", resourceType),
+				zap.Int("synced", entitlementsProgress),
+				zap.Int("total", resources),
+			)
+		} else {
+			l.Info("Syncing entitlements",
+				zap.String("resource_type_id", resourceType),
+				zap.Int("synced", entitlementsProgress),
+				zap.Int("total", resources),
+				zap.Int("percent_complete", percentComplete),
+			)
+		}
 		p.LastEntitlementLog[resourceType] = time.Now()
 	}
 }
@@ -151,12 +153,6 @@ func (p *ProgressCounts) LogGrantsProgress(ctx context.Context, resourceType str
 	percentComplete := (grantsProgress * 100) / resources
 
 	switch {
-	case grantsProgress > resources:
-		l.Error("more grant resources than resources",
-			zap.String("resource_type_id", resourceType),
-			zap.Int("synced", grantsProgress),
-			zap.Int("total", resources),
-		)
 	case percentComplete == 100:
 		l.Info("Synced grants",
 			zap.String("resource_type_id", resourceType),
@@ -165,12 +161,20 @@ func (p *ProgressCounts) LogGrantsProgress(ctx context.Context, resourceType str
 		)
 		p.LastGrantLog[resourceType] = time.Time{}
 	case time.Since(p.LastGrantLog[resourceType]) > maxLogFrequency:
-		l.Info("Syncing grants",
-			zap.String("resource_type_id", resourceType),
-			zap.Int("synced", grantsProgress),
-			zap.Int("total", resources),
-			zap.Int("percent_complete", percentComplete),
-		)
+		if grantsProgress > resources {
+			l.Warn("more grant resources than resources",
+				zap.String("resource_type_id", resourceType),
+				zap.Int("synced", grantsProgress),
+				zap.Int("total", resources),
+			)
+		} else {
+			l.Info("Syncing grants",
+				zap.String("resource_type_id", resourceType),
+				zap.Int("synced", grantsProgress),
+				zap.Int("total", resources),
+				zap.Int("percent_complete", percentComplete),
+			)
+		}
 		p.LastGrantLog[resourceType] = time.Now()
 	}
 }
@@ -2332,7 +2336,8 @@ func (s *syncer) runGrantExpandActions(ctx context.Context) (bool, error) {
 
 	// Peek the next action on the stack
 	if len(graph.Actions) == 0 {
-		l.Debug("runGrantExpandActions: no actions", zap.Any("graph", graph))
+		l.Debug("runGrantExpandActions: no actions") // zap.Any("graph", graph),
+
 		return true, nil
 	}
 	action := graph.Actions[0]
@@ -2462,12 +2467,6 @@ func (s *syncer) runGrantExpandActions(ctx context.Context) (bool, error) {
 			}
 			// Include the source grant as a source.
 			sourcesMap[sourceGrant.GetEntitlement().GetId()] = &v2.GrantSources_GrantSource{}
-
-			l.Debug(
-				"runGrantExpandActions: updating sources for descendant grant",
-				zap.String("grant_id", descendantGrant.GetId()),
-				zap.Any("sources", sources),
-			)
 		}
 		newGrants = append(newGrants, descendantGrants...)
 	}
@@ -2520,7 +2519,7 @@ func (s *syncer) expandGrantsForEntitlements(ctx context.Context) error {
 
 	graph := s.state.EntitlementGraph(ctx)
 	l = l.With(zap.Int("depth", graph.Depth))
-	l.Debug("expandGrantsForEntitlements: start", zap.Any("graph", graph))
+	l.Debug("expandGrantsForEntitlements: start") // zap.Any("graph", graph)
 
 	s.counts.LogExpandProgress(ctx, graph.Actions)
 
@@ -2547,7 +2546,7 @@ func (s *syncer) expandGrantsForEntitlements(ctx context.Context) error {
 	if int64(graph.Depth) > maxDepth {
 		l.Error(
 			"expandGrantsForEntitlements: exceeded max depth",
-			zap.Any("graph", graph),
+			// zap.Any("graph", graph),
 			zap.Int64("max_depth", maxDepth),
 		)
 		s.state.FinishAction(ctx)
@@ -2583,13 +2582,13 @@ func (s *syncer) expandGrantsForEntitlements(ctx context.Context) error {
 	}
 
 	if graph.IsExpanded() {
-		l.Debug("expandGrantsForEntitlements: graph is expanded", zap.Any("graph", graph))
+		l.Debug("expandGrantsForEntitlements: graph is expanded") // zap.Any("graph", graph)
 		s.state.FinishAction(ctx)
 		return nil
 	}
 
 	graph.Depth++
-	l.Debug("expandGrantsForEntitlements: graph is not expanded", zap.Any("graph", graph))
+	l.Debug("expandGrantsForEntitlements: graph is not expanded") // zap.Any("graph", graph)
 	return nil
 }
 

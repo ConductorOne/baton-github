@@ -180,7 +180,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		membership, _, err := gh.client.Organizations.GetOrgMembership(ctx, "", o)
 		if err != nil {
 			if filterOrgs {
-				return nil, fmt.Errorf("access token must be an admin on the %s organization: %w", o, err)
+				return nil, fmt.Errorf("can't get authenticated user on the %s organization: %w", o, err)
 			}
 			continue
 		}
@@ -203,7 +203,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 	if len(gh.enterprises) > 0 {
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 0)
 		if err != nil {
-			return nil, fmt.Errorf("access token must be an admin on the enterprise to sync enterprise roles: %w", err)
+			return nil, fmt.Errorf("can't list enterprise consumed licenses: %w", err)
 		}
 	}
 	return nil, nil
