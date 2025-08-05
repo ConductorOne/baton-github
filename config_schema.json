@@ -33,6 +33,12 @@
       }
     },
     {
+      "name": "log-level-debug-expires-at",
+      "description": "The timestamp indicating when debug-level logging should expire",
+      "isOps": true,
+      "stringField": {}
+    },
+    {
       "name": "orgs",
       "displayName": "Organizations",
       "description": "Limit syncing to specific organizations.",
