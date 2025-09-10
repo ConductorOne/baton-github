@@ -456,6 +456,9 @@ func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]strin
 			if isAuthError(resp) {
 				return nil, uhttp.WrapErrors(codes.Unauthenticated, "github-connector: failed to retrieve org", err)
 			}
+			if isPermissionError(resp) {
+				return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: failed to retrieve org", err)
+			}
 			return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
