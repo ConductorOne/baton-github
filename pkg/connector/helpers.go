@@ -235,3 +235,17 @@ func isRatelimited(resp *github.Response) bool {
 	}
 	return resp.StatusCode == http.StatusTooManyRequests
 }
+
+func isAuthError(resp *github.Response) bool {
+	if resp == nil {
+		return false
+	}
+	return resp.StatusCode == http.StatusUnauthorized
+}
+
+func isPermissionError(resp *github.Response) bool {
+	if resp == nil {
+		return false
+	}
+	return resp.StatusCode == http.StatusForbidden
+}
