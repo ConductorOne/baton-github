@@ -188,7 +188,8 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		// Only sync orgs that we are an admin for
 		if strings.ToLower(membership.GetRole()) != orgRoleAdmin {
 			if filterOrgs {
-				return nil, fmt.Errorf("access token must be an admin on the %s organization", o)
+				err := fmt.Errorf("access token must be an admin on the %s organization", o)
+				return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: credentials validation failed", err)
 			}
 			continue
 		}
