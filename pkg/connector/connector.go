@@ -198,7 +198,8 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 	}
 
 	if !adminFound {
-		return nil, fmt.Errorf("access token must be an admin on at least one organization")
+		err := fmt.Errorf("access token must be an admin on at least one organization")
+		return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: credentials validation failed", err)
 	}
 
 	if len(gh.enterprises) > 0 {
