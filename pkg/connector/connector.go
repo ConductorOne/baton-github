@@ -180,7 +180,8 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		membership, _, err := gh.client.Organizations.GetOrgMembership(ctx, "", o)
 		if err != nil {
 			if filterOrgs {
-				return nil, fmt.Errorf("can't get authenticated user on the %s organization: %w", o, err)
+				err := fmt.Errorf("can't get authenticated user on the %s organization: %w", o, err)
+				return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: credentials validation failed", err)
 			}
 			continue
 		}
