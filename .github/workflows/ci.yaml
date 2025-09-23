@@ -38,8 +38,8 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     env:
-      BATON_LOG_LEVEL: debug
-      BATON_TOKEN: ${{ github.token }}
+      BATON_TOKEN: ${{ secrets.BATON_TOKEN }}
+      BATON_ORGS: ConductorOne
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -54,5 +54,5 @@ jobs:
         with:
           connector: ./baton-github
           baton-entitlement: 'repository:642588514:triage'
-          baton-principal: '190765094'
+          baton-principal: '166871869'
           baton-principal-type: 'user'
