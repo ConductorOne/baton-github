@@ -1,56 +1,114 @@
 package expand
 
 import (
+	"context"
+
+	"github.com/conductorone/baton-sdk/pkg/sync/expand/scc"
 	mapset "github.com/deckarep/golang-set/v2"
 )
 
 // GetFirstCycle given an entitlements graph, return a cycle by node ID if it
 // exists. Returns nil if no cycle exists. If there is a single
 // node pointing to itself, that will count as a cycle.
-func (g *EntitlementGraph) GetFirstCycle() []int {
+func (g *EntitlementGraph) GetFirstCycle(ctx context.Context) []int {
 	if g.HasNoCycles {
 		return nil
 	}
-	visited := mapset.NewSet[int]()
-	for nodeID := range g.Nodes {
-		cycle, hasCycle := g.cycleDetectionHelper(nodeID, visited, []int{})
-		if hasCycle {
-			return cycle
-		}
+	comps, _ := g.ComputeCyclicComponents(ctx)
+	if len(comps) == 0 {
+		return nil
 	}
+	return comps[0]
+}
 
-	return nil
+// HasCycles returns true if the graph contains any cycle.
+func (g *EntitlementGraph) HasCycles(ctx context.Context) bool {
+	if g.HasNoCycles {
+		return false
+	}
+	comps, _ := g.ComputeCyclicComponents(ctx)
+	return len(comps) > 0
 }
 
 func (g *EntitlementGraph) cycleDetectionHelper(
+	ctx context.Context,
 	nodeID int,
-	visited mapset.Set[int],
-	currentCycle []int,
 ) ([]int, bool) {
-	visited.Add(nodeID)
-	if destinations, ok := g.SourcesToDestinations[nodeID]; ok {
-		for destinationID := range destinations {
-			nextCycle := make([]int, len(currentCycle))
-			copy(nextCycle, currentCycle)
-			nextCycle = append(nextCycle, nodeID)
-
-			if !visited.Contains(destinationID) {
-				if cycle, hasCycle := g.cycleDetectionHelper(destinationID, visited, nextCycle); hasCycle {
-					return cycle, true
-				}
-			} else {
-				// Make sure to not include part of the start before the cycle.
-				outputCycle := make([]int, 0)
-				for i := len(nextCycle) - 1; i >= 0; i-- {
-					outputCycle = append(outputCycle, nextCycle[i])
-					if nextCycle[i] == destinationID {
-						return outputCycle, true
-					}
-				}
-			}
+	reach := g.reachableFrom(nodeID)
+	if len(reach) == 0 {
+		return nil, false
+	}
+	fg := filteredGraph{g: g, include: func(id int) bool { _, ok := reach[id]; return ok }}
+	groups, _ := scc.CondenseFWBW(ctx, fg, scc.DefaultOptions())
+	for _, comp := range groups {
+		if len(comp) > 1 || (len(comp) == 1 && g.hasSelfLoop(comp[0])) {
+			return comp, true
 		}
 	}
 	return nil, false
+}
+
+func (g *EntitlementGraph) FixCycles(ctx context.Context) error {
+	comps, _ := g.ComputeCyclicComponents(ctx)
+	return g.FixCyclesFromComponents(ctx, comps)
+}
+
+// ComputeCyclicComponents runs SCC once and returns only cyclic components.
+// A component is cyclic if len>1 or a singleton with a self-loop.
+func (g *EntitlementGraph) ComputeCyclicComponents(ctx context.Context) ([][]int, *scc.Metrics) {
+	if g.HasNoCycles {
+		return nil, nil
+	}
+	groups, metrics := scc.CondenseFWBW(ctx, g, scc.DefaultOptions())
+	cyclic := make([][]int, 0)
+	for _, comp := range groups {
+		if len(comp) > 1 || (len(comp) == 1 && g.hasSelfLoop(comp[0])) {
+			cyclic = append(cyclic, comp)
+		}
+	}
+	return cyclic, metrics
+}
+
+// hasSelfLoop reports whether a node has a self-edge.
+func (g *EntitlementGraph) hasSelfLoop(id int) bool {
+	if row, ok := g.SourcesToDestinations[id]; ok {
+		_, ok := row[id]
+		return ok
+	}
+	return false
+}
+
+// filteredGraph restricts EntitlementGraph iteration to nodes for which include(id) is true.
+type filteredGraph struct {
+	g       *EntitlementGraph
+	include func(int) bool
+}
+
+func (fg filteredGraph) ForEachNode(fn func(id int) bool) {
+	for id := range fg.g.Nodes {
+		if fg.include != nil && !fg.include(id) {
+			continue
+		}
+		if !fn(id) {
+			return
+		}
+	}
+}
+
+func (fg filteredGraph) ForEachEdgeFrom(src int, fn func(dst int) bool) {
+	if fg.include != nil && !fg.include(src) {
+		return
+	}
+	if dsts, ok := fg.g.SourcesToDestinations[src]; ok {
+		for dst := range dsts {
+			if fg.include != nil && !fg.include(dst) {
+				continue
+			}
+			if !fn(dst) {
+				return
+			}
+		}
+	}
 }
 
 // removeNode obliterates a node and all incoming/outgoing edges.
@@ -87,30 +145,33 @@ func (g *EntitlementGraph) removeNode(nodeID int) {
 	delete(g.SourcesToDestinations, nodeID)
 }
 
-// FixCycles if any cycles of nodes exist, merge all nodes in that cycle into a
-// single node and then repeat. Iteration ends when there are no more cycles.
-func (g *EntitlementGraph) FixCycles() error {
+// FixCyclesFromComponents merges all provided cyclic components in one pass.
+func (g *EntitlementGraph) FixCyclesFromComponents(ctx context.Context, cyclic [][]int) error {
 	if g.HasNoCycles {
 		return nil
 	}
-	cycle := g.GetFirstCycle()
-	if cycle == nil {
+	if len(cyclic) == 0 {
 		g.HasNoCycles = true
 		return nil
 	}
-
-	if err := g.fixCycle(cycle); err != nil {
-		return err
+	for _, comp := range cyclic {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		if err := g.fixCycle(comp); err != nil {
+			return err
+		}
 	}
-
-	// Recurse!
-	return g.FixCycles()
+	g.HasNoCycles = true
+	return nil
 }
 
 // fixCycle takes a list of Node IDs that form a cycle and merges them into a
 // single, new node.
 func (g *EntitlementGraph) fixCycle(nodeIDs []int) error {
-	entitlementIDs := mapset.NewSet[string]()
+	entitlementIDs := mapset.NewThreadUnsafeSet[string]()
 	outgoingEdgesToResourceTypeIDs := map[int]mapset.Set[string]{}
 	incomingEdgesToResourceTypeIDs := map[int]mapset.Set[string]{}
 	for _, nodeID := range nodeIDs {
@@ -126,7 +187,7 @@ func (g *EntitlementGraph) fixCycle(nodeIDs []int) error {
 					if edge, ok := g.Edges[edgeID]; ok {
 						resourceTypeIDs, ok := incomingEdgesToResourceTypeIDs[sourceNodeID]
 						if !ok {
-							resourceTypeIDs = mapset.NewSet[string]()
+							resourceTypeIDs = mapset.NewThreadUnsafeSet[string]()
 						}
 						for _, resourceTypeID := range edge.ResourceTypeIDs {
 							resourceTypeIDs.Add(resourceTypeID)
@@ -142,7 +203,7 @@ func (g *EntitlementGraph) fixCycle(nodeIDs []int) error {
 					if edge, ok := g.Edges[edgeID]; ok {
 						resourceTypeIDs, ok := outgoingEdgesToResourceTypeIDs[destinationNodeID]
 						if !ok {
-							resourceTypeIDs = mapset.NewSet[string]()
+							resourceTypeIDs = mapset.NewThreadUnsafeSet[string]()
 						}
 						for _, resourceTypeID := range edge.ResourceTypeIDs {
 							resourceTypeIDs.Add(resourceTypeID)

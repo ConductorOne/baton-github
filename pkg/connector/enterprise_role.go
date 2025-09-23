@@ -119,7 +119,7 @@ func (o *enterpriseRoleResourceType) Entitlements(
 		entitlement.WithDisplayName(resource.DisplayName),
 		entitlement.WithDescription(fmt.Sprintf("Assignment to %s enterprise role in GitHub", resource.DisplayName)),
 		entitlement.WithAnnotation(&v2.V1Identifier{
-			Id: fmt.Sprintf(resource.Id.Resource),
+			Id: resource.Id.Resource,
 		}),
 		entitlement.WithGrantableTo(resourceTypeUser),
 	))

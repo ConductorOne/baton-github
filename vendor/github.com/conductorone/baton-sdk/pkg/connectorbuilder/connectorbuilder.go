@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
@@ -23,6 +24,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/metrics"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/retry"
+	"github.com/conductorone/baton-sdk/pkg/session"
 	"github.com/conductorone/baton-sdk/pkg/types"
 	"github.com/conductorone/baton-sdk/pkg/types/tasks"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
@@ -87,6 +89,15 @@ type ResourceManager interface {
 	ResourceDeleter
 }
 
+// ResourceManagerV2 extends ResourceSyncer to add capabilities for creating resources.
+//
+// This is the recommended interface for implementing resource creation operations in new connectors.
+type ResourceManagerV2 interface {
+	ResourceSyncer
+	Create(ctx context.Context, resource *v2.Resource) (*v2.Resource, annotations.Annotations, error)
+	ResourceDeleterV2
+}
+
 // ResourceDeleter extends ResourceSyncer to add capabilities for deleting resources.
 //
 // Implementing this interface indicates the connector supports deleting resources
@@ -94,6 +105,15 @@ type ResourceManager interface {
 type ResourceDeleter interface {
 	ResourceSyncer
 	Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error)
+}
+
+// ResourceDeleterV2 extends ResourceSyncer to add capabilities for deleting resources.
+//
+// This is the recommended interface for implementing resource deletion operations in new connectors.
+// It differs from ResourceDeleter by having the resource, not just the id.
+type ResourceDeleterV2 interface {
+	ResourceSyncer
+	Delete(ctx context.Context, resourceId *v2.ResourceId, parentResourceID *v2.ResourceId) (annotations.Annotations, error)
 }
 
 // ResourceTargetedSyncer extends ResourceSyncer to add capabilities for directly syncing an individual resource
@@ -120,8 +140,16 @@ type CreateAccountResponse interface {
 // represents users or accounts that can be provisioned.
 type AccountManager interface {
 	ResourceSyncer
-	CreateAccount(ctx context.Context, accountInfo *v2.AccountInfo, credentialOptions *v2.CredentialOptions) (CreateAccountResponse, []*v2.PlaintextData, annotations.Annotations, error)
+	CreateAccount(ctx context.Context,
+		accountInfo *v2.AccountInfo,
+		credentialOptions *v2.LocalCredentialOptions) (CreateAccountResponse, []*v2.PlaintextData, annotations.Annotations, error)
 	CreateAccountCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error)
+}
+
+type OldAccountManager interface {
+	CreateAccount(ctx context.Context,
+		accountInfo *v2.AccountInfo,
+		credentialOptions *v2.CredentialOptions) (CreateAccountResponse, []*v2.PlaintextData, annotations.Annotations, error)
 }
 
 // CredentialManager extends ResourceSyncer to add capabilities for managing credentials.
@@ -131,8 +159,16 @@ type AccountManager interface {
 // or service accounts that have rotatable credentials.
 type CredentialManager interface {
 	ResourceSyncer
-	Rotate(ctx context.Context, resourceId *v2.ResourceId, credentialOptions *v2.CredentialOptions) ([]*v2.PlaintextData, annotations.Annotations, error)
+	Rotate(ctx context.Context,
+		resourceId *v2.ResourceId,
+		credentialOptions *v2.LocalCredentialOptions) ([]*v2.PlaintextData, annotations.Annotations, error)
 	RotateCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsCredentialRotation, annotations.Annotations, error)
+}
+
+type OldCredentialManager interface {
+	Rotate(ctx context.Context,
+		resourceId *v2.ResourceId,
+		credentialOptions *v2.CredentialOptions) ([]*v2.PlaintextData, annotations.Annotations, error)
 }
 
 // Compatibility interface lets us handle both EventFeed and EventProvider the same.
@@ -243,7 +279,9 @@ type builderImpl struct {
 	resourceProvisioners    map[string]ResourceProvisioner
 	resourceProvisionersV2  map[string]ResourceProvisionerV2
 	resourceManagers        map[string]ResourceManager
+	resourceManagersV2      map[string]ResourceManagerV2
 	resourceDeleters        map[string]ResourceDeleter
+	resourceDeletersV2      map[string]ResourceDeleterV2
 	resourceTargetedSyncers map[string]ResourceTargetedSyncer
 	accountManager          AccountManager
 	actionManager           CustomActionManager
@@ -254,6 +292,7 @@ type builderImpl struct {
 	ticketingEnabled        bool
 	m                       *metrics.M
 	nowFunc                 func() time.Time
+	clientSecret            *jose.JSONWebKey
 }
 
 func (b *builderImpl) BulkCreateTickets(ctx context.Context, request *v2.TicketsServiceBulkCreateTicketsRequest) (*v2.TicketsServiceBulkCreateTicketsResponse, error) {
@@ -326,7 +365,7 @@ func (b *builderImpl) ListTicketSchemas(ctx context.Context, request *v2.Tickets
 	}
 
 	retryer := retry.NewRetryer(ctx, retry.RetryConfig{
-		MaxAttempts:  0,
+		MaxAttempts:  10,
 		InitialDelay: 15 * time.Second,
 		MaxDelay:     0,
 	})
@@ -461,12 +500,17 @@ func (b *builderImpl) GetTicketSchema(ctx context.Context, request *v2.TicketsSe
 func NewConnector(ctx context.Context, in interface{}, opts ...Opt) (types.ConnectorServer, error) {
 	switch c := in.(type) {
 	case ConnectorBuilder:
+		clientSecretValue := ctx.Value(crypto.ContextClientSecretKey)
+		clientSecretJWK, _ := clientSecretValue.(*jose.JSONWebKey)
+
 		ret := &builderImpl{
 			resourceBuilders:        make(map[string]ResourceSyncer),
 			resourceProvisioners:    make(map[string]ResourceProvisioner),
 			resourceProvisionersV2:  make(map[string]ResourceProvisionerV2),
 			resourceManagers:        make(map[string]ResourceManager),
+			resourceManagersV2:      make(map[string]ResourceManagerV2),
 			resourceDeleters:        make(map[string]ResourceDeleter),
+			resourceDeletersV2:      make(map[string]ResourceDeleterV2),
 			resourceTargetedSyncers: make(map[string]ResourceTargetedSyncer),
 			accountManager:          nil,
 			actionManager:           nil,
@@ -475,6 +519,7 @@ func NewConnector(ctx context.Context, in interface{}, opts ...Opt) (types.Conne
 			cb:                      c,
 			ticketManager:           nil,
 			nowFunc:                 time.Now,
+			clientSecret:            clientSecretJWK,
 		}
 
 		err := ret.options(opts...)
@@ -591,11 +636,39 @@ func NewConnector(ctx context.Context, in interface{}, opts ...Opt) (types.Conne
 				}
 			}
 
+			if resourceManager, ok := rb.(ResourceManagerV2); ok {
+				if _, ok := ret.resourceManagersV2[rType.Id]; ok {
+					return nil, fmt.Errorf("error: duplicate resource type found for resource managerV2 %s", rType.Id)
+				}
+				ret.resourceManagersV2[rType.Id] = resourceManager
+				// Support DeleteResourceV2 if connector implements both Create and Delete
+				if _, ok := ret.resourceDeletersV2[rType.Id]; ok {
+					// This should never happen
+					return nil, fmt.Errorf("error: duplicate resource type found for resource deleterV2 %s", rType.Id)
+				}
+				ret.resourceDeletersV2[rType.Id] = resourceManager
+			} else {
+				if resourceDeleter, ok := rb.(ResourceDeleterV2); ok {
+					if _, ok := ret.resourceDeletersV2[rType.Id]; ok {
+						return nil, fmt.Errorf("error: duplicate resource type found for resource deleterV2 %s", rType.Id)
+					}
+					ret.resourceDeletersV2[rType.Id] = resourceDeleter
+				}
+			}
+
+			if _, ok := rb.(OldAccountManager); ok {
+				return nil, fmt.Errorf("error: old account manager interface implemented for %s", rType.Id)
+			}
+
 			if accountManager, ok := rb.(AccountManager); ok {
 				if ret.accountManager != nil {
 					return nil, fmt.Errorf("error: duplicate resource type found for account manager %s", rType.Id)
 				}
 				ret.accountManager = accountManager
+			}
+
+			if _, ok := rb.(OldCredentialManager); ok {
+				return nil, fmt.Errorf("error: old credential manager interface implemented for %s", rType.Id)
 			}
 
 			if credentialManagers, ok := rb.(CredentialManager); ok {
@@ -696,7 +769,6 @@ func (b *builderImpl) ListResources(ctx context.Context, request *v2.ResourcesSe
 		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))
 		return nil, fmt.Errorf("error: list resources with unknown resource type %s", request.ResourceTypeId)
 	}
-
 	out, nextPageToken, annos, err := rb.List(ctx, request.ParentResourceId, &pagination.Token{
 		Size:  int(request.PageSize),
 		Token: request.PageToken,
@@ -802,6 +874,8 @@ func (b *builderImpl) ListGrants(ctx context.Context, request *v2.GrantsServiceL
 		Size:  int(request.PageSize),
 		Token: request.PageToken,
 	})
+
+	// annos.Append(&v2.ActiveSync{ActiveSyncId: request.Annotations.GetActiveSyncId()})
 	resp := &v2.GrantsServiceListGrantsResponse{
 		List:          out,
 		NextPageToken: nextPageToken,
@@ -943,6 +1017,15 @@ func getCapabilities(ctx context.Context, b *builderImpl) (*v2.ConnectorCapabili
 			connectorCaps[v2.Capability_CAPABILITY_RESOURCE_CREATE] = struct{}{}
 			connectorCaps[v2.Capability_CAPABILITY_RESOURCE_DELETE] = struct{}{}
 		} else if _, ok := rb.(ResourceDeleter); ok {
+			resourceTypeCapability.Capabilities = append(resourceTypeCapability.Capabilities, v2.Capability_CAPABILITY_RESOURCE_DELETE)
+			connectorCaps[v2.Capability_CAPABILITY_RESOURCE_DELETE] = struct{}{}
+		}
+
+		if _, ok := rb.(ResourceManagerV2); ok {
+			resourceTypeCapability.Capabilities = append(resourceTypeCapability.Capabilities, v2.Capability_CAPABILITY_RESOURCE_CREATE, v2.Capability_CAPABILITY_RESOURCE_DELETE)
+			connectorCaps[v2.Capability_CAPABILITY_RESOURCE_CREATE] = struct{}{}
+			connectorCaps[v2.Capability_CAPABILITY_RESOURCE_DELETE] = struct{}{}
+		} else if _, ok := rb.(ResourceDeleterV2); ok {
 			resourceTypeCapability.Capabilities = append(resourceTypeCapability.Capabilities, v2.Capability_CAPABILITY_RESOURCE_DELETE)
 			connectorCaps[v2.Capability_CAPABILITY_RESOURCE_DELETE] = struct{}{}
 		}
@@ -1178,7 +1261,16 @@ func (b *builderImpl) CreateResource(ctx context.Context, request *v2.CreateReso
 	tt := tasks.CreateResourceType
 	l := ctxzap.Extract(ctx)
 	rt := request.GetResource().GetId().GetResourceType()
-	manager, ok := b.resourceManagers[rt]
+
+	var manager interface {
+		Create(ctx context.Context, resource *v2.Resource) (*v2.Resource, annotations.Annotations, error)
+	}
+
+	manager, ok := b.resourceManagersV2[rt]
+	if !ok {
+		manager, ok = b.resourceManagers[rt]
+	}
+
 	if ok {
 		resource, annos, err := manager.Create(ctx, request.Resource)
 		if err != nil {
@@ -1203,14 +1295,32 @@ func (b *builderImpl) DeleteResource(ctx context.Context, request *v2.DeleteReso
 
 	l := ctxzap.Extract(ctx)
 	rt := request.GetResourceId().GetResourceType()
-	var manager ResourceDeleter
+	var rsDeleter ResourceDeleter
+	var rsDeleterV2 ResourceDeleterV2
 	var ok bool
-	manager, ok = b.resourceManagers[rt]
+
+	rsDeleterV2, ok = b.resourceManagersV2[rt]
 	if !ok {
-		manager, ok = b.resourceDeleters[rt]
+		rsDeleterV2, ok = b.resourceDeletersV2[rt]
+	}
+
+	if ok {
+		annos, err := rsDeleterV2.Delete(ctx, request.ResourceId, request.ParentResourceId)
+		if err != nil {
+			l.Error("error: deleteV2 resource failed", zap.Error(err))
+			b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))
+			return nil, fmt.Errorf("error: delete resource failed: %w", err)
+		}
+		b.m.RecordTaskSuccess(ctx, tt, b.nowFunc().Sub(start))
+		return &v2.DeleteResourceResponse{Annotations: annos}, nil
+	}
+
+	rsDeleter, ok = b.resourceManagers[rt]
+	if !ok {
+		rsDeleter, ok = b.resourceDeleters[rt]
 	}
 	if ok {
-		annos, err := manager.Delete(ctx, request.GetResourceId())
+		annos, err := rsDeleter.Delete(ctx, request.GetResourceId())
 		if err != nil {
 			l.Error("error: delete resource failed", zap.Error(err))
 			b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))
@@ -1233,14 +1343,32 @@ func (b *builderImpl) DeleteResourceV2(ctx context.Context, request *v2.DeleteRe
 
 	l := ctxzap.Extract(ctx)
 	rt := request.GetResourceId().GetResourceType()
-	var manager ResourceDeleter
+	var rsDeleter ResourceDeleter
+	var rsDeleterV2 ResourceDeleterV2
 	var ok bool
-	manager, ok = b.resourceManagers[rt]
+
+	rsDeleterV2, ok = b.resourceManagersV2[rt]
 	if !ok {
-		manager, ok = b.resourceDeleters[rt]
+		rsDeleterV2, ok = b.resourceDeletersV2[rt]
+	}
+
+	if ok {
+		annos, err := rsDeleterV2.Delete(ctx, request.ResourceId, request.ParentResourceId)
+		if err != nil {
+			l.Error("error: deleteV2 resource failed", zap.Error(err))
+			b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))
+			return nil, fmt.Errorf("error: delete resource failed: %w", err)
+		}
+		b.m.RecordTaskSuccess(ctx, tt, b.nowFunc().Sub(start))
+		return &v2.DeleteResourceV2Response{Annotations: annos}, nil
+	}
+
+	rsDeleter, ok = b.resourceManagers[rt]
+	if !ok {
+		rsDeleter, ok = b.resourceDeleters[rt]
 	}
 	if ok {
-		annos, err := manager.Delete(ctx, request.GetResourceId())
+		annos, err := rsDeleter.Delete(ctx, request.GetResourceId())
 		if err != nil {
 			l.Error("error: delete resource failed", zap.Error(err))
 			b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))
@@ -1269,7 +1397,14 @@ func (b *builderImpl) RotateCredential(ctx context.Context, request *v2.RotateCr
 		return nil, status.Error(codes.Unimplemented, "resource type does not have credential manager configured")
 	}
 
-	plaintexts, annos, err := manager.Rotate(ctx, request.GetResourceId(), request.GetCredentialOptions())
+	opts, err := crypto.ConvertCredentialOptions(ctx, b.clientSecret, request.GetCredentialOptions(), request.GetEncryptionConfigs())
+	if err != nil {
+		l.Error("error: converting credential options failed", zap.Error(err))
+		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))
+		return nil, fmt.Errorf("error: converting credential options failed: %w", err)
+	}
+
+	plaintexts, annos, err := manager.Rotate(ctx, request.GetResourceId(), opts)
 	if err != nil {
 		l.Error("error: rotate credentials on resource failed", zap.Error(err))
 		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))
@@ -1303,8 +1438,25 @@ func (b *builderImpl) RotateCredential(ctx context.Context, request *v2.RotateCr
 
 func (b *builderImpl) Cleanup(ctx context.Context, request *v2.ConnectorServiceCleanupRequest) (*v2.ConnectorServiceCleanupResponse, error) {
 	l := ctxzap.Extract(ctx)
+
+	// Clear session cache if available in context
+	sessionCache, err := session.GetSession(ctx)
+	if err != nil {
+		l.Warn("error getting session cache", zap.Error(err))
+	} else {
+		activeSync, err := annotations.GetActiveSyncIdFromAnnotations(annotations.Annotations(request.GetAnnotations()))
+		if err != nil {
+			l.Warn("error getting active sync id", zap.Error(err))
+		}
+		if activeSync != "" {
+			err = sessionCache.Clear(ctx)
+			if err != nil {
+				l.Warn("error clearing session cache", zap.Error(err))
+			}
+		}
+	}
 	// Clear all http caches at the end of a sync. This must be run in the child process, which is why it's in this function and not in syncer.go
-	err := uhttp.ClearCaches(ctx)
+	err = uhttp.ClearCaches(ctx)
 	if err != nil {
 		l.Warn("error clearing http caches", zap.Error(err))
 	}
@@ -1324,7 +1476,15 @@ func (b *builderImpl) CreateAccount(ctx context.Context, request *v2.CreateAccou
 		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))
 		return nil, status.Error(codes.Unimplemented, "connector does not have credential manager configured")
 	}
-	result, plaintexts, annos, err := b.accountManager.CreateAccount(ctx, request.GetAccountInfo(), request.GetCredentialOptions())
+
+	opts, err := crypto.ConvertCredentialOptions(ctx, b.clientSecret, request.GetCredentialOptions(), request.GetEncryptionConfigs())
+	if err != nil {
+		l.Error("error: converting credential options failed", zap.Error(err))
+		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))
+		return nil, fmt.Errorf("error: converting credential options failed: %w", err)
+	}
+
+	result, plaintexts, annos, err := b.accountManager.CreateAccount(ctx, request.GetAccountInfo(), opts)
 	if err != nil {
 		l.Error("error: create account failed", zap.Error(err))
 		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))

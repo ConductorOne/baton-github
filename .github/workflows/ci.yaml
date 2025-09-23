@@ -4,31 +4,30 @@ jobs:
   go-lint:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: 1.23.x
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - name: Run linters
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.1.6
+          version: latest
           args: --timeout=3m
   go-test:
     strategy:
       matrix:
-        go-version: [1.23.x]
         platform: [ubuntu-latest]
     runs-on: ${{ matrix.platform }}
     steps:
-      - name: Install Go
-        if: success()
-        uses: actions/setup-go@v4
-        with:
-          go-version: ${{ matrix.go-version }}
       - name: Checkout code
-        uses: actions/checkout@v3
+        if: success()
+        uses: actions/checkout@v4
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - name: go tests
         run: go test -v -covermode=count -json ./... > test.json
       - name: annotate go tests
@@ -36,3 +35,24 @@ jobs:
         uses: guyarb/golang-test-annotations@v0.6.0
         with:
           test-results: test.json
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      BATON_TOKEN: ${{ secrets.BATON_TOKEN }}
+      BATON_ORGS: ConductorOne
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build baton-github
+        run: go build ./cmd/baton-github
+      - name: Grant/revoke
+        uses: ConductorOne/github-workflows/actions/sync-test@v2
+        with:
+          connector: ./baton-github
+          baton-entitlement: 'repository:642588514:triage'
+          baton-principal: '166871869'
+          baton-principal-type: 'user'

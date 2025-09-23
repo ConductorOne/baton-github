@@ -156,8 +156,8 @@ github.com/benbjohnson/clock
 # github.com/cenkalti/backoff/v4 v4.3.0
 ## explicit; go 1.18
 github.com/cenkalti/backoff/v4
-# github.com/conductorone/baton-sdk v0.3.30
-## explicit; go 1.23.4
+# github.com/conductorone/baton-sdk v0.4.2
+## explicit; go 1.25
 github.com/conductorone/baton-sdk/internal/connector
 github.com/conductorone/baton-sdk/pb/c1/c1z/v1
 github.com/conductorone/baton-sdk/pb/c1/config/v1
@@ -194,9 +194,12 @@ github.com/conductorone/baton-sdk/pkg/provisioner
 github.com/conductorone/baton-sdk/pkg/ratelimit
 github.com/conductorone/baton-sdk/pkg/retry
 github.com/conductorone/baton-sdk/pkg/sdk
+github.com/conductorone/baton-sdk/pkg/session
 github.com/conductorone/baton-sdk/pkg/sync
 github.com/conductorone/baton-sdk/pkg/sync/expand
+github.com/conductorone/baton-sdk/pkg/sync/expand/scc
 github.com/conductorone/baton-sdk/pkg/synccompactor
+github.com/conductorone/baton-sdk/pkg/synccompactor/attached
 github.com/conductorone/baton-sdk/pkg/synccompactor/naive
 github.com/conductorone/baton-sdk/pkg/tasks
 github.com/conductorone/baton-sdk/pkg/tasks/c1api
@@ -333,12 +336,13 @@ github.com/inconshreveable/mousetrap
 # github.com/jellydator/ttlcache/v3 v3.3.0
 ## explicit; go 1.18
 github.com/jellydator/ttlcache/v3
-# github.com/klauspost/compress v1.17.11
-## explicit; go 1.21
+# github.com/klauspost/compress v1.18.0
+## explicit; go 1.22
 github.com/klauspost/compress
 github.com/klauspost/compress/fse
 github.com/klauspost/compress/huff0
 github.com/klauspost/compress/internal/cpuinfo
+github.com/klauspost/compress/internal/le
 github.com/klauspost/compress/internal/snapref
 github.com/klauspost/compress/zstd
 github.com/klauspost/compress/zstd/internal/xxhash

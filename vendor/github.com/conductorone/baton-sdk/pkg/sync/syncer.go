@@ -209,8 +209,13 @@ type syncer struct {
 	counts                              *ProgressCounts
 	targetedSyncResourceIDs             []string
 	onlyExpandGrants                    bool
+	dontExpandGrants                    bool
 	syncID                              string
 	skipEGForResourceType               map[string]bool
+	skipEntitlementsAndGrants           bool
+	resourceTypeTraits                  map[string][]v2.ResourceType_Trait
+	syncType                            connectorstore.SyncType
+	injectSyncIDAnnotation              bool
 }
 
 const minCheckpointInterval = 10 * time.Second
@@ -264,8 +269,10 @@ func isWarning(ctx context.Context, err error) bool {
 
 func (s *syncer) startOrResumeSync(ctx context.Context) (string, bool, error) {
 	// Sync resuming logic:
-	// If no targetedSyncResourceIDs, find the most recent sync and resume it (regardless of partial or full).
-	// If targetedSyncResourceIDs, start a new partial sync. Use the most recent completed sync as the parent sync ID (if it exists).
+	// If we know our sync ID, set it as the current sync and return (resuming that sync).
+	// If targetedSyncResourceIDs is not set, find the most recent unfinished sync of our desired sync type & resume it (regardless of partial or full).
+	//   If there are no unfinished syncs of our desired sync type, start a new sync.
+	// If targetedSyncResourceIDs is set, start a new partial sync. Use the most recent completed sync as the parent sync ID (if it exists).
 
 	if s.syncID != "" {
 		err := s.store.SetCurrentSync(ctx, s.syncID)
@@ -279,7 +286,7 @@ func (s *syncer) startOrResumeSync(ctx context.Context) (string, bool, error) {
 	var newSync bool
 	var err error
 	if len(s.targetedSyncResourceIDs) == 0 {
-		syncID, newSync, err = s.store.StartSync(ctx)
+		syncID, newSync, err = s.store.StartOrResumeSync(ctx, s.syncType, "")
 		if err != nil {
 			return "", false, err
 		}
@@ -288,7 +295,7 @@ func (s *syncer) startOrResumeSync(ctx context.Context) (string, bool, error) {
 
 	// Get most recent completed full sync if it exists
 	latestFullSyncResponse, err := s.store.GetLatestFinishedSync(ctx, &reader_v2.SyncsReaderServiceGetLatestFinishedSyncRequest{
-		SyncType: string(dotc1z.SyncTypeFull),
+		SyncType: string(connectorstore.SyncTypeFull),
 	})
 	if err != nil {
 		return "", false, err
@@ -298,7 +305,7 @@ func (s *syncer) startOrResumeSync(ctx context.Context) (string, bool, error) {
 	if latestFullSync != nil {
 		latestFullSyncId = latestFullSync.Id
 	}
-	syncID, err = s.store.StartNewSyncV2(ctx, "partial", latestFullSyncId)
+	syncID, err = s.store.StartNewSync(ctx, connectorstore.SyncTypePartial, latestFullSyncId)
 	if err != nil {
 		return "", false, err
 	}
@@ -334,7 +341,6 @@ func (s *syncer) Sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
 	_, err = s.connector.Validate(ctx, &v2.ConnectorServiceValidateRequest{})
 	if err != nil {
 		return err
@@ -353,6 +359,27 @@ func (s *syncer) Sync(ctx context.Context) error {
 	syncID, newSync, err := s.startOrResumeSync(ctx)
 	if err != nil {
 		return err
+	}
+	s.syncID = syncID
+
+	// Set the syncID on the wrapper after we have it
+	if syncID == "" {
+		err = errors.New("no syncID found after starting or resuming sync")
+		l.Error("no syncID found after starting or resuming sync", zap.Error(err))
+		return err
+	}
+	if s.injectSyncIDAnnotation {
+		if wrapper, ok := s.connector.(*syncIDClientWrapper); ok {
+			wrapper.syncID = syncID
+		} else {
+			l.Error("connector is not a syncIDClientWrapper")
+			return errors.New("connector is not a syncIDClientWrapper")
+		}
+	}
+
+	// Add ActiveSync to context once after we have the syncID
+	if syncID != "" {
+		ctx = types.SetSyncIDInContext(ctx, syncID)
 	}
 
 	span.SetAttributes(attribute.String("sync_id", syncID))
@@ -412,6 +439,9 @@ func (s *syncer) Sync(ctx context.Context) error {
 		case InitOp:
 			s.state.FinishAction(ctx)
 
+			if s.skipEntitlementsAndGrants {
+				s.state.SetShouldSkipEntitlementsAndGrants()
+			}
 			if len(targetedResources) > 0 {
 				for _, r := range targetedResources {
 					s.state.PushAction(ctx, Action{
@@ -434,7 +464,9 @@ func (s *syncer) Sync(ctx context.Context) error {
 
 			// FIXME(jirwin): Disabling syncing assets for now
 			// s.state.PushAction(ctx, Action{Op: SyncAssetsOp})
-			s.state.PushAction(ctx, Action{Op: SyncGrantExpansionOp})
+			if !s.state.ShouldSkipEntitlementsAndGrants() {
+				s.state.PushAction(ctx, Action{Op: SyncGrantExpansionOp})
+			}
 			if s.externalResourceReader != nil {
 				s.state.PushAction(ctx, Action{Op: SyncExternalResourcesOp})
 			}
@@ -446,8 +478,10 @@ func (s *syncer) Sync(ctx context.Context) error {
 				}
 				continue
 			}
-			s.state.PushAction(ctx, Action{Op: SyncGrantsOp})
-			s.state.PushAction(ctx, Action{Op: SyncEntitlementsOp})
+			if !s.state.ShouldSkipEntitlementsAndGrants() {
+				s.state.PushAction(ctx, Action{Op: SyncGrantsOp})
+				s.state.PushAction(ctx, Action{Op: SyncEntitlementsOp})
+			}
 			s.state.PushAction(ctx, Action{Op: SyncResourcesOp})
 			s.state.PushAction(ctx, Action{Op: SyncResourceTypesOp})
 
@@ -524,7 +558,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 			continue
 
 		case SyncGrantExpansionOp:
-			if !s.state.NeedsExpansion() {
+			if s.dontExpandGrants || !s.state.NeedsExpansion() {
 				l.Debug("skipping grant expansion, no grants to expand")
 				s.state.FinishAction(ctx)
 				continue
@@ -558,7 +592,9 @@ func (s *syncer) Sync(ctx context.Context) error {
 		return err
 	}
 
-	_, err = s.connector.Cleanup(ctx, &v2.ConnectorServiceCleanupRequest{})
+	_, err = s.connector.Cleanup(ctx, &v2.ConnectorServiceCleanupRequest{
+		Annotations: annotations.New(&v2.ActiveSync{Id: s.syncID}),
+	})
 	if err != nil {
 		l.Error("error clearing connector caches", zap.Error(err))
 	}
@@ -594,7 +630,8 @@ func (s *syncer) SkipSync(ctx context.Context) error {
 		return err
 	}
 
-	_, err = s.store.StartNewSync(ctx)
+	// TODO: Create a new sync type for empty syncs.
+	_, err = s.store.StartNewSync(ctx, connectorstore.SyncTypeFull, "")
 	if err != nil {
 		return err
 	}
@@ -629,7 +666,10 @@ func (s *syncer) SyncResourceTypes(ctx context.Context) error {
 		return err
 	}
 
-	resp, err := s.connector.ListResourceTypes(ctx, &v2.ResourceTypesServiceListResourceTypesRequest{PageToken: pageToken})
+	resp, err := s.connector.ListResourceTypes(ctx, &v2.ResourceTypesServiceListResourceTypesRequest{
+		PageToken:   pageToken,
+		Annotations: annotations.New(&v2.ActiveSync{Id: s.syncID}),
+	})
 	if err != nil {
 		return err
 	}
@@ -690,6 +730,7 @@ func (s *syncer) getResourceFromConnector(ctx context.Context, resourceID *v2.Re
 		&v2.ResourceGetterServiceGetResourceRequest{
 			ResourceId:       resourceID,
 			ParentResourceId: parentResourceID,
+			Annotations:      annotations.New(&v2.ActiveSync{Id: s.syncID}),
 		},
 	)
 	if err == nil {
@@ -750,17 +791,30 @@ func (s *syncer) SyncTargetedResource(ctx context.Context) error {
 
 	// Actions happen in reverse order. We want to sync child resources, then entitlements, then grants
 
-	s.state.PushAction(ctx, Action{
-		Op:             SyncGrantsOp,
-		ResourceTypeID: resourceTypeID,
-		ResourceID:     resourceID,
-	})
+	shouldSkipGrants, err := s.shouldSkipGrants(ctx, resource)
+	if err != nil {
+		return err
+	}
+	if !shouldSkipGrants {
+		s.state.PushAction(ctx, Action{
+			Op:             SyncGrantsOp,
+			ResourceTypeID: resourceTypeID,
+			ResourceID:     resourceID,
+		})
+	}
 
-	s.state.PushAction(ctx, Action{
-		Op:             SyncEntitlementsOp,
-		ResourceTypeID: resourceTypeID,
-		ResourceID:     resourceID,
-	})
+	shouldSkipEnts, err := s.shouldSkipEntitlementsAndGrants(ctx, resource)
+	if err != nil {
+		return err
+	}
+
+	if !shouldSkipEnts {
+		s.state.PushAction(ctx, Action{
+			Op:             SyncEntitlementsOp,
+			ResourceTypeID: resourceTypeID,
+			ResourceID:     resourceID,
+		})
+	}
 
 	err = s.getSubResources(ctx, resource)
 	if err != nil {
@@ -801,7 +855,7 @@ func (s *syncer) SyncResources(ctx context.Context) error {
 		for _, rt := range resp.List {
 			action := Action{Op: SyncResourcesOp, ResourceTypeID: rt.Id}
 			// If this request specified a parent resource, only queue up syncing resources for children of the parent resource
-			if s.state.Current().ParentResourceTypeID != "" && s.state.Current().ParentResourceID != "" {
+			if s.state.Current() != nil && s.state.Current().ParentResourceTypeID != "" && s.state.Current().ParentResourceID != "" {
 				action.ParentResourceID = s.state.Current().ParentResourceID
 				action.ParentResourceTypeID = s.state.Current().ParentResourceTypeID
 			}
@@ -823,6 +877,7 @@ func (s *syncer) syncResources(ctx context.Context) error {
 	req := &v2.ResourcesServiceListResourcesRequest{
 		ResourceTypeId: s.state.ResourceTypeID(ctx),
 		PageToken:      s.state.PageToken(ctx),
+		Annotations:    annotations.New(&v2.ActiveSync{Id: s.syncID}),
 	}
 	if s.state.ParentResourceTypeID(ctx) != "" && s.state.ParentResourceID(ctx) != "" {
 		req.ParentResourceId = &v2.ResourceId{
@@ -895,14 +950,19 @@ func (s *syncer) validateResourceTraits(ctx context.Context, r *v2.Resource) err
 	ctx, span := tracer.Start(ctx, "syncer.validateResourceTraits")
 	defer span.End()
 
-	resourceTypeResponse, err := s.store.GetResourceType(ctx, &reader_v2.ResourceTypesReaderServiceGetResourceTypeRequest{
-		ResourceTypeId: r.Id.ResourceType,
-	})
-	if err != nil {
-		return err
+	resourceTypeTraits, ok := s.resourceTypeTraits[r.Id.ResourceType]
+	if !ok {
+		resourceTypeResponse, err := s.store.GetResourceType(ctx, &reader_v2.ResourceTypesReaderServiceGetResourceTypeRequest{
+			ResourceTypeId: r.Id.ResourceType,
+		})
+		if err != nil {
+			return err
+		}
+		resourceTypeTraits = resourceTypeResponse.ResourceType.Traits
+		s.resourceTypeTraits[r.Id.ResourceType] = resourceTypeTraits
 	}
 
-	for _, t := range resourceTypeResponse.ResourceType.Traits {
+	for _, t := range resourceTypeTraits {
 		var trait proto.Message
 		switch t {
 		case v2.ResourceType_TRAIT_APP:
@@ -941,6 +1001,15 @@ func (s *syncer) shouldSkipEntitlementsAndGrants(ctx context.Context, r *v2.Reso
 	ctx, span := tracer.Start(ctx, "syncer.shouldSkipEntitlementsAndGrants")
 	defer span.End()
 
+	if s.state.ShouldSkipEntitlementsAndGrants() {
+		return true, nil
+	}
+
+	rAnnos := annotations.Annotations(r.GetAnnotations())
+	if rAnnos.Contains(&v2.SkipEntitlementsAndGrants{}) {
+		return true, nil
+	}
+
 	// We've checked this resource type, so we can return what we have cached directly.
 	if skip, ok := s.skipEGForResourceType[r.Id.ResourceType]; ok {
 		return skip, nil
@@ -959,6 +1028,15 @@ func (s *syncer) shouldSkipEntitlementsAndGrants(ctx context.Context, r *v2.Reso
 	s.skipEGForResourceType[r.Id.ResourceType] = skipEntitlements
 
 	return skipEntitlements, nil
+}
+
+func (s *syncer) shouldSkipGrants(ctx context.Context, r *v2.Resource) (bool, error) {
+	annos := annotations.Annotations(r.GetAnnotations())
+	if annos.Contains(&v2.SkipGrants{}) {
+		return true, nil
+	}
+
+	return s.shouldSkipEntitlementsAndGrants(ctx, r)
 }
 
 // SyncEntitlements fetches the entitlements from the connector. It first lists each resource from the datastore,
@@ -1029,9 +1107,12 @@ func (s *syncer) syncEntitlementsForResource(ctx context.Context, resourceID *v2
 
 	pageToken := s.state.PageToken(ctx)
 
+	resource := resourceResponse.Resource
+
 	resp, err := s.connector.ListEntitlements(ctx, &v2.EntitlementsServiceListEntitlementsRequest{
-		Resource:  resourceResponse.Resource,
-		PageToken: pageToken,
+		Resource:    resource,
+		PageToken:   pageToken,
+		Annotations: annotations.New(&v2.ActiveSync{Id: s.syncID}),
 	})
 	if err != nil {
 		return err
@@ -1227,7 +1308,6 @@ func (s *syncer) SyncGrantExpansion(ctx context.Context) error {
 			l.Info("Expanding grants...")
 			s.handleInitialActionForStep(ctx, *s.state.Current())
 		}
-
 		resp, err := s.store.ListGrants(ctx, &v2.GrantsServiceListGrantsRequest{PageToken: pageToken})
 		if err != nil {
 			return err
@@ -1240,7 +1320,7 @@ func (s *syncer) SyncGrantExpansion(ctx context.Context) error {
 				return err
 			}
 		} else {
-			l.Info("Finished loading entitlement graph", zap.Int("edges", len(entitlementGraph.Edges)))
+			l.Debug("Finished loading grants to expand")
 			entitlementGraph.Loaded = true
 		}
 
@@ -1309,22 +1389,26 @@ func (s *syncer) SyncGrantExpansion(ctx context.Context) error {
 				}
 			}
 		}
+		if entitlementGraph.Loaded {
+			l.Info("Finished loading entitlement graph", zap.Int("edges", len(entitlementGraph.Edges)))
+		}
 		return nil
 	}
 
 	if entitlementGraph.Loaded {
-		cycle := entitlementGraph.GetFirstCycle()
-		if cycle != nil {
+		comps, sccMetrics := entitlementGraph.ComputeCyclicComponents(ctx)
+		if len(comps) > 0 {
+			// Log a sample cycle
 			l.Warn(
 				"cycle detected in entitlement graph",
-				zap.Any("cycle", cycle),
+				zap.Any("cycle", comps[0]),
+				zap.Any("scc_metrics", sccMetrics),
 			)
 			l.Debug("initial graph", zap.Any("initial graph", entitlementGraph))
 			if dontFixCycles {
 				return fmt.Errorf("cycles detected in entitlement graph")
 			}
-
-			err := entitlementGraph.FixCycles()
+			err := entitlementGraph.FixCyclesFromComponents(ctx, comps)
 			if err != nil {
 				return err
 			}
@@ -1369,7 +1453,7 @@ func (s *syncer) SyncGrants(ctx context.Context) error {
 		}
 
 		for _, r := range resp.List {
-			shouldSkip, err := s.shouldSkipEntitlementsAndGrants(ctx, r)
+			shouldSkip, err := s.shouldSkipGrants(ctx, r)
 			if err != nil {
 				return err
 			}
@@ -1394,7 +1478,7 @@ func (s *syncer) SyncGrants(ctx context.Context) error {
 }
 
 type latestSyncFetcher interface {
-	LatestFinishedSync(ctx context.Context) (string, error)
+	LatestFinishedSync(ctx context.Context, syncType connectorstore.SyncType) (string, error)
 }
 
 func (s *syncer) fetchResourceForPreviousSync(ctx context.Context, resourceID *v2.ResourceId) (string, *v2.ETag, error) {
@@ -1407,7 +1491,7 @@ func (s *syncer) fetchResourceForPreviousSync(ctx context.Context, resourceID *v
 	var err error
 
 	if psf, ok := s.store.(latestSyncFetcher); ok {
-		previousSyncID, err = psf.LatestFinishedSync(ctx)
+		previousSyncID, err = psf.LatestFinishedSync(ctx, connectorstore.SyncTypeFull)
 		if err != nil {
 			return "", nil, err
 		}
@@ -1491,7 +1575,6 @@ func (s *syncer) fetchEtaggedGrantsForResource(
 	storeAnnos.Update(&c1zpb.SyncDetails{
 		Id: prevSyncID,
 	})
-
 	for {
 		prevGrantsResp, err := s.store.ListGrants(ctx, &v2.GrantsServiceListGrantsRequest{
 			Resource:    resource,
@@ -1547,7 +1630,11 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, resourceID *v2.Resou
 	resourceAnnos.Update(prevEtag)
 	resource.Annotations = resourceAnnos
 
-	resp, err := s.connector.ListGrants(ctx, &v2.GrantsServiceListGrantsRequest{Resource: resource, PageToken: pageToken})
+	resp, err := s.connector.ListGrants(ctx, &v2.GrantsServiceListGrantsRequest{
+		Resource:    resource,
+		PageToken:   pageToken,
+		Annotations: annotations.New(&v2.ActiveSync{Id: s.syncID}),
+	})
 	if err != nil {
 		return err
 	}
@@ -1566,7 +1653,7 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, resourceID *v2.Resou
 	l := ctxzap.Extract(ctx)
 	for _, grant := range grants {
 		grantAnnos := annotations.Annotations(grant.GetAnnotations())
-		if grantAnnos.Contains(&v2.GrantExpandable{}) {
+		if !s.dontExpandGrants && grantAnnos.Contains(&v2.GrantExpandable{}) {
 			s.state.SetNeedsExpansion()
 		}
 		if grantAnnos.ContainsAny(&v2.ExternalResourceMatchAll{}, &v2.ExternalResourceMatch{}, &v2.ExternalResourceMatchID{}) {
@@ -1591,29 +1678,6 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, resourceID *v2.Resou
 			resource, err := s.getResourceFromConnector(ctx, erId, prId)
 			if err != nil {
 				l.Error("error fetching entitlement resource", zap.Error(err))
-				return err
-			}
-			if resource == nil {
-				continue
-			}
-			if err := s.store.PutResources(ctx, resource); err != nil {
-				return err
-			}
-		}
-
-		principalResource := grant.GetPrincipal()
-		_, err = s.store.GetResource(ctx, &reader_v2.ResourcesReaderServiceGetResourceRequest{
-			ResourceId: principalResource.GetId(),
-		})
-		if err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-
-			// Principal resource is not in the DB, so try to fetch it from the connector.
-			resource, err := s.getResourceFromConnector(ctx, principalResource.GetId(), principalResource.GetParentResourceId())
-			if err != nil {
-				l.Error("error fetching principal resource", zap.Error(err))
 				return err
 			}
 			if resource == nil {
@@ -1761,10 +1825,12 @@ func (s *syncer) SyncExternalResourcesWithGrantToEntitlement(ctx context.Context
 	}
 
 	for _, principal := range principals {
-		skipEnts := skipEGForResourceType[principal.Id.ResourceType]
+		rAnnos := annotations.Annotations(principal.GetAnnotations())
+		skipEnts := skipEGForResourceType[principal.Id.ResourceType] || rAnnos.Contains(&v2.SkipEntitlementsAndGrants{})
 		if skipEnts {
 			continue
 		}
+
 		resourceEnts, err := s.listExternalEntitlementsForResource(ctx, principal)
 		if err != nil {
 			return err
@@ -1773,6 +1839,10 @@ func (s *syncer) SyncExternalResourcesWithGrantToEntitlement(ctx context.Context
 	}
 
 	for _, ent := range ents {
+		rAnnos := annotations.Annotations(ent.GetResource().GetAnnotations())
+		if rAnnos.Contains(&v2.SkipGrants{}) {
+			continue
+		}
 		grantsForEnt, err := s.listExternalGrantsForEntitlement(ctx, ent)
 		if err != nil {
 			return err
@@ -1868,6 +1938,11 @@ func (s *syncer) SyncExternalResourcesUsersAndGroups(ctx context.Context) error 
 		if skipEnts {
 			continue
 		}
+		rAnnos := annotations.Annotations(principal.GetAnnotations())
+		if rAnnos.Contains(&v2.SkipEntitlementsAndGrants{}) {
+			continue
+		}
+
 		resourceEnts, err := s.listExternalEntitlementsForResource(ctx, principal)
 		if err != nil {
 			return err
@@ -1876,6 +1951,10 @@ func (s *syncer) SyncExternalResourcesUsersAndGroups(ctx context.Context) error 
 	}
 
 	for _, ent := range ents {
+		rAnnos := annotations.Annotations(ent.GetResource().GetAnnotations())
+		if rAnnos.Contains(&v2.SkipGrants{}) {
+			continue
+		}
 		grantsForEnt, err := s.listExternalGrantsForEntitlement(ctx, ent)
 		if err != nil {
 			return err
@@ -1943,6 +2022,7 @@ func (s *syncer) listExternalResourcesForResourceType(ctx context.Context, resou
 func (s *syncer) listExternalEntitlementsForResource(ctx context.Context, resource *v2.Resource) ([]*v2.Entitlement, error) {
 	ents := make([]*v2.Entitlement, 0)
 	entitlementToken := ""
+
 	for {
 		entitlementsList, err := s.externalResourceReader.ListEntitlements(ctx, &v2.EntitlementsServiceListEntitlementsRequest{
 			PageToken: entitlementToken,
@@ -2371,7 +2451,7 @@ func (s *syncer) runGrantExpandActions(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("runGrantExpandActions: error fetching source grants: %w", err)
 	}
 
-	var newGrants []*v2.Grant = make([]*v2.Grant, 0)
+	var newGrants = make([]*v2.Grant, 0)
 	for _, sourceGrant := range sourceGrants.List {
 		// Skip this grant if it is not for a resource type we care about
 		if len(action.ResourceTypeIDs) > 0 {
@@ -2715,6 +2795,12 @@ func WithExternalResourceEntitlementIdFilter(entitlementId string) SyncOpt {
 func WithTargetedSyncResourceIDs(resourceIDs []string) SyncOpt {
 	return func(s *syncer) {
 		s.targetedSyncResourceIDs = resourceIDs
+		if len(resourceIDs) > 0 {
+			s.syncType = connectorstore.SyncTypePartial
+			return
+		}
+		// No targeted resource IDs, so we need to update the sync type to either full or resources only.
+		WithSkipEntitlementsAndGrants(s.skipEntitlementsAndGrants)(s)
 	}
 }
 
@@ -2724,18 +2810,46 @@ func WithOnlyExpandGrants() SyncOpt {
 	}
 }
 
+func WithDontExpandGrants() SyncOpt {
+	return func(s *syncer) {
+		s.dontExpandGrants = true
+	}
+}
 func WithSyncID(syncID string) SyncOpt {
 	return func(s *syncer) {
 		s.syncID = syncID
 	}
 }
 
+func WithInjectSyncIDAnnotation(inject bool) SyncOpt {
+	return func(s *syncer) {
+		s.injectSyncIDAnnotation = inject
+	}
+}
+
+func WithSkipEntitlementsAndGrants(skip bool) SyncOpt {
+	return func(s *syncer) {
+		s.skipEntitlementsAndGrants = skip
+		// Partial syncs can skip entitlements and grants, so don't update the sync type in that case.
+		if s.syncType == connectorstore.SyncTypePartial {
+			return
+		}
+		if skip {
+			s.syncType = connectorstore.SyncTypeResourcesOnly
+		} else {
+			s.syncType = connectorstore.SyncTypeFull
+		}
+	}
+}
+
 // NewSyncer returns a new syncer object.
 func NewSyncer(ctx context.Context, c types.ConnectorClient, opts ...SyncOpt) (Syncer, error) {
 	s := &syncer{
-		connector:             c,
+		connector:             &syncIDClientWrapper{ConnectorClient: c, syncID: ""}, // we only get the syncid later
 		skipEGForResourceType: make(map[string]bool),
+		resourceTypeTraits:    make(map[string][]v2.ResourceType_Trait),
 		counts:                NewProgressCounts(),
+		syncType:              connectorstore.SyncTypeFull,
 	}
 
 	for _, o := range opts {

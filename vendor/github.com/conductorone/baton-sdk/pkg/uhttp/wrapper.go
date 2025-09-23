@@ -271,6 +271,11 @@ func WithGenericResponse(response *map[string]any) DoOption {
 		if response == nil {
 			return status.Error(codes.InvalidArgument, "response is nil")
 		}
+
+		if resp.StatusCode == http.StatusNoContent {
+			return nil
+		}
+
 		var v any
 		var err error
 
@@ -348,7 +353,7 @@ func (c *BaseHttpClient) Do(req *http.Request, options ...DoOption) (*http.Respo
 		c.rateLimiter.Take()
 	}
 
-	if req.Method == http.MethodGet {
+	if req.Method == http.MethodGet && req.Header.Get("Cache-Control") != "no-cache" {
 		resp, err = c.baseHttpCache.Get(req)
 		if err != nil {
 			return nil, err
@@ -364,6 +369,13 @@ func (c *BaseHttpClient) Do(req *http.Request, options ...DoOption) (*http.Respo
 		resp, err = c.HttpClient.Do(req)
 		if err != nil {
 			l.Error("base-http-client: HTTP error response", zap.Error(err))
+			// Turn certain network errors into grpc statuses so we retry
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				return resp, WrapErrors(codes.Unavailable, "unexpected EOF", err)
+			}
+			if errors.Is(err, syscall.ECONNRESET) {
+				return nil, WrapErrors(codes.Unavailable, "connection reset", err)
+			}
 			var urlErr *url.Error
 			if errors.As(err, &urlErr) {
 				if urlErr.Timeout() {
@@ -432,7 +444,7 @@ func (c *BaseHttpClient) Do(req *http.Request, options ...DoOption) (*http.Respo
 	switch resp.StatusCode {
 	case http.StatusRequestTimeout:
 		return resp, WrapErrorsWithRateLimitInfo(codes.DeadlineExceeded, resp, optErrs...)
-	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable:
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return resp, WrapErrorsWithRateLimitInfo(codes.Unavailable, resp, optErrs...)
 	case http.StatusNotFound:
 		return resp, WrapErrorsWithRateLimitInfo(codes.NotFound, resp, optErrs...)
@@ -481,6 +493,14 @@ func WithHeader(key, value string) RequestOption {
 	return func() (io.ReadWriter, map[string]string, error) {
 		return nil, map[string]string{
 			key: value,
+		}, nil
+	}
+}
+
+func WithNoCache() RequestOption {
+	return func() (io.ReadWriter, map[string]string, error) {
+		return nil, map[string]string{
+			"Cache-Control": "no-cache",
 		}, nil
 	}
 }
@@ -585,7 +605,7 @@ func WithBearerToken(token string) RequestOption {
 
 func (c *BaseHttpClient) NewRequest(ctx context.Context, method string, url *url.URL, options ...RequestOption) (*http.Request, error) {
 	var buffer io.ReadWriter
-	var headers map[string]string = make(map[string]string)
+	var headers = make(map[string]string)
 	for _, option := range options {
 		buf, h, err := option()
 		if err != nil {
