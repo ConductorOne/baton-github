@@ -45,6 +45,8 @@ type invitationResourceType struct {
 	orgs     []string
 }
 
+var _ connectorbuilder.AccountManager = &invitationResourceType{}
+
 func (i *invitationResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return resourceTypeInvitation
 }
@@ -122,7 +124,7 @@ func (i *invitationResourceType) CreateAccountCapabilityDetails(ctx context.Cont
 func (i *invitationResourceType) CreateAccount(
 	ctx context.Context,
 	accountInfo *v2.AccountInfo,
-	credentialOptions *v2.CredentialOptions,
+	credentialOptions *v2.LocalCredentialOptions,
 ) (
 	connectorbuilder.CreateAccountResponse,
 	[]*v2.PlaintextData,
