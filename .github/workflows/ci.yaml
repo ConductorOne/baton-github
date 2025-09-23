@@ -35,3 +35,24 @@ jobs:
         uses: guyarb/golang-test-annotations@v0.6.0
         with:
           test-results: test.json
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      BATON_LOG_LEVEL: debug
+      BATON_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build baton-github
+        run: go build ./cmd/baton-github
+      - name: Grant/revoke
+        uses: ConductorOne/github-workflows/actions/sync-test@v2
+        with:
+          connector: ./baton-github
+          baton-entitlement: 'repository:642588514:triage'
+          baton-principal: '190765094'
+          baton-principal-type: 'user'
