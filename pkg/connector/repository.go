@@ -60,6 +60,8 @@ type repositoryResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
 	orgCache     *orgNameCache
+	userCache    *userDataCache
+	teamCache    *teamDataCache
 }
 
 func (o *repositoryResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -319,7 +321,7 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 
 	switch principal.Id.ResourceType {
 	case resourceTypeUser.Id:
-		user, _, err := o.client.Users.GetByID(ctx, principalID)
+		user, _, err := o.userCache.GetUser(ctx, principalID)
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
 		}
@@ -336,7 +338,7 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			return nil, fmt.Errorf("github-connectorv2: failed to add user to a repository: %w", e)
 		}
 	case resourceTypeTeam.Id:
-		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
+		team, _, err := o.teamCache.GetTeam(ctx, org.GetID(), principalID)
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to get team: %w", err)
 		}
@@ -384,7 +386,7 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 
 	switch principal.Id.ResourceType {
 	case resourceTypeUser.Id:
-		user, _, err := o.client.Users.GetByID(ctx, principalID)
+		user, _, err := o.userCache.GetUser(ctx, principalID)
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
 		}
@@ -394,7 +396,7 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 			return nil, fmt.Errorf("github-connectorv2: failed to remove user from repo: %w", e)
 		}
 	case resourceTypeTeam.Id:
-		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
+		team, _, err := o.teamCache.GetTeam(ctx, org.GetID(), principalID)
 		if err != nil {
 			return nil, fmt.Errorf("github-connectorv2: failed to get team: %w", err)
 		}
@@ -415,11 +417,13 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 	return nil, nil
 }
 
-func repositoryBuilder(client *github.Client, orgCache *orgNameCache) *repositoryResourceType {
+func repositoryBuilder(client *github.Client, orgCache *orgNameCache, userCache *userDataCache, teamCache *teamDataCache) *repositoryResourceType {
 	return &repositoryResourceType{
 		resourceType: resourceTypeRepository,
 		client:       client,
 		orgCache:     orgCache,
+		userCache:    userCache,
+		teamCache:    teamCache,
 	}
 }
 

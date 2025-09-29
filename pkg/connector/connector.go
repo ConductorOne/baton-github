@@ -97,21 +97,24 @@ type GitHub struct {
 	graphqlClient  *githubv4.Client
 	hasSAMLEnabled *bool
 	orgCache       *orgNameCache
+	userCache      *userDataCache
+	teamCache      *teamDataCache
 	syncSecrets    bool
 	enterprises    []string
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
 	resourceSyncers := []connectorbuilder.ResourceSyncer{
-		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
-		teamBuilder(gh.client, gh.orgCache),
-		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache, gh.orgs),
-		repositoryBuilder(gh.client, gh.orgCache),
-		orgRoleBuilder(gh.client, gh.orgCache),
+		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.userCache, gh.orgs, gh.syncSecrets),
+		teamBuilder(gh.client, gh.orgCache, gh.userCache, gh.teamCache),
+		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache, gh.userCache, gh.orgs),
+		repositoryBuilder(gh.client, gh.orgCache, gh.userCache, gh.teamCache),
+		orgRoleBuilder(gh.client, gh.orgCache, gh.userCache),
 		invitationBuilder(invitationBuilderParams{
-			client:   gh.client,
-			orgCache: gh.orgCache,
-			orgs:     gh.orgs,
+			client:    gh.client,
+			orgCache:  gh.orgCache,
+			userCache: gh.userCache,
+			orgs:      gh.orgs,
 		}),
 	}
 
@@ -120,7 +123,7 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	}
 
 	if len(gh.enterprises) > 0 {
-		resourceSyncers = append(resourceSyncers, enterpriseRoleBuilder(gh.client, gh.customClient, gh.enterprises))
+		resourceSyncers = append(resourceSyncers, enterpriseRoleBuilder(gh.client, gh.customClient, gh.userCache, gh.enterprises))
 	}
 	return resourceSyncers
 }
@@ -314,6 +317,8 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 		enterprises:   ghc.Enterprises,
 		graphqlClient: graphqlClient,
 		orgCache:      newOrgNameCache(ghClient),
+		userCache:     newUserDataCache(ghClient),
+		teamCache:     newTeamDataCache(ghClient),
 		syncSecrets:   ghc.SyncSecrets,
 	}
 	return gh, nil

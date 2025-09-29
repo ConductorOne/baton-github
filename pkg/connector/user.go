@@ -94,6 +94,7 @@ type userResourceType struct {
 	graphqlClient  *githubv4.Client
 	hasSAMLEnabled *bool
 	orgCache       *orgNameCache
+	userCache      *userDataCache
 	orgs           []string
 }
 
@@ -157,7 +158,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	q := listUsersQuery{}
 	rv := make([]*v2.Resource, 0, len(users))
 	for _, user := range users {
-		u, res, err := o.client.Users.GetByID(ctx, user.GetID())
+		u, res, err := o.userCache.GetUser(ctx, user.GetID())
 		if err != nil {
 			if isRatelimited(res) {
 				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
@@ -251,7 +252,7 @@ func (o *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId
 		return nil, fmt.Errorf("baton-github: invalid invitation id")
 	}
 
-	u, _, err := o.client.Users.GetByID(ctx, userID)
+	u, _, err := o.userCache.GetUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("baton-github: invalid userID")
 	}
@@ -281,13 +282,14 @@ func (o *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId
 	return annotations, nil
 }
 
-func userBuilder(client *github.Client, hasSAMLEnabled *bool, graphqlClient *githubv4.Client, orgCache *orgNameCache, orgs []string) *userResourceType {
+func userBuilder(client *github.Client, hasSAMLEnabled *bool, graphqlClient *githubv4.Client, orgCache *orgNameCache, userCache *userDataCache, orgs []string) *userResourceType {
 	return &userResourceType{
 		resourceType:   resourceTypeUser,
 		client:         client,
 		graphqlClient:  graphqlClient,
 		hasSAMLEnabled: hasSAMLEnabled,
 		orgCache:       orgCache,
+		userCache:      userCache,
 		orgs:           orgs,
 	}
 }

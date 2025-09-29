@@ -67,6 +67,124 @@ func newOrgNameCache(c *github.Client) *orgNameCache {
 	}
 }
 
+type userDataCache struct {
+	sync.RWMutex
+	c              *github.Client
+	usersById      map[int64]*github.User
+	usersByLogin   map[string]*github.User
+}
+
+func (u *userDataCache) GetUser(ctx context.Context, userID int64) (*github.User, *github.Response, error) {
+	u.RLock()
+	if user, ok := u.usersById[userID]; ok {
+		u.RUnlock()
+		return user, nil, nil
+	}
+	u.RUnlock()
+
+	u.Lock()
+	defer u.Unlock()
+
+	// Double-check after acquiring write lock
+	if user, ok := u.usersById[userID]; ok {
+		return user, nil, nil
+	}
+
+	// Fetch from API
+	user, resp, err := u.c.Users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, resp, err
+	}
+
+	// Cache the result by both ID and login
+	u.usersById[userID] = user
+	if user.Login != nil {
+		u.usersByLogin[*user.Login] = user
+	}
+
+	return user, resp, nil
+}
+
+func (u *userDataCache) GetUserByLogin(ctx context.Context, login string) (*github.User, *github.Response, error) {
+	u.RLock()
+	if user, ok := u.usersByLogin[login]; ok {
+		u.RUnlock()
+		return user, nil, nil
+	}
+	u.RUnlock()
+
+	u.Lock()
+	defer u.Unlock()
+
+	// Double-check after acquiring write lock
+	if user, ok := u.usersByLogin[login]; ok {
+		return user, nil, nil
+	}
+
+	// Fetch from API
+	user, resp, err := u.c.Users.Get(ctx, login)
+	if err != nil {
+		return nil, resp, err
+	}
+
+	// Cache the result by both login and ID
+	u.usersByLogin[login] = user
+	if user.ID != nil {
+		u.usersById[*user.ID] = user
+	}
+
+	return user, resp, nil
+}
+
+func newUserDataCache(c *github.Client) *userDataCache {
+	return &userDataCache{
+		c:            c,
+		usersById:    make(map[int64]*github.User),
+		usersByLogin: make(map[string]*github.User),
+	}
+}
+
+type teamDataCache struct {
+	sync.RWMutex
+	c     *github.Client
+	teams map[int64]*github.Team
+}
+
+func (t *teamDataCache) GetTeam(ctx context.Context, orgID int64, teamID int64) (*github.Team, *github.Response, error) {
+	t.RLock()
+	if team, ok := t.teams[teamID]; ok {
+		t.RUnlock()
+		return team, nil, nil
+	}
+	t.RUnlock()
+
+	t.Lock()
+	defer t.Unlock()
+
+	// Double-check after acquiring write lock
+	if team, ok := t.teams[teamID]; ok {
+		return team, nil, nil
+	}
+
+	// Fetch from API
+	team, resp, err := t.c.Teams.GetTeamByID(ctx, orgID, teamID)
+	if err != nil {
+		return nil, resp, err
+	}
+
+	// Cache the result
+	t.teams[teamID] = team
+
+	return team, resp, nil
+}
+
+func newTeamDataCache(c *github.Client) *teamDataCache {
+	return &teamDataCache{
+		c:     c,
+		teams: make(map[int64]*github.Team),
+	}
+}
+
 func v1AnnotationsForResourceType(resourceTypeID string) annotations.Annotations {
 	annos := annotations.Annotations{}
 	annos.Update(&v2.V1Identifier{

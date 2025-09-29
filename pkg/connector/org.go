@@ -38,6 +38,7 @@ type orgResourceType struct {
 	appClient    *github.Client
 	orgs         map[string]struct{}
 	orgCache     *orgNameCache
+	userCache    *userDataCache
 	syncSecrets  bool
 }
 
@@ -294,7 +295,7 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 		return nil, err
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, principalID)
+	user, _, err := o.userCache.GetUser(ctx, principalID)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
 	}
@@ -386,7 +387,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 		return nil, err
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, principalID)
+	user, _, err := o.userCache.GetUser(ctx, principalID)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
 	}
@@ -416,7 +417,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	return nil, nil
 }
 
-func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool) *orgResourceType {
+func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, userCache *userDataCache, orgs []string, syncSecrets bool) *orgResourceType {
 	orgMap := make(map[string]struct{})
 
 	for _, o := range orgs {
@@ -429,6 +430,7 @@ func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs [
 		client:       client,
 		appClient:    appClient,
 		orgCache:     orgCache,
+		userCache:    userCache,
 		syncSecrets:  syncSecrets,
 	}
 }

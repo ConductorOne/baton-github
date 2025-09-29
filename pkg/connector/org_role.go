@@ -40,6 +40,7 @@ type orgRoleResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
 	orgCache     *orgNameCache
+	userCache    *userDataCache
 }
 
 func orgRoleResource(
@@ -325,7 +326,7 @@ func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource,
 		return nil, fmt.Errorf("github-connectorv2: invalid entitlement ID: %s", entitlement.Id)
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, userID)
+	user, _, err := o.userCache.GetUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
@@ -400,7 +401,7 @@ func (o *orgRoleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (anno
 		return nil, fmt.Errorf("invalid user ID: %w", err)
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, userID)
+	user, _, err := o.userCache.GetUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
@@ -423,10 +424,11 @@ func (o *orgRoleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (anno
 	return nil, nil
 }
 
-func orgRoleBuilder(client *github.Client, orgCache *orgNameCache) *orgRoleResourceType {
+func orgRoleBuilder(client *github.Client, orgCache *orgNameCache, userCache *userDataCache) *orgRoleResourceType {
 	return &orgRoleResourceType{
 		resourceType: resourceTypeOrgRole,
 		client:       client,
 		orgCache:     orgCache,
+		userCache:    userCache,
 	}
 }

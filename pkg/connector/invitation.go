@@ -40,9 +40,10 @@ func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, erro
 }
 
 type invitationResourceType struct {
-	client   *github.Client
-	orgCache *orgNameCache
-	orgs     []string
+	client    *github.Client
+	orgCache  *orgNameCache
+	userCache *userDataCache
+	orgs      []string
 }
 
 var _ connectorbuilder.AccountManager = &invitationResourceType{}
@@ -225,15 +226,17 @@ func getCreateUserParams(accountInfo *v2.AccountInfo) (*createUserParams, error)
 }
 
 type invitationBuilderParams struct {
-	client   *github.Client
-	orgCache *orgNameCache
-	orgs     []string
+	client    *github.Client
+	orgCache  *orgNameCache
+	userCache *userDataCache
+	orgs      []string
 }
 
 func invitationBuilder(p invitationBuilderParams) *invitationResourceType {
 	return &invitationResourceType{
-		client:   p.client,
-		orgCache: p.orgCache,
-		orgs:     p.orgs,
+		client:    p.client,
+		orgCache:  p.orgCache,
+		userCache: p.userCache,
+		orgs:      p.orgs,
 	}
 }

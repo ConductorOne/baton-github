@@ -22,6 +22,7 @@ type enterpriseRoleResourceType struct {
 	resourceType   *v2.ResourceType
 	client         *github.Client
 	customClient   *customclient.Client
+	userCache      *userDataCache
 	enterprises    []string
 	roleUsersCache map[string][]string
 	mu             *sync.Mutex
@@ -139,7 +140,7 @@ func (o *enterpriseRoleResourceType) Grants(
 
 	ret := []*v2.Grant{}
 	for _, userLogin := range cache[resource.Id.Resource] {
-		user, resp, err := o.client.Users.Get(ctx, userLogin)
+		user, resp, err := o.userCache.GetUserByLogin(ctx, userLogin)
 		if err != nil {
 			if isRatelimited(resp) {
 				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
@@ -162,11 +163,12 @@ func (o *enterpriseRoleResourceType) Grants(
 	return ret, "", nil, nil
 }
 
-func enterpriseRoleBuilder(client *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {
+func enterpriseRoleBuilder(client *github.Client, customClient *customclient.Client, userCache *userDataCache, enterprises []string) *enterpriseRoleResourceType {
 	return &enterpriseRoleResourceType{
 		resourceType:   resourceTypeEnterpriseRole,
 		client:         client,
 		customClient:   customClient,
+		userCache:      userCache,
 		enterprises:    enterprises,
 		roleUsersCache: make(map[string][]string),
 		mu:             &sync.Mutex{},

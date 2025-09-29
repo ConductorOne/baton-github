@@ -60,6 +60,8 @@ type teamResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
 	orgCache     *orgNameCache
+	userCache    *userDataCache
+	teamCache    *teamDataCache
 }
 
 func (o *teamResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -107,7 +109,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	}
 
 	for _, team := range teams {
-		fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
+		fullTeam, resp, err := o.teamCache.GetTeam(ctx, orgID, team.GetID())
 		if err != nil {
 			if isRatelimited(resp) {
 				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
@@ -302,7 +304,7 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, err
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, userId)
+	user, _, err := o.userCache.GetUser(ctx, userId)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get user %d, err: %w", userId, err)
 	}
@@ -362,7 +364,7 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 		return nil, err
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, userId)
+	user, _, err := o.userCache.GetUser(ctx, userId)
 	if err != nil {
 		return nil, fmt.Errorf("github-connectorv2: failed to get user %d, err: %w", userId, err)
 	}
@@ -374,10 +376,12 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 	return nil, nil
 }
 
-func teamBuilder(client *github.Client, orgCache *orgNameCache) *teamResourceType {
+func teamBuilder(client *github.Client, orgCache *orgNameCache, userCache *userDataCache, teamCache *teamDataCache) *teamResourceType {
 	return &teamResourceType{
 		resourceType: resourceTypeTeam,
 		client:       client,
 		orgCache:     orgCache,
+		userCache:    userCache,
+		teamCache:    teamCache,
 	}
 }
