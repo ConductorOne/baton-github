@@ -184,7 +184,7 @@ func (o *repositoryResourceType) Grants(
 				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
 			}
 			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 			}
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
 		}
@@ -240,7 +240,7 @@ func (o *repositoryResourceType) Grants(
 			}
 
 			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 			}
 			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
 		}

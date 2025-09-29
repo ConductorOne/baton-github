@@ -98,7 +98,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	teams, resp, err := o.client.Teams.ListTeams(ctx, orgName, opts)
 	if err != nil {
 		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 		}
 		return nil, "", nil, fmt.Errorf("github-connector: failed to list teams: %w", err)
 	}
@@ -112,7 +112,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		fullTeam, resp, err := o.teamCache.GetTeam(ctx, orgID, team.GetID())
 		if err != nil {
 			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 			}
 			return nil, "", nil, err
 		}
@@ -175,7 +175,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 	org, resp, err := o.client.Organizations.GetByID(ctx, orgID)
 	if err != nil {
 		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 		}
 		return nil, "", nil, err
 	}
@@ -214,7 +214,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", org.GetID()))
 			}
 			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 			}
 			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to fetch team members: %w", err)
 		}

@@ -135,7 +135,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &opts)
 	if err != nil {
 		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 		}
 		return nil, "", nil, fmt.Errorf("github-connector: ListMembers failed: %w", err)
 	}
@@ -161,7 +161,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		u, res, err := o.userCache.GetUser(ctx, user.GetID())
 		if err != nil {
 			if isRatelimited(res) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, res.Response, err)
 			}
 			// This undocumented API can return 404 for some users. If this fails it means we won't get some of their details like email
 			if res == nil || res.StatusCode != http.StatusNotFound {

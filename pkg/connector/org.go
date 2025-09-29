@@ -104,7 +104,7 @@ func (o *orgResourceType) List(
 	orgs, resp, err := o.client.Organizations.List(ctx, "", opts)
 	if err != nil {
 		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 		}
 		return nil, "", nil, fmt.Errorf("github-connector: failed to fetch org: %w", err)
 	}
@@ -132,7 +132,7 @@ func (o *orgResourceType) List(
 			}
 
 			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 			}
 			return nil, "", nil, err
 		}
@@ -230,7 +230,7 @@ func (o *orgResourceType) Grants(
 			}
 			errMsg := "github-connectorv2: failed to list org members"
 			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 			}
 			return nil, "", nil, fmt.Errorf("%s: %w", errMsg, err)
 		}

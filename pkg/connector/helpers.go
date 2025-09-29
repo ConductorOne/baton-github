@@ -85,18 +85,15 @@ func (u *userDataCache) GetUser(ctx context.Context, userID int64) (*github.User
 	u.Lock()
 	defer u.Unlock()
 
-	// Double-check after acquiring write lock
 	if user, ok := u.usersById[userID]; ok {
 		return user, nil, nil
 	}
 
-	// Fetch from API
 	user, resp, err := u.c.Users.GetByID(ctx, userID)
 	if err != nil {
 		return nil, resp, err
 	}
 
-	// Cache the result by both ID and login
 	u.usersById[userID] = user
 	if user.Login != nil {
 		u.usersByLogin[*user.Login] = user
@@ -116,18 +113,15 @@ func (u *userDataCache) GetUserByLogin(ctx context.Context, login string) (*gith
 	u.Lock()
 	defer u.Unlock()
 
-	// Double-check after acquiring write lock
 	if user, ok := u.usersByLogin[login]; ok {
 		return user, nil, nil
 	}
 
-	// Fetch from API
 	user, resp, err := u.c.Users.Get(ctx, login)
 	if err != nil {
 		return nil, resp, err
 	}
 
-	// Cache the result by both login and ID
 	u.usersByLogin[login] = user
 	if user.ID != nil {
 		u.usersById[*user.ID] = user
@@ -161,18 +155,15 @@ func (t *teamDataCache) GetTeam(ctx context.Context, orgID int64, teamID int64) 
 	t.Lock()
 	defer t.Unlock()
 
-	// Double-check after acquiring write lock
 	if team, ok := t.teams[teamID]; ok {
 		return team, nil, nil
 	}
 
-	// Fetch from API
 	team, resp, err := t.c.Teams.GetTeamByID(ctx, orgID, teamID)
 	if err != nil {
 		return nil, resp, err
 	}
 
-	// Cache the result
 	t.teams[teamID] = team
 
 	return team, resp, nil

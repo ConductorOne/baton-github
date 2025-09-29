@@ -459,7 +459,7 @@ func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]strin
 		orgs, resp, err := client.Organizations.List(ctx, "", &github.ListOptions{Page: page, PerPage: maxPageSize})
 		if err != nil {
 			if isRatelimited(resp) {
-				return nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 			}
 			if isAuthError(resp) {
 				return nil, uhttp.WrapErrors(codes.Unauthenticated, "github-connector: failed to retrieve org", err)

@@ -95,7 +95,7 @@ func (o *apiTokenResourceType) List(
 	})
 	if err != nil {
 		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 		}
 		return nil, "", nil, err
 	}

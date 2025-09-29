@@ -92,7 +92,7 @@ func (o *orgRoleResourceType) List(
 			return nil, "", nil, nil
 		}
 		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+			return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 		}
 		return nil, "", nil, fmt.Errorf("failed to list organization roles: %w", err)
 	}
@@ -229,7 +229,7 @@ func (o *orgRoleResourceType) Grants(
 				return nil, pageToken, nil, nil
 			}
 			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, "", nil, uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp.Response, err)
 			}
 			return nil, "", nil, fmt.Errorf("failed to list role teams: %w", err)
 		}
