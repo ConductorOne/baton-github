@@ -69,9 +69,9 @@ func newOrgNameCache(c *github.Client) *orgNameCache {
 
 type userDataCache struct {
 	sync.RWMutex
-	c              *github.Client
-	usersById      map[int64]*github.User
-	usersByLogin   map[string]*github.User
+	c            *github.Client
+	usersById    map[int64]*github.User
+	usersByLogin map[string]*github.User
 }
 
 func (u *userDataCache) GetUser(ctx context.Context, userID int64) (*github.User, *github.Response, error) {
@@ -159,7 +159,7 @@ func (t *teamDataCache) GetTeam(ctx context.Context, orgID int64, teamID int64) 
 		return team, nil, nil
 	}
 
-	team, resp, err := t.c.Teams.GetTeamByID(ctx, orgID, teamID)
+	team, resp, err := t.c.Teams.GetTeamByID(ctx, orgID, teamID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
 	if err != nil {
 		return nil, resp, err
 	}
