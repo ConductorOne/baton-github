@@ -24,7 +24,9 @@ func TestTeam(t *testing.T) {
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
-		client := teamBuilder(githubClient, cache)
+		userCache := newUserDataCache(githubClient)
+		teamCache := newTeamDataCache(githubClient)
+		client := teamBuilder(githubClient, cache, userCache, teamCache)
 
 		organization, _ := organizationResource(ctx, githubOrganization, nil, false)
 		team, _ := teamResource(githubTeam, organization.Id)
