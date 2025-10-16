@@ -95,10 +95,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 
 	teams, resp, err := o.client.Teams.ListTeams(ctx, orgName, opts)
 	if err != nil {
-		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-		}
-		return nil, "", nil, fmt.Errorf("github-connector: failed to list teams: %w", err)
+		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list teams")
 	}
 
 	nextPage, reqAnnos, err := parseResp(resp)
@@ -109,10 +106,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	for _, team := range teams {
 		fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
 		if err != nil {
-			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-			}
-			return nil, "", nil, err
+			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to get team details")
 		}
 
 		tr, err := teamResource(fullTeam, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
@@ -172,10 +166,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 
 	org, resp, err := o.client.Organizations.GetByID(ctx, orgID)
 	if err != nil {
-		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-		}
-		return nil, "", nil, err
+		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to get organization")
 	}
 
 	githubID, err := parseResourceToGitHub(resource.Id)
@@ -211,10 +202,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 			if isNotFoundError(resp) {
 				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", org.GetID()))
 			}
-			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-			}
-			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to fetch team members: %w", err)
+			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list team members")
 		}
 
 		var nextPage string
@@ -302,9 +290,9 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, err
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, userId)
+	user, resp, err := o.client.Users.GetByID(ctx, userId)
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to get user %d, err: %w", userId, err)
+		return nil, wrapGitHubError(err, resp, fmt.Sprintf("github-connector: failed to get user %d", userId))
 	}
 
 	enIDParts := strings.Split(entitlement.Id, ":")
@@ -313,7 +301,7 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 	}
 	permission := enIDParts[2]
 
-	_, _, e := o.client.Teams.AddTeamMembershipByID(
+	_, resp, er := o.client.Teams.AddTeamMembershipByID(
 		ctx,
 		orgId,
 		teamId,
@@ -321,8 +309,8 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		&github.TeamAddTeamMembershipOptions{Role: permission},
 	)
 
-	if e != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to add user to a team: %w", e)
+	if er != nil {
+		return nil, wrapGitHubError(er, resp, "github-connector: failed to add user to team")
 	}
 
 	return nil, nil
@@ -362,13 +350,13 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 		return nil, err
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, userId)
+	user, resp, err := o.client.Users.GetByID(ctx, userId)
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to get user %d, err: %w", userId, err)
+		return nil, wrapGitHubError(err, resp, fmt.Sprintf("github-connector: failed to get user %d", userId))
 	}
-	_, e := o.client.Teams.RemoveTeamMembershipByID(ctx, orgId, teamId, user.GetLogin())
-	if e != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to revoke user team membership: %w", e)
+	resp, er := o.client.Teams.RemoveTeamMembershipByID(ctx, orgId, teamId, user.GetLogin())
+	if er != nil {
+		return nil, wrapGitHubError(er, resp, "github-connector: failed to revoke user team membership")
 	}
 
 	return nil, nil

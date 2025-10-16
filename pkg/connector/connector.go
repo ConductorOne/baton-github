@@ -206,7 +206,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 	if len(gh.enterprises) > 0 {
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 0)
 		if err != nil {
-			return nil, fmt.Errorf("can't list enterprise consumed licenses: %w", err)
+			return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: failed to access enterprise licenses", err)
 		}
 	}
 	return nil, nil
@@ -218,9 +218,9 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 		return nil, fmt.Errorf("github-connector: only one org is allowed when using github app")
 	}
 
-	_, _, err := findInstallation(ctx, gh.appClient, orgLogins[0])
+	_, resp, err := findInstallation(ctx, gh.appClient, orgLogins[0])
 	if err != nil {
-		return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
+		return nil, wrapGitHubError(err, resp, "github-connector: failed to retrieve org installation")
 	}
 	return nil, nil
 }
@@ -272,9 +272,9 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 		if err != nil {
 			return nil, err
 		}
-		installation, _, err := findInstallation(ctx, appClient, ghc.Orgs[0])
+		installation, resp, err := findInstallation(ctx, appClient, ghc.Orgs[0])
 		if err != nil {
-			return nil, err
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to find app installation")
 		}
 
 		token, err := getInstallationToken(ctx, appClient, installation.GetID())
@@ -453,16 +453,7 @@ func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]strin
 	for {
 		orgs, resp, err := client.Organizations.List(ctx, "", &github.ListOptions{Page: page, PerPage: maxPageSize})
 		if err != nil {
-			if isRatelimited(resp) {
-				return nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-			}
-			if isAuthError(resp) {
-				return nil, uhttp.WrapErrors(codes.Unauthenticated, "github-connector: failed to retrieve org", err)
-			}
-			if isPermissionError(resp) {
-				return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: failed to retrieve org", err)
-			}
-			return nil, fmt.Errorf("github-connector: failed to retrieve org: %w", err)
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to retrieve organizations")
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
 			return nil, status.Error(codes.Unauthenticated, "github token is not authorized")

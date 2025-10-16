@@ -13,11 +13,9 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
 )
 
 type OrganizationRole struct {
@@ -90,10 +88,7 @@ func (o *orgRoleResourceType) List(
 			// Return empty list with no error to indicate we skipped this resource
 			return nil, "", nil, nil
 		}
-		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-		}
-		return nil, "", nil, fmt.Errorf("failed to list organization roles: %w", err)
+		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list organization roles")
 	}
 
 	var ret []*v2.Resource
@@ -180,7 +175,7 @@ func (o *orgRoleResourceType) Grants(
 				}
 				return rv, pageToken, nil, nil
 			}
-			return nil, "", nil, fmt.Errorf("failed to list role users: %w", err)
+			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list users assigned to org role")
 		}
 		nextPage, respAnnos, err := parseResp(resp)
 		if err != nil {
@@ -227,10 +222,7 @@ func (o *orgRoleResourceType) Grants(
 				}
 				return nil, pageToken, nil, nil
 			}
-			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-			}
-			return nil, "", nil, fmt.Errorf("failed to list role teams: %w", err)
+			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list teams assigned to org role")
 		}
 
 		nextPage, respAnnos, err := parseResp(resp)

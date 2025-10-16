@@ -60,7 +60,7 @@ func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
 		for continuePagination {
 			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
 			if err != nil {
-				return fmt.Errorf("baton-github: error listing enterprise consumed licenses for %s: %w", enterprise, err)
+				return uhttp.WrapErrors(codes.PermissionDenied, fmt.Sprintf("baton-github: error listing enterprise consumed licenses for %s", enterprise), err)
 			}
 
 			if len(consumedLicenses.Users) == 0 {
@@ -141,10 +141,7 @@ func (o *enterpriseRoleResourceType) Grants(
 	for _, userLogin := range cache[resource.Id.Resource] {
 		user, resp, err := o.client.Users.Get(ctx, userLogin)
 		if err != nil {
-			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-			}
-			return nil, "", nil, fmt.Errorf("baton-github: error getting user %s: %w", userLogin, err)
+			return nil, "", nil, wrapGitHubError(err, resp, fmt.Sprintf("baton-github: failed to get user %s", userLogin))
 		}
 
 		principalId, err := resourceSdk.NewResourceID(resourceTypeUser, *user.ID)

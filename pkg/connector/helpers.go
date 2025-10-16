@@ -11,10 +11,12 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -248,4 +250,24 @@ func isPermissionError(resp *github.Response) bool {
 		return false
 	}
 	return resp.StatusCode == http.StatusForbidden
+}
+
+// wrapGitHubError wraps GitHub API errors with appropriate gRPC status codes based on the HTTP response.
+// It handles rate limiting, authentication errors, permission errors, and generic errors.
+// The contextMsg parameter should describe the operation that failed (e.g., "failed to list teams").
+func wrapGitHubError(err error, resp *github.Response, contextMsg string) error {
+	if err == nil {
+		return nil
+	}
+
+	if isRatelimited(resp) {
+		return uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+	}
+	if isAuthError(resp) {
+		return uhttp.WrapErrors(codes.Unauthenticated, contextMsg, err)
+	}
+	if isPermissionError(resp) {
+		return uhttp.WrapErrors(codes.PermissionDenied, contextMsg, err)
+	}
+	return fmt.Errorf("%s: %w", contextMsg, err)
 }

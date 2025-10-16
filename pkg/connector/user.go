@@ -133,10 +133,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 
 	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &opts)
 	if err != nil {
-		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-		}
-		return nil, "", nil, fmt.Errorf("github-connector: ListMembers failed: %w", err)
+		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list organization members")
 	}
 
 	restApiRateLimit, err = extractRateLimitData(resp)
@@ -251,24 +248,23 @@ func (o *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId
 		return nil, fmt.Errorf("baton-github: invalid invitation id")
 	}
 
-	u, _, err := o.client.Users.GetByID(ctx, userID)
+	user, resp, err := o.client.Users.GetByID(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("baton-github: invalid userID")
+		return nil, wrapGitHubError(err, resp, "baton-github: invalid userID")
 	}
 
 	var (
 		isRemoved = false
-		resp      *github.Response
 	)
 	for _, org := range orgs {
-		resp, err = o.client.Organizations.RemoveOrgMembership(ctx, u.GetLogin(), org)
+		resp, err = o.client.Organizations.RemoveOrgMembership(ctx, user.GetLogin(), org)
 		if err == nil {
 			isRemoved = true
 		}
 	}
 
 	if !isRemoved {
-		return nil, fmt.Errorf("baton-github: failed to cancel user")
+		return nil, wrapGitHubError(err, resp, "baton-github: failed to remove user from organizations")
 	}
 
 	restApiRateLimit, err := extractRateLimitData(resp)
