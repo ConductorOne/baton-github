@@ -74,7 +74,7 @@ func (i *invitationResourceType) List(ctx context.Context, parentID *v2.Resource
 		if isNotFoundError(resp) {
 			return nil, "", nil, nil
 		}
-		return nil, "", nil, fmt.Errorf("github-connector: ListPendingOrgInvitatioins failed: %w", err)
+		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list pending org invitations")
 	}
 
 	restApiRateLimit, err := extractRateLimitData(resp)
@@ -140,7 +140,7 @@ func (i *invitationResourceType) CreateAccount(
 		Email: params.email,
 	})
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("github-connectorv2: failed to invite user to org: %w", err)
+		return nil, nil, nil, wrapGitHubError(err, resp, "github-connector: failed to create org invitation")
 	}
 
 	restApiRateLimit, err := extractRateLimitData(resp)

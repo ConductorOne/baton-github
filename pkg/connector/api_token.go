@@ -8,9 +8,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
-	"google.golang.org/grpc/codes"
 )
 
 func apiTokenResource(ctx context.Context, token *github.PersonalAccessToken) (*v2.Resource, error) {
@@ -94,10 +92,7 @@ func (o *apiTokenResourceType) List(
 		},
 	})
 	if err != nil {
-		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-		}
-		return nil, "", nil, err
+		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list fine-grained personal access tokens")
 	}
 
 	restApiRateLimit, err := extractRateLimitData(resp)

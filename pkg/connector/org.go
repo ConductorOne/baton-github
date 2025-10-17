@@ -102,10 +102,7 @@ func (o *orgResourceType) List(
 
 	orgs, resp, err := o.client.Organizations.List(ctx, "", opts)
 	if err != nil {
-		if isRatelimited(resp) {
-			return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-		}
-		return nil, "", nil, fmt.Errorf("github-connector: failed to fetch org: %w", err)
+		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to fetch organizations")
 	}
 
 	nextPage, reqAnnos, err := parseResp(resp)
@@ -129,11 +126,7 @@ func (o *orgResourceType) List(
 				l.Warn("insufficient access to list org membership, skipping org", zap.String("org", org.GetLogin()))
 				continue
 			}
-
-			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-			}
-			return nil, "", nil, err
+			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to get org membership")
 		}
 
 		// Only sync orgs that we are an admin for
@@ -227,11 +220,7 @@ func (o *orgResourceType) Grants(
 			if isNotFoundError(resp) {
 				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
 			}
-			errMsg := "github-connectorv2: failed to list org members"
-			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-			}
-			return nil, "", nil, fmt.Errorf("%s: %w", errMsg, err)
+			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list org members")
 		}
 
 		var nextPage string
@@ -294,9 +283,9 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 		return nil, err
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, principalID)
+	user, resp, err := o.client.Users.GetByID(ctx, principalID)
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
+		return nil, wrapGitHubError(err, resp, "github-connector: failed to get user")
 	}
 
 	requestedRole := ""
@@ -309,21 +298,21 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
 	}
 
-	isMember, _, err := o.client.Organizations.IsMember(ctx, orgName, user.GetLogin())
+	isMember, resp, err := o.client.Organizations.IsMember(ctx, orgName, user.GetLogin())
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to get org membership: %w", err)
+		return nil, wrapGitHubError(err, resp, "github-connector: failed to check org membership")
 	}
 
 	// TODO: check existing invitations. Duplicate invitations aren't allowed, so this will fail with 4xx from github.
 
 	// If user isn't a member, invite them to the org with the requested role
 	if !isMember {
-		_, _, err = o.client.Organizations.CreateOrgInvitation(ctx, orgName, &github.CreateOrgInvitationOptions{
+		_, resp, err = o.client.Organizations.CreateOrgInvitation(ctx, orgName, &github.CreateOrgInvitationOptions{
 			InviteeID: user.ID,
 			Role:      &requestedRole,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to invite user to org: %w", err)
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to invite user to org")
 		}
 		return nil, nil
 	}
@@ -334,9 +323,9 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 	}
 
 	// If the user is a member, check to see what role they have
-	membership, _, err := o.client.Organizations.GetOrgMembership(ctx, user.GetLogin(), orgName)
+	membership, resp, err := o.client.Organizations.GetOrgMembership(ctx, user.GetLogin(), orgName)
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to get org membership: %w", err)
+		return nil, wrapGitHubError(err, resp, "github-connector: failed to get org membership")
 	}
 
 	// Skip if user already has requested role
@@ -346,9 +335,9 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 	}
 
 	// User is a member but grant is for admin, so make them an admin.
-	_, _, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.Ptr(orgRoleAdmin)})
+	_, resp, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.Ptr(orgRoleAdmin)})
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to make user an admin : %w", err)
+		return nil, wrapGitHubError(err, resp, "github-connector: failed to make user an admin")
 	}
 
 	return nil, nil
@@ -386,14 +375,14 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 		return nil, err
 	}
 
-	user, _, err := o.client.Users.GetByID(ctx, principalID)
+	user, resp, err := o.client.Users.GetByID(ctx, principalID)
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
+		return nil, wrapGitHubError(err, resp, "github-connector: failed to get user")
 	}
 
-	membership, _, err := o.client.Organizations.GetOrgMembership(ctx, user.GetLogin(), orgName)
+	membership, resp, err := o.client.Organizations.GetOrgMembership(ctx, user.GetLogin(), orgName)
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to get org membership: %w", err)
+		return nil, wrapGitHubError(err, resp, "github-connector: failed to get org membership")
 	}
 
 	if membership.GetState() != "active" {
@@ -401,16 +390,16 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	}
 
 	if en.Id == memberRoleID {
-		_, err = o.client.Organizations.RemoveOrgMembership(ctx, user.GetLogin(), orgName)
+		resp, err = o.client.Organizations.RemoveOrgMembership(ctx, user.GetLogin(), orgName)
 		if err != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to revoke org membership from user: %w", err)
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to revoke org membership from user")
 		}
 		return nil, nil
 	}
 
-	_, _, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.Ptr(orgRoleMember)})
+	_, resp, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.Ptr(orgRoleMember)})
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to revoke org admin from user: %w", err)
+		return nil, wrapGitHubError(err, resp, "github-connector: failed to revoke org admin from user")
 	}
 
 	return nil, nil
@@ -449,7 +438,7 @@ func (o *orgResourceType) listOrganizationsFromAppInstallations(
 	for orgName := range o.orgs {
 		org, resp, err = o.client.Organizations.Get(ctx, orgName)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("github-connector: failed to fetch organization: %w", err)
+			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to fetch organization")
 		}
 	}
 

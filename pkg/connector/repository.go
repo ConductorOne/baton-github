@@ -90,7 +90,7 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 
 	repos, resp, err := o.client.Repositories.ListByOrg(ctx, orgName, opts)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("github-connector: failed to list repositories: %w", err)
+		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list repositories")
 	}
 
 	nextPage, reqAnnos, err := parseResp(resp)
@@ -181,10 +181,7 @@ func (o *repositoryResourceType) Grants(
 			if isNotFoundError(resp) {
 				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
 			}
-			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-			}
-			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
+			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list collaborators")
 		}
 
 		nextPage, respAnnos, err := parseResp(resp)
@@ -237,10 +234,7 @@ func (o *repositoryResourceType) Grants(
 				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
 			}
 
-			if isRatelimited(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-			}
-			return nil, "", nil, fmt.Errorf("github-connector: failed to list repos: %w", err)
+			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list repository teams")
 		}
 
 		nextPage, respAnnos, err := parseResp(resp)
@@ -299,9 +293,9 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 		return nil, err
 	}
 
-	repo, _, err := o.client.Repositories.GetByID(ctx, repoID)
+	repo, resp, err := o.client.Repositories.GetByID(ctx, repoID)
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to get repository: %w", err)
+		return nil, wrapGitHubError(err, resp, "github-connector: failed to get repository")
 	}
 
 	org := repo.GetOrganization()
@@ -319,12 +313,12 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 
 	switch principal.Id.ResourceType {
 	case resourceTypeUser.Id:
-		user, _, err := o.client.Users.GetByID(ctx, principalID)
+		user, resp, err := o.client.Users.GetByID(ctx, principalID)
 		if err != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to get user")
 		}
 
-		_, _, e := o.client.Repositories.AddCollaborator(
+		_, resp, er := o.client.Repositories.AddCollaborator(
 			ctx,
 			repo.GetOwner().GetLogin(),
 			repo.GetName(),
@@ -332,20 +326,20 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			&github.RepositoryAddCollaboratorOptions{Permission: permission},
 		)
 
-		if e != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to add user to a repository: %w", e)
+		if er != nil {
+			return nil, wrapGitHubError(er, resp, "github-connector: failed to add user to repository")
 		}
 	case resourceTypeTeam.Id:
-		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
+		team, resp, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
 		if err != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to get team: %w", err)
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to get team")
 		}
 
-		_, err = o.client.Teams.AddTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName(), &github.TeamAddTeamRepoOptions{
+		resp, err = o.client.Teams.AddTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName(), &github.TeamAddTeamRepoOptions{
 			Permission: permission,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to add team to a repo: %w", err)
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to add team to repository")
 		}
 	default:
 		l.Error(
@@ -370,9 +364,9 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 		return nil, err
 	}
 
-	repo, _, err := o.client.Repositories.GetByID(ctx, repoID)
+	repo, resp, err := o.client.Repositories.GetByID(ctx, repoID)
 	if err != nil {
-		return nil, fmt.Errorf("github-connectorv2: failed to get repository: %w", err)
+		return nil, wrapGitHubError(err, resp, "github-connector: failed to get repository")
 	}
 
 	org := repo.GetOrganization()
@@ -384,24 +378,24 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 
 	switch principal.Id.ResourceType {
 	case resourceTypeUser.Id:
-		user, _, err := o.client.Users.GetByID(ctx, principalID)
+		user, resp, err := o.client.Users.GetByID(ctx, principalID)
 		if err != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to get user: %w", err)
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to get user")
 		}
 
-		_, e := o.client.Repositories.RemoveCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin())
-		if e != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to remove user from repo: %w", e)
+		resp, er := o.client.Repositories.RemoveCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin())
+		if er != nil {
+			return nil, wrapGitHubError(er, resp, "github-connector: failed to remove user from repository")
 		}
 	case resourceTypeTeam.Id:
-		team, _, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
+		team, resp, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
 		if err != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to get team: %w", err)
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to get team")
 		}
 
-		_, err = o.client.Teams.RemoveTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName())
+		resp, err = o.client.Teams.RemoveTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName())
 		if err != nil {
-			return nil, fmt.Errorf("github-connectorv2: failed to remove team from repo: %w", err)
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to remove team from repository")
 		}
 	default:
 		l.Error(
