@@ -9,6 +9,7 @@ type Github struct {
 	Enterprises []string `mapstructure:"enterprises"`
 	InstanceUrl string `mapstructure:"instance-url"`
 	SyncSecrets bool `mapstructure:"sync-secrets"`
+	OmitArchivedRepositories bool `mapstructure:"omit-archived-repositories"`
 	AppId string `mapstructure:"app-id"`
 	AppPrivatekeyPath string `mapstructure:"app-privatekey-path"`
 }
