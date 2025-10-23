@@ -57,9 +57,10 @@ func repositoryResource(ctx context.Context, repo *github.Repository, parentReso
 }
 
 type repositoryResourceType struct {
-	resourceType *v2.ResourceType
-	client       *github.Client
-	orgCache     *orgNameCache
+	resourceType             *v2.ResourceType
+	client                   *github.Client
+	orgCache                 *orgNameCache
+	omitArchivedRepositories bool
 }
 
 func (o *repositoryResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -105,6 +106,9 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 
 	rv := make([]*v2.Resource, 0, len(repos))
 	for _, repo := range repos {
+		if o.omitArchivedRepositories && repo.GetArchived() {
+			continue
+		}
 		rr, err := repositoryResource(ctx, repo, parentID)
 		if err != nil {
 			return nil, "", nil, err
@@ -409,11 +413,12 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 	return nil, nil
 }
 
-func repositoryBuilder(client *github.Client, orgCache *orgNameCache) *repositoryResourceType {
+func repositoryBuilder(client *github.Client, orgCache *orgNameCache, omitArchivedRepositories bool) *repositoryResourceType {
 	return &repositoryResourceType{
-		resourceType: resourceTypeRepository,
-		client:       client,
-		orgCache:     orgCache,
+		resourceType:             resourceTypeRepository,
+		client:                   client,
+		orgCache:                 orgCache,
+		omitArchivedRepositories: omitArchivedRepositories,
 	}
 }
 

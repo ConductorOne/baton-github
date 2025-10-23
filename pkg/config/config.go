@@ -43,6 +43,11 @@ var (
 		field.WithDisplayName("Sync secrets"),
 		field.WithDescription(`Whether to sync secrets or not`),
 	)
+	omitArchivedRepositories = field.BoolField(
+		"omit-archived-repositories",
+		field.WithDisplayName("Omit syncing archived repositories"),
+		field.WithDescription("Whether to skip syncing archived repositories or not"),
+	)
 	fieldRelationships = []field.SchemaFieldRelationship{
 		field.FieldsMutuallyExclusive(
 			accessTokenField,
@@ -63,6 +68,7 @@ var Config = field.NewConfiguration(
 		EnterprisesField,
 		instanceUrlField,
 		syncSecrets,
+		omitArchivedRepositories,
 		appIDField,
 		appPrivateKeyPath,
 	},
