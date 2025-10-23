@@ -98,6 +98,7 @@ type GitHub struct {
 	hasSAMLEnabled *bool
 	orgCache       *orgNameCache
 	syncSecrets    bool
+	omitArchivedRepositories bool
 	enterprises    []string
 }
 
@@ -106,7 +107,7 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
 		teamBuilder(gh.client, gh.orgCache),
 		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache, gh.orgs),
-		repositoryBuilder(gh.client, gh.orgCache),
+		repositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories),
 		orgRoleBuilder(gh.client, gh.orgCache),
 		invitationBuilder(invitationBuilderParams{
 			client:   gh.client,
@@ -315,6 +316,7 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 		graphqlClient: graphqlClient,
 		orgCache:      newOrgNameCache(ghClient),
 		syncSecrets:   ghc.SyncSecrets,
+		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 	}
 	return gh, nil
 }

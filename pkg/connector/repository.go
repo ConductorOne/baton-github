@@ -60,6 +60,7 @@ type repositoryResourceType struct {
 	resourceType *v2.ResourceType
 	client       *github.Client
 	orgCache     *orgNameCache
+	omitArchivedRepositories bool
 }
 
 func (o *repositoryResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -67,6 +68,7 @@ func (o *repositoryResourceType) ResourceType(_ context.Context) *v2.ResourceTyp
 }
 
 func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
 	if parentID == nil {
 		return nil, "", nil, nil
 	}
@@ -105,6 +107,18 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 
 	rv := make([]*v2.Resource, 0, len(repos))
 	for _, repo := range repos {
+		l.Warn("found repository in list:", zap.String("repository", repo.GetName()))
+		if repo.GetArchived() {
+			l.Warn("repository is archived!", zap.String("repository", repo.GetName()))
+			if !o.omitArchivedRepositories {
+				l.Warn("would still sync repo", zap.String("repository", repo.GetName()))
+			} else {
+				l.Warn("would NOT sync repo", zap.String("repository", repo.GetName()))
+				continue
+			}
+		} else {
+			l.Warn("repository is NOT archived...", zap.String("repository", repo.GetName()))
+		}
 		rr, err := repositoryResource(ctx, repo, parentID)
 		if err != nil {
 			return nil, "", nil, err
@@ -409,11 +423,12 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 	return nil, nil
 }
 
-func repositoryBuilder(client *github.Client, orgCache *orgNameCache) *repositoryResourceType {
+func repositoryBuilder(client *github.Client, orgCache *orgNameCache, omitArchivedRepositories bool) *repositoryResourceType {
 	return &repositoryResourceType{
 		resourceType: resourceTypeRepository,
 		client:       client,
 		orgCache:     orgCache,
+		omitArchivedRepositories: omitArchivedRepositories,
 	}
 }
 
