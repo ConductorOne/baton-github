@@ -57,9 +57,9 @@ func repositoryResource(ctx context.Context, repo *github.Repository, parentReso
 }
 
 type repositoryResourceType struct {
-	resourceType *v2.ResourceType
-	client       *github.Client
-	orgCache     *orgNameCache
+	resourceType             *v2.ResourceType
+	client                   *github.Client
+	orgCache                 *orgNameCache
 	omitArchivedRepositories bool
 }
 
@@ -415,9 +415,9 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 
 func repositoryBuilder(client *github.Client, orgCache *orgNameCache, omitArchivedRepositories bool) *repositoryResourceType {
 	return &repositoryResourceType{
-		resourceType: resourceTypeRepository,
-		client:       client,
-		orgCache:     orgCache,
+		resourceType:             resourceTypeRepository,
+		client:                   client,
+		orgCache:                 orgCache,
 		omitArchivedRepositories: omitArchivedRepositories,
 	}
 }

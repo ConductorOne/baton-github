@@ -89,17 +89,17 @@ var (
 )
 
 type GitHub struct {
-	orgs           []string
-	client         *github.Client
-	appClient      *github.Client
-	customClient   *customclient.Client
-	instanceURL    string
-	graphqlClient  *githubv4.Client
-	hasSAMLEnabled *bool
-	orgCache       *orgNameCache
-	syncSecrets    bool
+	orgs                     []string
+	client                   *github.Client
+	appClient                *github.Client
+	customClient             *customclient.Client
+	instanceURL              string
+	graphqlClient            *githubv4.Client
+	hasSAMLEnabled           *bool
+	orgCache                 *orgNameCache
+	syncSecrets              bool
 	omitArchivedRepositories bool
-	enterprises    []string
+	enterprises              []string
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
@@ -307,15 +307,15 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 	}
 
 	gh := &GitHub{
-		client:        ghClient,
-		appClient:     appClient,
-		customClient:  customclient.New(ghClient),
-		instanceURL:   ghc.InstanceUrl,
-		orgs:          ghc.Orgs,
-		enterprises:   ghc.Enterprises,
-		graphqlClient: graphqlClient,
-		orgCache:      newOrgNameCache(ghClient),
-		syncSecrets:   ghc.SyncSecrets,
+		client:                   ghClient,
+		appClient:                appClient,
+		customClient:             customclient.New(ghClient),
+		instanceURL:              ghc.InstanceUrl,
+		orgs:                     ghc.Orgs,
+		enterprises:              ghc.Enterprises,
+		graphqlClient:            graphqlClient,
+		orgCache:                 newOrgNameCache(ghClient),
+		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 	}
 	return gh, nil

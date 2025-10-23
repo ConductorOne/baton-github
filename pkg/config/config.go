@@ -45,8 +45,8 @@ var (
 	)
 	omitArchivedRepositories = field.BoolField(
 		"omit-archived-repositories",
-		field.WithDisplayName("Omit syncying archived repositories"),
-		field.WithDescription("Whether to skip sync archived repositories or not"),
+		field.WithDisplayName("Omit syncing archived repositories"),
+		field.WithDescription("Whether to skip syncing archived repositories or not"),
 	)
 	fieldRelationships = []field.SchemaFieldRelationship{
 		field.FieldsMutuallyExclusive(
