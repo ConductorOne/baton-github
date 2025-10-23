@@ -39,6 +39,12 @@
       "stringField": {}
     },
     {
+      "name": "omit-archived-repositories",
+      "displayName": "Omit syncing archived repositories",
+      "description": "Whether to skip syncing archived repositories or not",
+      "boolField": {}
+    },
+    {
       "name": "orgs",
       "displayName": "Organizations",
       "description": "Limit syncing to specific organizations.",
