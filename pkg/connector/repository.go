@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	config "github.com/conductorone/baton-sdk/pb/c1/config/v1"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/actions"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
@@ -18,6 +20,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // outside collaborators are given one of these roles too.
@@ -438,4 +441,364 @@ func skipGrantsForResourceType(bag *pagination.Bag) (string, error) {
 		return "", err
 	}
 	return pageToken, nil
+}
+
+// ResourceActions registers the resource actions for the repository resource type.
+// This implements the ResourceActionProvider interface.
+func (o *repositoryResourceType) ResourceActions(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+	if err := o.registerCreateRepositoryAction(ctx, registry); err != nil {
+		return err
+	}
+	if err := o.registerDeleteRepositoryAction(ctx, registry); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+	return registry.Register(ctx, &v2.ResourceActionSchema{
+		Name:        "create",
+		DisplayName: "Create Repository",
+		Description: "Create a new repository in a GitHub organization",
+		ActionType:  []v2.ActionType{v2.ActionType_ACTION_TYPE_RESOURCE_CREATE},
+		Arguments: []*config.Field{
+			{
+				Name:        "name",
+				DisplayName: "Repository Name",
+				Description: "The name of the repository to create",
+				Field:       &config.Field_StringField{},
+				IsRequired:  true,
+			},
+			{
+				Name:        "parent",
+				DisplayName: "Parent Organization",
+				Description: "The organization to create the repository in",
+				Field:       &config.Field_ResourceIdField{},
+				IsRequired:  true,
+			},
+			{
+				Name:        "description",
+				DisplayName: "Description",
+				Description: "A description of the repository",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "private",
+				DisplayName: "Private",
+				Description: "Whether the repository should be private (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "visibility",
+				DisplayName: "Visibility",
+				Description: "The visibility level: 'public', 'private', or 'internal'",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "has_issues",
+				DisplayName: "Has Issues",
+				Description: "Enable issues for this repository (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "has_projects",
+				DisplayName: "Has Projects",
+				Description: "Enable projects for this repository (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "has_wiki",
+				DisplayName: "Has Wiki",
+				Description: "Enable wiki for this repository (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "has_discussions",
+				DisplayName: "Has Discussions",
+				Description: "Enable discussions for this repository (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "auto_init",
+				DisplayName: "Auto Initialize",
+				Description: "Create an initial commit with empty README (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "gitignore_template",
+				DisplayName: "Gitignore Template",
+				Description: "Gitignore template to apply (e.g., 'Go', 'Python', 'Node')",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "license_template",
+				DisplayName: "License Template",
+				Description: "License template to apply (e.g., 'mit', 'apache-2.0', 'gpl-3.0')",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "allow_squash_merge",
+				DisplayName: "Allow Squash Merge",
+				Description: "Allow squash-merging pull requests (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "allow_merge_commit",
+				DisplayName: "Allow Merge Commit",
+				Description: "Allow merging pull requests with a merge commit (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "allow_rebase_merge",
+				DisplayName: "Allow Rebase Merge",
+				Description: "Allow rebase-merging pull requests (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "allow_auto_merge",
+				DisplayName: "Allow Auto Merge",
+				Description: "Allow auto-merge on pull requests (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "delete_branch_on_merge",
+				DisplayName: "Delete Branch on Merge",
+				Description: "Automatically delete head branches after pull requests are merged (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "is_template",
+				DisplayName: "Is Template",
+				Description: "Make this repository available as a template (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+		},
+		ReturnTypes: []*config.Field{
+			{Name: "success", Field: &config.Field_BoolField{}},
+			{Name: "resource", Field: &config.Field_ResourceField{}},
+		},
+	}, o.handleCreateRepositoryAction)
+}
+
+func (o *repositoryResourceType) registerDeleteRepositoryAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+	return registry.Register(ctx, &v2.ResourceActionSchema{
+		Name:        "delete",
+		DisplayName: "Delete Repository",
+		Description: "Delete a repository from a GitHub organization",
+		ActionType:  []v2.ActionType{v2.ActionType_ACTION_TYPE_RESOURCE_DELETE},
+		Arguments: []*config.Field{
+			{
+				Name:        "resource",
+				DisplayName: "Repository Resource",
+				Description: "The repository resource to delete",
+				Field:       &config.Field_ResourceIdField{},
+				IsRequired:  true,
+			},
+			{
+				Name:        "parent",
+				DisplayName: "Parent Organization",
+				Description: "The organization the repository belongs to",
+				Field:       &config.Field_ResourceIdField{},
+				IsRequired:  true,
+			},
+		},
+		ReturnTypes: []*config.Field{
+			{Name: "success", Field: &config.Field_BoolField{}},
+		},
+	}, o.handleDeleteRepositoryAction)
+}
+
+func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	// Extract required arguments using SDK helpers
+	name, err := actions.RequireStringArg(args, "name")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	parentResourceID, err := actions.RequireResourceIDArg(args, "parent")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Get the organization name from the parent resource ID
+	orgName, err := o.orgCache.GetOrgName(ctx, parentResourceID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get organization name: %w", err)
+	}
+
+	l.Info("github-connector: creating repository via action",
+		zap.String("repo_name", name),
+		zap.String("org_name", orgName),
+	)
+
+	// Build the Repository request
+	newRepo := &github.Repository{
+		Name: github.Ptr(name),
+	}
+
+	// Extract optional fields using SDK helpers
+	if description, ok := actions.GetStringArg(args, "description"); ok && description != "" {
+		newRepo.Description = github.Ptr(description)
+	}
+
+	if private, ok := actions.GetBoolArg(args, "private"); ok {
+		newRepo.Private = github.Ptr(private)
+	}
+
+	if visibility, ok := actions.GetStringArg(args, "visibility"); ok && visibility != "" {
+		if visibility == "public" || visibility == "private" || visibility == "internal" {
+			newRepo.Visibility = github.Ptr(visibility)
+		} else {
+			l.Warn("github-connector: invalid visibility value, using default",
+				zap.String("provided_visibility", visibility),
+			)
+		}
+	}
+
+	if hasIssues, ok := actions.GetBoolArg(args, "has_issues"); ok {
+		newRepo.HasIssues = github.Ptr(hasIssues)
+	}
+
+	if hasProjects, ok := actions.GetBoolArg(args, "has_projects"); ok {
+		newRepo.HasProjects = github.Ptr(hasProjects)
+	}
+
+	if hasWiki, ok := actions.GetBoolArg(args, "has_wiki"); ok {
+		newRepo.HasWiki = github.Ptr(hasWiki)
+	}
+
+	if hasDiscussions, ok := actions.GetBoolArg(args, "has_discussions"); ok {
+		newRepo.HasDiscussions = github.Ptr(hasDiscussions)
+	}
+
+	if autoInit, ok := actions.GetBoolArg(args, "auto_init"); ok {
+		newRepo.AutoInit = github.Ptr(autoInit)
+	}
+
+	if gitignoreTemplate, ok := actions.GetStringArg(args, "gitignore_template"); ok && gitignoreTemplate != "" {
+		newRepo.GitignoreTemplate = github.Ptr(gitignoreTemplate)
+	}
+
+	if licenseTemplate, ok := actions.GetStringArg(args, "license_template"); ok && licenseTemplate != "" {
+		newRepo.LicenseTemplate = github.Ptr(licenseTemplate)
+	}
+
+	if allowSquashMerge, ok := actions.GetBoolArg(args, "allow_squash_merge"); ok {
+		newRepo.AllowSquashMerge = github.Ptr(allowSquashMerge)
+	}
+
+	if allowMergeCommit, ok := actions.GetBoolArg(args, "allow_merge_commit"); ok {
+		newRepo.AllowMergeCommit = github.Ptr(allowMergeCommit)
+	}
+
+	if allowRebaseMerge, ok := actions.GetBoolArg(args, "allow_rebase_merge"); ok {
+		newRepo.AllowRebaseMerge = github.Ptr(allowRebaseMerge)
+	}
+
+	if allowAutoMerge, ok := actions.GetBoolArg(args, "allow_auto_merge"); ok {
+		newRepo.AllowAutoMerge = github.Ptr(allowAutoMerge)
+	}
+
+	if deleteBranchOnMerge, ok := actions.GetBoolArg(args, "delete_branch_on_merge"); ok {
+		newRepo.DeleteBranchOnMerge = github.Ptr(deleteBranchOnMerge)
+	}
+
+	if isTemplate, ok := actions.GetBoolArg(args, "is_template"); ok {
+		newRepo.IsTemplate = github.Ptr(isTemplate)
+	}
+
+	// Create the repository via GitHub API
+	createdRepo, resp, err := o.client.Repositories.Create(ctx, orgName, newRepo)
+	if err != nil {
+		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to create repository %s in org %s", name, orgName))
+	}
+
+	// Extract rate limit data for annotations
+	var annos annotations.Annotations
+	if rateLimitData, err := extractRateLimitData(resp); err == nil {
+		annos.WithRateLimiting(rateLimitData)
+	}
+
+	l.Info("github-connector: repository created successfully via action",
+		zap.String("repo_name", createdRepo.GetName()),
+		zap.Int64("repo_id", createdRepo.GetID()),
+		zap.String("repo_full_name", createdRepo.GetFullName()),
+	)
+
+	// Create the resource representation of the newly created repository
+	repoResource, err := repositoryResource(ctx, createdRepo, parentResourceID)
+	if err != nil {
+		return nil, annos, fmt.Errorf("failed to create resource representation: %w", err)
+	}
+
+	// Build return values using SDK helpers
+	resourceRv, err := actions.NewResourceReturnField("resource", repoResource)
+	if err != nil {
+		return nil, annos, err
+	}
+
+	return actions.NewReturnValues(true, resourceRv), annos, nil
+}
+
+func (o *repositoryResourceType) handleDeleteRepositoryAction(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	// Extract the repository resource ID using SDK helper
+	resourceID, err := actions.RequireResourceIDArg(args, "resource")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Extract the parent org resource ID using SDK helper
+	parentResourceID, err := actions.RequireResourceIDArg(args, "parent")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Parse the repo ID from the resource
+	repoID, err := strconv.ParseInt(resourceID.Resource, 10, 64)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid repository ID %s: %w", resourceID.Resource, err)
+	}
+
+	// Get the organization name from the parent resource ID
+	orgName, err := o.orgCache.GetOrgName(ctx, parentResourceID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get organization name: %w", err)
+	}
+
+	// First, get the repository to find its name (needed for deletion)
+	repo, resp, err := o.client.Repositories.GetByID(ctx, repoID)
+	if err != nil {
+		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to get repository %d", repoID))
+	}
+
+	repoName := repo.GetName()
+
+	l.Info("github-connector: deleting repository via action",
+		zap.Int64("repo_id", repoID),
+		zap.String("repo_name", repoName),
+		zap.String("org_name", orgName),
+	)
+
+	// Delete the repository via GitHub API
+	resp, err = o.client.Repositories.Delete(ctx, orgName, repoName)
+	if err != nil {
+		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to delete repository %s in org %s", repoName, orgName))
+	}
+
+	var annos annotations.Annotations
+	if rateLimitData, err := extractRateLimitData(resp); err == nil {
+		annos.WithRateLimiting(rateLimitData)
+	}
+
+	l.Info("github-connector: repository deleted successfully via action",
+		zap.Int64("repo_id", repoID),
+		zap.String("repo_name", repoName),
+		zap.String("org_name", orgName),
+	)
+
+	return actions.NewReturnValues(true), annos, nil
 }
