@@ -371,6 +371,9 @@ func (o *teamResourceType) ResourceActions(ctx context.Context, registry actions
 	if err := o.registerCreateTeamAction(ctx, registry); err != nil {
 		return err
 	}
+	if err := o.registerUpdateTeamAction(ctx, registry); err != nil {
+		return err
+	}
 	if err := o.registerDeleteTeamAction(ctx, registry); err != nil {
 		return err
 	}
@@ -378,7 +381,7 @@ func (o *teamResourceType) ResourceActions(ctx context.Context, registry actions
 }
 
 func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
-	return registry.Register(ctx, &v2.ResourceActionSchema{
+	return registry.Register(ctx, &v2.BatonActionSchema{
 		Name:        "create",
 		DisplayName: "Create Team",
 		Description: "Create a new team in a GitHub organization",
@@ -410,6 +413,19 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 				Description: "The privacy level: 'secret' or 'closed'",
 				Field:       &config.Field_StringField{},
 			},
+			{
+				Name:        "notification_setting",
+				DisplayName: "Notification Setting",
+				Description: "The notification setting for the team",
+				Field: &config.Field_StringField{
+					StringField: &config.StringField{
+						Options: []*config.StringFieldOption{
+							{Value: "notifications_enabled", DisplayName: "Enabled"},
+							{Value: "notifications_disabled", DisplayName: "Disabled"},
+						},
+					},
+				},
+			},
 		},
 		ReturnTypes: []*config.Field{
 			{Name: "success", Field: &config.Field_BoolField{}},
@@ -419,7 +435,7 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 }
 
 func (o *teamResourceType) registerDeleteTeamAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
-	return registry.Register(ctx, &v2.ResourceActionSchema{
+	return registry.Register(ctx, &v2.BatonActionSchema{
 		Name:        "delete",
 		DisplayName: "Delete Team",
 		Description: "Delete a team from a GitHub organization",
@@ -444,6 +460,73 @@ func (o *teamResourceType) registerDeleteTeamAction(ctx context.Context, registr
 			{Name: "success", Field: &config.Field_BoolField{}},
 		},
 	}, o.handleDeleteTeamAction)
+}
+
+func (o *teamResourceType) registerUpdateTeamAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+	return registry.Register(ctx, &v2.BatonActionSchema{
+		Name:        "update",
+		DisplayName: "Update Team",
+		Description: "Update an existing team in a GitHub organization",
+		ActionType:  []v2.ActionType{v2.ActionType_ACTION_TYPE_RESOURCE_MUTATE},
+		Arguments: []*config.Field{
+			{
+				Name:        "resource",
+				DisplayName: "Team Resource",
+				Description: "The team resource to update",
+				Field:       &config.Field_ResourceIdField{},
+				IsRequired:  true,
+			},
+			{
+				Name:        "parent",
+				DisplayName: "Parent Organization",
+				Description: "The organization the team belongs to",
+				Field:       &config.Field_ResourceIdField{},
+				IsRequired:  true,
+			},
+			{
+				Name:        "name",
+				DisplayName: "Team Name",
+				Description: "The new name of the team (leave empty to keep current)",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "description",
+				DisplayName: "Description",
+				Description: "A description of the team",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "privacy",
+				DisplayName: "Privacy",
+				Description: "The privacy level of the team",
+				Field: &config.Field_StringField{
+					StringField: &config.StringField{
+						Options: []*config.StringFieldOption{
+							{Value: "secret", DisplayName: "Secret (only visible to org owners and team members)"},
+							{Value: "closed", DisplayName: "Closed (visible to all org members)"},
+						},
+					},
+				},
+			},
+			{
+				Name:        "notification_setting",
+				DisplayName: "Notification Setting",
+				Description: "The notification setting for the team",
+				Field: &config.Field_StringField{
+					StringField: &config.StringField{
+						Options: []*config.StringFieldOption{
+							{Value: "notifications_enabled", DisplayName: "Enabled"},
+							{Value: "notifications_disabled", DisplayName: "Disabled"},
+						},
+					},
+				},
+			},
+		},
+		ReturnTypes: []*config.Field{
+			{Name: "success", Field: &config.Field_BoolField{}},
+			{Name: "resource", Field: &config.Field_ResourceField{}},
+		},
+	}, o.handleUpdateTeamAction)
 }
 
 func (o *teamResourceType) handleCreateTeamAction(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
@@ -551,15 +634,30 @@ func (o *teamResourceType) handleDeleteTeamAction(ctx context.Context, args *str
 		return nil, nil, fmt.Errorf("invalid org ID %s: %w", parentResourceID.Resource, err)
 	}
 
+	// Get the organization name from the cache
+	orgName, err := o.orgCache.GetOrgName(ctx, parentResourceID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get organization name: %w", err)
+	}
+
+	// Get the team to find its slug
+	team, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, teamID)
+	if err != nil {
+		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to get team %d", teamID))
+	}
+
+	teamSlug := team.GetSlug()
+
 	l.Info("github-connector: deleting team via action",
 		zap.Int64("team_id", teamID),
-		zap.Int64("org_id", orgID),
+		zap.String("team_slug", teamSlug),
+		zap.String("org_name", orgName),
 	)
 
-	// Delete the team directly using the provided org ID from parent
-	resp, err := o.client.Teams.DeleteTeamByID(ctx, orgID, teamID)
+	// Delete the team using slug
+	resp, err = o.client.Teams.DeleteTeamBySlug(ctx, orgName, teamSlug)
 	if err != nil {
-		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to delete team %d in org %d", teamID, orgID))
+		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to delete team %s in org %s", teamSlug, orgName))
 	}
 
 	var annos annotations.Annotations
@@ -569,10 +667,143 @@ func (o *teamResourceType) handleDeleteTeamAction(ctx context.Context, args *str
 
 	l.Info("github-connector: team deleted successfully via action",
 		zap.Int64("team_id", teamID),
-		zap.Int64("org_id", orgID),
+		zap.String("team_slug", teamSlug),
+		zap.String("org_name", orgName),
 	)
 
 	return actions.NewReturnValues(true), annos, nil
+}
+
+func (o *teamResourceType) handleUpdateTeamAction(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	// Extract the team resource ID using SDK helper
+	resourceID, err := actions.RequireResourceIDArg(args, "resource")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Extract the parent org resource ID using SDK helper
+	parentResourceID, err := actions.RequireResourceIDArg(args, "parent")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Parse the team ID from the resource
+	teamID, err := strconv.ParseInt(resourceID.Resource, 10, 64)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid team ID %s: %w", resourceID.Resource, err)
+	}
+
+	// Parse the org ID from the parent resource
+	orgID, err := strconv.ParseInt(parentResourceID.Resource, 10, 64)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid org ID %s: %w", parentResourceID.Resource, err)
+	}
+
+	// Get the organization name from the cache
+	orgName, err := o.orgCache.GetOrgName(ctx, parentResourceID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get organization name: %w", err)
+	}
+
+	// Get the team to find its slug
+	team, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, teamID)
+	if err != nil {
+		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to get team %d", teamID))
+	}
+
+	teamSlug := team.GetSlug()
+
+	l.Info("github-connector: updating team via action",
+		zap.Int64("team_id", teamID),
+		zap.String("team_slug", teamSlug),
+		zap.String("org_name", orgName),
+	)
+
+	// Build the NewTeam update request
+	// Note: GitHub API uses NewTeam for both create and edit operations
+	updateTeam := github.NewTeam{}
+
+	// Track if any updates were provided
+	hasUpdates := false
+
+	// Extract optional fields using SDK helpers
+	if name, ok := actions.GetStringArg(args, "name"); ok && name != "" {
+		updateTeam.Name = name
+		hasUpdates = true
+	}
+
+	if description, ok := actions.GetStringArg(args, "description"); ok {
+		updateTeam.Description = github.Ptr(description)
+		hasUpdates = true
+	}
+
+	if privacy, ok := actions.GetStringArg(args, "privacy"); ok && privacy != "" {
+		if privacy == "secret" || privacy == "closed" {
+			updateTeam.Privacy = github.Ptr(privacy)
+			hasUpdates = true
+		} else {
+			l.Warn("github-connector: invalid privacy value, ignoring",
+				zap.String("provided_privacy", privacy),
+			)
+		}
+	}
+
+	if notificationSetting, ok := actions.GetStringArg(args, "notification_setting"); ok && notificationSetting != "" {
+		if notificationSetting == "notifications_enabled" || notificationSetting == "notifications_disabled" {
+			updateTeam.NotificationSetting = github.Ptr(notificationSetting)
+			hasUpdates = true
+		} else {
+			l.Warn("github-connector: invalid notification_setting value, ignoring",
+				zap.String("provided_notification_setting", notificationSetting),
+			)
+		}
+	}
+
+	if parentTeamID, ok := actions.GetIntArg(args, "parent_team_id"); ok {
+		if parentTeamID > 0 {
+			updateTeam.ParentTeamID = github.Ptr(parentTeamID)
+			hasUpdates = true
+		}
+		// Note: Setting to 0 would remove the parent, but GitHub API requires omitting the field entirely
+	}
+
+	if !hasUpdates {
+		return nil, nil, fmt.Errorf("no update fields provided")
+	}
+
+	// Update the team via GitHub API using slug
+	updatedTeam, resp, err := o.client.Teams.EditTeamBySlug(ctx, orgName, teamSlug, updateTeam, false)
+	if err != nil {
+		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to update team %s in org %s", teamSlug, orgName))
+	}
+
+	// Extract rate limit data for annotations
+	var annos annotations.Annotations
+	if rateLimitData, err := extractRateLimitData(resp); err == nil {
+		annos.WithRateLimiting(rateLimitData)
+	}
+
+	l.Info("github-connector: team updated successfully via action",
+		zap.Int64("team_id", updatedTeam.GetID()),
+		zap.String("team_name", updatedTeam.GetName()),
+		zap.String("team_slug", updatedTeam.GetSlug()),
+	)
+
+	// Create the resource representation of the updated team
+	resource, err := teamResource(updatedTeam, parentResourceID)
+	if err != nil {
+		return nil, annos, fmt.Errorf("failed to create resource representation: %w", err)
+	}
+
+	// Build return values using SDK helpers
+	resourceRv, err := actions.NewResourceReturnField("resource", resource)
+	if err != nil {
+		return nil, annos, err
+	}
+
+	return actions.NewReturnValues(true, resourceRv), annos, nil
 }
 
 func teamBuilder(client *github.Client, orgCache *orgNameCache) *teamResourceType {

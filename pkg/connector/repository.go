@@ -443,6 +443,9 @@ func (o *repositoryResourceType) ResourceActions(ctx context.Context, registry a
 	if err := o.registerCreateRepositoryAction(ctx, registry); err != nil {
 		return err
 	}
+	if err := o.registerUpdateRepositoryAction(ctx, registry); err != nil {
+		return err
+	}
 	if err := o.registerDeleteRepositoryAction(ctx, registry); err != nil {
 		return err
 	}
@@ -450,7 +453,7 @@ func (o *repositoryResourceType) ResourceActions(ctx context.Context, registry a
 }
 
 func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
-	return registry.Register(ctx, &v2.ResourceActionSchema{
+	return registry.Register(ctx, &v2.BatonActionSchema{
 		Name:        "create",
 		DisplayName: "Create Repository",
 		Description: "Create a new repository in a GitHub organization",
@@ -485,8 +488,16 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 			{
 				Name:        "visibility",
 				DisplayName: "Visibility",
-				Description: "The visibility level: 'public', 'private', or 'internal'",
-				Field:       &config.Field_StringField{},
+				Description: "The visibility level of the repository",
+				Field: &config.Field_StringField{
+					StringField: &config.StringField{
+						Options: []*config.StringFieldOption{
+							{Value: "public", DisplayName: "Public"},
+							{Value: "private", DisplayName: "Private"},
+							{Value: "internal", DisplayName: "Internal (Enterprise only)"},
+						},
+					},
+				},
 			},
 			{
 				Name:        "has_issues",
@@ -521,14 +532,48 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 			{
 				Name:        "gitignore_template",
 				DisplayName: "Gitignore Template",
-				Description: "Gitignore template to apply (e.g., 'Go', 'Python', 'Node')",
-				Field:       &config.Field_StringField{},
+				Description: "Gitignore template to apply",
+				Field: &config.Field_StringField{
+					StringField: &config.StringField{
+						Options: []*config.StringFieldOption{
+							{Value: "", DisplayName: "None"},
+							{Value: "Go", DisplayName: "Go"},
+							{Value: "Python", DisplayName: "Python"},
+							{Value: "Node", DisplayName: "Node"},
+							{Value: "Java", DisplayName: "Java"},
+							{Value: "Ruby", DisplayName: "Ruby"},
+							{Value: "Rust", DisplayName: "Rust"},
+							{Value: "C++", DisplayName: "C++"},
+							{Value: "C", DisplayName: "C"},
+							{Value: "Swift", DisplayName: "Swift"},
+							{Value: "Kotlin", DisplayName: "Kotlin"},
+							{Value: "Scala", DisplayName: "Scala"},
+							{Value: "Terraform", DisplayName: "Terraform"},
+						},
+					},
+				},
 			},
 			{
 				Name:        "license_template",
 				DisplayName: "License Template",
-				Description: "License template to apply (e.g., 'mit', 'apache-2.0', 'gpl-3.0')",
-				Field:       &config.Field_StringField{},
+				Description: "License template to apply",
+				Field: &config.Field_StringField{
+					StringField: &config.StringField{
+						Options: []*config.StringFieldOption{
+							{Value: "", DisplayName: "None"},
+							{Value: "mit", DisplayName: "MIT License"},
+							{Value: "apache-2.0", DisplayName: "Apache License 2.0"},
+							{Value: "gpl-3.0", DisplayName: "GNU GPLv3"},
+							{Value: "gpl-2.0", DisplayName: "GNU GPLv2"},
+							{Value: "lgpl-3.0", DisplayName: "GNU LGPLv3"},
+							{Value: "bsd-3-clause", DisplayName: "BSD 3-Clause"},
+							{Value: "bsd-2-clause", DisplayName: "BSD 2-Clause"},
+							{Value: "mpl-2.0", DisplayName: "Mozilla Public License 2.0"},
+							{Value: "unlicense", DisplayName: "The Unlicense"},
+							{Value: "agpl-3.0", DisplayName: "GNU AGPLv3"},
+						},
+					},
+				},
 			},
 			{
 				Name:        "allow_squash_merge",
@@ -575,7 +620,7 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 }
 
 func (o *repositoryResourceType) registerDeleteRepositoryAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
-	return registry.Register(ctx, &v2.ResourceActionSchema{
+	return registry.Register(ctx, &v2.BatonActionSchema{
 		Name:        "delete",
 		DisplayName: "Delete Repository",
 		Description: "Delete a repository from a GitHub organization",
@@ -600,6 +645,145 @@ func (o *repositoryResourceType) registerDeleteRepositoryAction(ctx context.Cont
 			{Name: "success", Field: &config.Field_BoolField{}},
 		},
 	}, o.handleDeleteRepositoryAction)
+}
+
+func (o *repositoryResourceType) registerUpdateRepositoryAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+	return registry.Register(ctx, &v2.BatonActionSchema{
+		Name:        "update",
+		DisplayName: "Update Repository",
+		Description: "Update an existing repository in a GitHub organization",
+		ActionType:  []v2.ActionType{v2.ActionType_ACTION_TYPE_RESOURCE_MUTATE},
+		Arguments: []*config.Field{
+			{
+				Name:        "resource",
+				DisplayName: "Repository Resource",
+				Description: "The repository resource to update",
+				Field:       &config.Field_ResourceIdField{},
+				IsRequired:  true,
+			},
+			{
+				Name:        "parent",
+				DisplayName: "Parent Organization",
+				Description: "The organization the repository belongs to",
+				Field:       &config.Field_ResourceIdField{},
+				IsRequired:  true,
+			},
+			{
+				Name:        "name",
+				DisplayName: "Repository Name",
+				Description: "The new name of the repository (leave empty to keep current)",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "description",
+				DisplayName: "Description",
+				Description: "A description of the repository",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "homepage",
+				DisplayName: "Homepage",
+				Description: "A URL with more information about the repository",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "private",
+				DisplayName: "Private",
+				Description: "Whether the repository should be private (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "visibility",
+				DisplayName: "Visibility",
+				Description: "The visibility level of the repository",
+				Field: &config.Field_StringField{
+					StringField: &config.StringField{
+						Options: []*config.StringFieldOption{
+							{Value: "public", DisplayName: "Public"},
+							{Value: "private", DisplayName: "Private"},
+							{Value: "internal", DisplayName: "Internal (Enterprise only)"},
+						},
+					},
+				},
+			},
+			{
+				Name:        "has_issues",
+				DisplayName: "Has Issues",
+				Description: "Enable issues for this repository (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "has_projects",
+				DisplayName: "Has Projects",
+				Description: "Enable projects for this repository (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "has_wiki",
+				DisplayName: "Has Wiki",
+				Description: "Enable wiki for this repository (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "has_discussions",
+				DisplayName: "Has Discussions",
+				Description: "Enable discussions for this repository (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "default_branch",
+				DisplayName: "Default Branch",
+				Description: "The default branch of the repository",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "allow_squash_merge",
+				DisplayName: "Allow Squash Merge",
+				Description: "Allow squash-merging pull requests (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "allow_merge_commit",
+				DisplayName: "Allow Merge Commit",
+				Description: "Allow merging pull requests with a merge commit (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "allow_rebase_merge",
+				DisplayName: "Allow Rebase Merge",
+				Description: "Allow rebase-merging pull requests (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "allow_auto_merge",
+				DisplayName: "Allow Auto Merge",
+				Description: "Allow auto-merge on pull requests (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "delete_branch_on_merge",
+				DisplayName: "Delete Branch on Merge",
+				Description: "Automatically delete head branches after pull requests are merged (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "archived",
+				DisplayName: "Archived",
+				Description: "Archive the repository (true/false). Note: You cannot unarchive repositories through the API",
+				Field:       &config.Field_BoolField{},
+			},
+			{
+				Name:        "is_template",
+				DisplayName: "Is Template",
+				Description: "Make this repository available as a template (true/false)",
+				Field:       &config.Field_BoolField{},
+			},
+		},
+		ReturnTypes: []*config.Field{
+			{Name: "success", Field: &config.Field_BoolField{}},
+			{Name: "resource", Field: &config.Field_ResourceField{}},
+		},
+	}, o.handleUpdateRepositoryAction)
 }
 
 func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
@@ -795,4 +979,180 @@ func (o *repositoryResourceType) handleDeleteRepositoryAction(ctx context.Contex
 	)
 
 	return actions.NewReturnValues(true), annos, nil
+}
+
+func (o *repositoryResourceType) handleUpdateRepositoryAction(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	// Extract the repository resource ID using SDK helper
+	resourceID, err := actions.RequireResourceIDArg(args, "resource")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Extract the parent org resource ID using SDK helper
+	parentResourceID, err := actions.RequireResourceIDArg(args, "parent")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Parse the repo ID from the resource
+	repoID, err := strconv.ParseInt(resourceID.Resource, 10, 64)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid repository ID %s: %w", resourceID.Resource, err)
+	}
+
+	// Get the organization name from the parent resource ID
+	orgName, err := o.orgCache.GetOrgName(ctx, parentResourceID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get organization name: %w", err)
+	}
+
+	// First, get the current repository to find its name
+	repo, resp, err := o.client.Repositories.GetByID(ctx, repoID)
+	if err != nil {
+		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to get repository %d", repoID))
+	}
+
+	currentRepoName := repo.GetName()
+
+	l.Info("github-connector: updating repository via action",
+		zap.Int64("repo_id", repoID),
+		zap.String("repo_name", currentRepoName),
+		zap.String("org_name", orgName),
+	)
+
+	// Build the Repository update request
+	updateRepo := &github.Repository{}
+
+	// Track if any updates were provided
+	hasUpdates := false
+
+	// Extract optional fields using SDK helpers
+	if name, ok := actions.GetStringArg(args, "name"); ok && name != "" {
+		updateRepo.Name = github.Ptr(name)
+		hasUpdates = true
+	}
+
+	if description, ok := actions.GetStringArg(args, "description"); ok {
+		updateRepo.Description = github.Ptr(description)
+		hasUpdates = true
+	}
+
+	if homepage, ok := actions.GetStringArg(args, "homepage"); ok {
+		updateRepo.Homepage = github.Ptr(homepage)
+		hasUpdates = true
+	}
+
+	if private, ok := actions.GetBoolArg(args, "private"); ok {
+		updateRepo.Private = github.Ptr(private)
+		hasUpdates = true
+	}
+
+	if visibility, ok := actions.GetStringArg(args, "visibility"); ok && visibility != "" {
+		if visibility == "public" || visibility == "private" || visibility == "internal" {
+			updateRepo.Visibility = github.Ptr(visibility)
+			hasUpdates = true
+		} else {
+			l.Warn("github-connector: invalid visibility value, ignoring",
+				zap.String("provided_visibility", visibility),
+			)
+		}
+	}
+
+	if hasIssues, ok := actions.GetBoolArg(args, "has_issues"); ok {
+		updateRepo.HasIssues = github.Ptr(hasIssues)
+		hasUpdates = true
+	}
+
+	if hasProjects, ok := actions.GetBoolArg(args, "has_projects"); ok {
+		updateRepo.HasProjects = github.Ptr(hasProjects)
+		hasUpdates = true
+	}
+
+	if hasWiki, ok := actions.GetBoolArg(args, "has_wiki"); ok {
+		updateRepo.HasWiki = github.Ptr(hasWiki)
+		hasUpdates = true
+	}
+
+	if hasDiscussions, ok := actions.GetBoolArg(args, "has_discussions"); ok {
+		updateRepo.HasDiscussions = github.Ptr(hasDiscussions)
+		hasUpdates = true
+	}
+
+	if defaultBranch, ok := actions.GetStringArg(args, "default_branch"); ok && defaultBranch != "" {
+		updateRepo.DefaultBranch = github.Ptr(defaultBranch)
+		hasUpdates = true
+	}
+
+	if allowSquashMerge, ok := actions.GetBoolArg(args, "allow_squash_merge"); ok {
+		updateRepo.AllowSquashMerge = github.Ptr(allowSquashMerge)
+		hasUpdates = true
+	}
+
+	if allowMergeCommit, ok := actions.GetBoolArg(args, "allow_merge_commit"); ok {
+		updateRepo.AllowMergeCommit = github.Ptr(allowMergeCommit)
+		hasUpdates = true
+	}
+
+	if allowRebaseMerge, ok := actions.GetBoolArg(args, "allow_rebase_merge"); ok {
+		updateRepo.AllowRebaseMerge = github.Ptr(allowRebaseMerge)
+		hasUpdates = true
+	}
+
+	if allowAutoMerge, ok := actions.GetBoolArg(args, "allow_auto_merge"); ok {
+		updateRepo.AllowAutoMerge = github.Ptr(allowAutoMerge)
+		hasUpdates = true
+	}
+
+	if deleteBranchOnMerge, ok := actions.GetBoolArg(args, "delete_branch_on_merge"); ok {
+		updateRepo.DeleteBranchOnMerge = github.Ptr(deleteBranchOnMerge)
+		hasUpdates = true
+	}
+
+	if archived, ok := actions.GetBoolArg(args, "archived"); ok {
+		updateRepo.Archived = github.Ptr(archived)
+		hasUpdates = true
+	}
+
+	if isTemplate, ok := actions.GetBoolArg(args, "is_template"); ok {
+		updateRepo.IsTemplate = github.Ptr(isTemplate)
+		hasUpdates = true
+	}
+
+	if !hasUpdates {
+		return nil, nil, fmt.Errorf("no update fields provided")
+	}
+
+	// Update the repository via GitHub API
+	updatedRepo, resp, err := o.client.Repositories.Edit(ctx, orgName, currentRepoName, updateRepo)
+	if err != nil {
+		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to update repository %s in org %s", currentRepoName, orgName))
+	}
+
+	// Extract rate limit data for annotations
+	var annos annotations.Annotations
+	if rateLimitData, err := extractRateLimitData(resp); err == nil {
+		annos.WithRateLimiting(rateLimitData)
+	}
+
+	l.Info("github-connector: repository updated successfully via action",
+		zap.Int64("repo_id", updatedRepo.GetID()),
+		zap.String("repo_name", updatedRepo.GetName()),
+		zap.String("repo_full_name", updatedRepo.GetFullName()),
+	)
+
+	// Create the resource representation of the updated repository
+	repoResource, err := repositoryResource(ctx, updatedRepo, parentResourceID)
+	if err != nil {
+		return nil, annos, fmt.Errorf("failed to create resource representation: %w", err)
+	}
+
+	// Build return values using SDK helpers
+	resourceRv, err := actions.NewResourceReturnField("resource", repoResource)
+	if err != nil {
+		return nil, annos, err
+	}
+
+	return actions.NewReturnValues(true, resourceRv), annos, nil
 }
