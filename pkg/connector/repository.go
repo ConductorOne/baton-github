@@ -445,7 +445,7 @@ func skipGrantsForResourceType(bag *pagination.Bag) (string, error) {
 
 // ResourceActions registers the resource actions for the repository resource type.
 // This implements the ResourceActionProvider interface.
-func (o *repositoryResourceType) ResourceActions(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+func (o *repositoryResourceType) ResourceActions(ctx context.Context, registry actions.ActionRegistry) error {
 	if err := o.registerCreateRepositoryAction(ctx, registry); err != nil {
 		return err
 	}
@@ -458,7 +458,7 @@ func (o *repositoryResourceType) ResourceActions(ctx context.Context, registry a
 	return nil
 }
 
-func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Context, registry actions.ActionRegistry) error {
 	return registry.Register(ctx, &v2.BatonActionSchema{
 		Name:        "create",
 		DisplayName: "Create Repository",
@@ -625,7 +625,7 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 	}, o.handleCreateRepositoryAction)
 }
 
-func (o *repositoryResourceType) registerDeleteRepositoryAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+func (o *repositoryResourceType) registerDeleteRepositoryAction(ctx context.Context, registry actions.ActionRegistry) error {
 	return registry.Register(ctx, &v2.BatonActionSchema{
 		Name:        "delete",
 		DisplayName: "Delete Repository",
@@ -653,7 +653,7 @@ func (o *repositoryResourceType) registerDeleteRepositoryAction(ctx context.Cont
 	}, o.handleDeleteRepositoryAction)
 }
 
-func (o *repositoryResourceType) registerUpdateRepositoryAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+func (o *repositoryResourceType) registerUpdateRepositoryAction(ctx context.Context, registry actions.ActionRegistry) error {
 	return registry.Register(ctx, &v2.BatonActionSchema{
 		Name:        "update",
 		DisplayName: "Update Repository",
