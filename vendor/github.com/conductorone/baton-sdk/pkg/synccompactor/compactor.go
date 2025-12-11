@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"time"
 
 	reader_v2 "github.com/conductorone/baton-sdk/pb/c1/reader/v2"
 	"github.com/conductorone/baton-sdk/pkg/connectorstore"
@@ -35,8 +36,9 @@ type Compactor struct {
 	compactorType CompactorType
 	entries       []*CompactableSync
 
-	tmpDir  string
-	destDir string
+	tmpDir      string
+	destDir     string
+	runDuration time.Duration
 }
 
 type CompactableSync struct {
@@ -59,6 +61,12 @@ func WithTmpDir(tempDir string) Option {
 func WithCompactorType(compactorType CompactorType) Option {
 	return func(c *Compactor) {
 		c.compactorType = compactorType
+	}
+}
+
+func WithRunDuration(runDuration time.Duration) Option {
+	return func(c *Compactor) {
+		c.runDuration = runDuration
 	}
 }
 
@@ -103,7 +111,32 @@ func (c *Compactor) Compact(ctx context.Context) (*CompactableSync, error) {
 		return nil, nil
 	}
 
+	compactionStart := time.Now()
+	runCtx := ctx
+	var runCanc context.CancelFunc
+	if c.runDuration > 0 {
+		runCtx, runCanc = context.WithTimeout(ctx, c.runDuration)
+	}
+	if runCanc != nil {
+		defer runCanc()
+	}
+
+	l := ctxzap.Extract(ctx)
 	var err error
+	select {
+	case <-runCtx.Done():
+		err = context.Cause(runCtx)
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			l.Info("compaction run duration has expired, exiting compaction early")
+			return nil, fmt.Errorf("compaction run duration has expired: %w", err)
+		default:
+			l.Error("compaction context cancelled", zap.Error(err))
+			return nil, err
+		}
+	default:
+	}
+
 	// Base sync is c.entries[0], so compact all incrementals first, then apply that onto the base.
 	applied := c.entries[len(c.entries)-1]
 	for i := len(c.entries) - 2; i >= 0; i-- {
@@ -113,7 +146,6 @@ func (c *Compactor) Compact(ctx context.Context) (*CompactableSync, error) {
 		}
 	}
 
-	l := ctxzap.Extract(ctx)
 	// Grant expansion doesn't use the connector interface at all, so giving syncer an empty connector is safe... for now.
 	// If that ever changes, we should implement a file connector that is a wrapper around the reader.
 	emptyConnector, err := sdk.NewEmptyConnector()
@@ -124,12 +156,28 @@ func (c *Compactor) Compact(ctx context.Context) (*CompactableSync, error) {
 
 	// Use syncer to expand grants.
 	// TODO: Handle external resources.
+	syncOpts := []sync.SyncOpt{
+		sync.WithC1ZPath(applied.FilePath),
+		sync.WithTmpDir(c.tmpDir),
+		sync.WithSyncID(applied.SyncID),
+		sync.WithOnlyExpandGrants(),
+	}
+
+	compactionDuration := time.Since(compactionStart)
+	runDuration := c.runDuration - compactionDuration
+	l.Debug("finished compaction", zap.Duration("compaction_duration", compactionDuration))
+
+	switch {
+	case c.runDuration > 0 && runDuration < 0:
+		return nil, fmt.Errorf("unable to finish compaction sync in run duration (%s). compactions took %s", c.runDuration, compactionDuration)
+	case runDuration > 0:
+		syncOpts = append(syncOpts, sync.WithRunDuration(runDuration))
+	}
+
 	syncer, err := sync.NewSyncer(
 		ctx,
 		emptyConnector,
-		sync.WithC1ZPath(applied.FilePath),
-		sync.WithSyncID(applied.SyncID),
-		sync.WithOnlyExpandGrants(),
+		syncOpts...,
 	)
 	if err != nil {
 		l.Error("error creating syncer", zap.Error(err))
@@ -203,15 +251,15 @@ func (c *Compactor) getLatestObjects(ctx context.Context, info *CompactableSync)
 		_ = baseC1Z.Close(ctx)
 	}
 
-	latestAppliedSync, err := baseFile.GetSync(ctx, &reader_v2.SyncsReaderServiceGetSyncRequest{
+	latestAppliedSync, err := baseFile.GetSync(ctx, reader_v2.SyncsReaderServiceGetSyncRequest_builder{
 		SyncId:      info.SyncID,
 		Annotations: nil,
-	})
+	}.Build())
 	if err != nil {
 		return nil, nil, nil, cleanup, err
 	}
 
-	return latestAppliedSync.Sync, baseFile, baseC1Z, cleanup, nil
+	return latestAppliedSync.GetSync(), baseFile, baseC1Z, cleanup, nil
 }
 
 func unionSyncTypes(a, b connectorstore.SyncType) connectorstore.SyncType {
@@ -237,10 +285,18 @@ func (c *Compactor) doOneCompaction(ctx context.Context, base *CompactableSync, 
 		zap.String("applied_sync", applied.SyncID),
 		zap.String("tmp_dir", c.tmpDir),
 	)
-
 	opts := []dotc1z.C1ZOption{
-		dotc1z.WithPragma("journal_mode", "WAL"),
 		dotc1z.WithTmpDir(c.tmpDir),
+		// Performance improvements:
+		// Disable journaling.
+		dotc1z.WithPragma("journal_mode", "OFF"),
+		// Disable synchronous writes
+		dotc1z.WithPragma("synchronous", "OFF"),
+		// Use exclusive locking.
+		dotc1z.WithPragma("main.locking_mode", "EXCLUSIVE"),
+		// Use memory for temporary storage.
+		dotc1z.WithPragma("temp_store", "MEMORY"),
+		// We close this c1z after compaction, so syncer won't have these pragmas when expanding grants.
 	}
 
 	fileName := fmt.Sprintf("compacted-%s-%s.c1z", base.SyncID, applied.SyncID)
@@ -263,7 +319,7 @@ func (c *Compactor) doOneCompaction(ctx context.Context, base *CompactableSync, 
 		return nil, err
 	}
 
-	syncType := unionSyncTypes(connectorstore.SyncType(baseSync.SyncType), connectorstore.SyncType(appliedSync.SyncType))
+	syncType := unionSyncTypes(connectorstore.SyncType(baseSync.GetSyncType()), connectorstore.SyncType(appliedSync.GetSyncType()))
 
 	newSyncId, err := newFile.StartNewSync(ctx, syncType, "")
 	if err != nil {

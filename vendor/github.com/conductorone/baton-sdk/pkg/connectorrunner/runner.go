@@ -133,7 +133,7 @@ func (c *connectorRunner) processTask(ctx context.Context, task *v1.Task) error 
 	return nil
 }
 
-func (c *connectorRunner) backoff(ctx context.Context, errCount int) time.Duration {
+func (c *connectorRunner) backoff(_ context.Context, errCount int) time.Duration {
 	waitDuration := time.Duration(errCount*errCount) * time.Second
 	if waitDuration > time.Minute {
 		waitDuration = time.Minute
@@ -189,7 +189,7 @@ func (c *connectorRunner) run(ctx context.Context) error {
 				continue
 			}
 
-			l.Debug("runner: got task", zap.String("task_id", nextTask.Id), zap.String("task_type", tasks.GetType(nextTask).String()))
+			l.Debug("runner: got task", zap.String("task_id", nextTask.GetId()), zap.String("task_type", tasks.GetType(nextTask).String()))
 
 			// If we're in one-shot mode, process the task synchronously.
 			if c.oneShot {
@@ -200,7 +200,7 @@ func (c *connectorRunner) run(ctx context.Context) error {
 					l.Error(
 						"runner: error processing on-demand task",
 						zap.Error(err),
-						zap.String("task_id", nextTask.Id),
+						zap.String("task_id", nextTask.GetId()),
 						zap.String("task_type", tasks.GetType(nextTask).String()),
 					)
 					return err
@@ -210,17 +210,17 @@ func (c *connectorRunner) run(ctx context.Context) error {
 
 			// We got a task, so process it concurrently.
 			go func(t *v1.Task) {
-				l.Debug("runner: starting processing task", zap.String("task_id", t.Id), zap.String("task_type", tasks.GetType(t).String()))
+				l.Debug("runner: starting processing task", zap.String("task_id", t.GetId()), zap.String("task_type", tasks.GetType(t).String()))
 				defer sem.Release(1)
 				err := c.processTask(ctx, t)
 				if err != nil {
 					if strings.Contains(err.Error(), "grpc: the client connection is closing") {
 						stopForLoop = true
 					}
-					l.Error("runner: error processing task", zap.Error(err), zap.String("task_id", t.Id), zap.String("task_type", tasks.GetType(t).String()))
+					l.Error("runner: error processing task", zap.Error(err), zap.String("task_id", t.GetId()), zap.String("task_type", tasks.GetType(t).String()))
 					return
 				}
-				l.Debug("runner: task processed", zap.String("task_id", t.Id), zap.String("task_type", tasks.GetType(t).String()))
+				l.Debug("runner: task processed", zap.String("task_id", t.GetId()), zap.String("task_type", tasks.GetType(t).String()))
 			}(nextTask)
 
 			l.Debug("runner: dispatched task, waiting for next task", zap.Duration("wait_duration", waitDuration))
@@ -284,8 +284,13 @@ type createAccountConfig struct {
 }
 
 type invokeActionConfig struct {
-	action string
-	args   *structpb.Struct
+	action         string
+	resourceTypeID string // Optional: if set, invokes a resource-scoped action
+	args           *structpb.Struct
+}
+
+type listActionSchemasConfig struct {
+	resourceTypeID string // Optional: filter by resource type
 }
 
 type deleteResourceConfig struct {
@@ -301,6 +306,7 @@ type rotateCredentialsConfig struct {
 type eventStreamConfig struct {
 	feedId  string
 	startAt time.Time
+	cursor  string
 }
 
 type syncDifferConfig struct {
@@ -331,6 +337,7 @@ type runnerConfig struct {
 	tempDir                             string
 	createAccountConfig                 *createAccountConfig
 	invokeActionConfig                  *invokeActionConfig
+	listActionSchemasConfig             *listActionSchemasConfig
 	deleteResourceConfig                *deleteResourceConfig
 	rotateCredentialsConfig             *rotateCredentialsConfig
 	createTicketConfig                  *createTicketConfig
@@ -344,6 +351,16 @@ type runnerConfig struct {
 	externalResourceC1Z                 string
 	externalResourceEntitlementIdFilter string
 	skipEntitlementsAndGrants           bool
+	skipGrants                          bool
+	sessionStoreEnabled                 bool
+	syncResourceTypeIDs                 []string
+}
+
+func WithSessionStoreEnabled() Option {
+	return func(ctx context.Context, w *runnerConfig) error {
+		w.sessionStoreEnabled = true
+		return nil
+	}
 }
 
 // WithRateLimiterConfig sets the RateLimiterConfig for a runner.
@@ -361,14 +378,12 @@ func WithRateLimiterConfig(cfg *ratelimitV1.RateLimiterConfig) Option {
 // The `opts` map is injected into the environment in order for the service to be configured.
 func WithExternalLimiter(address string, opts map[string]string) Option {
 	return func(ctx context.Context, w *runnerConfig) error {
-		w.rlCfg = &ratelimitV1.RateLimiterConfig{
-			Type: &ratelimitV1.RateLimiterConfig_External{
-				External: &ratelimitV1.ExternalLimiter{
-					Address: address,
-					Options: opts,
-				},
-			},
-		}
+		w.rlCfg = ratelimitV1.RateLimiterConfig_builder{
+			External: ratelimitV1.ExternalLimiter_builder{
+				Address: address,
+				Options: opts,
+			}.Build(),
+		}.Build()
 
 		return nil
 	}
@@ -379,13 +394,14 @@ func WithExternalLimiter(address string, opts map[string]string) Option {
 // `usePercent` is value between 0 and 100.
 func WithSlidingMemoryLimiter(usePercent int64) Option {
 	return func(ctx context.Context, w *runnerConfig) error {
-		w.rlCfg = &ratelimitV1.RateLimiterConfig{
-			Type: &ratelimitV1.RateLimiterConfig_SlidingMem{
-				SlidingMem: &ratelimitV1.SlidingMemoryLimiter{
-					UsePercent: float64(usePercent / 100),
-				},
-			},
+		if usePercent < 0 || usePercent > 100 {
+			return fmt.Errorf("usePercent must be between 0 and 100")
 		}
+		w.rlCfg = ratelimitV1.RateLimiterConfig_builder{
+			SlidingMem: ratelimitV1.SlidingMemoryLimiter_builder{
+				UsePercent: float64(usePercent) / 100.0,
+			}.Build(),
+		}.Build()
 
 		return nil
 	}
@@ -396,14 +412,12 @@ func WithSlidingMemoryLimiter(usePercent int64) Option {
 // `period` represents the elapsed time between two instants as an int64 nanosecond count.
 func WithFixedMemoryLimiter(rate int64, period time.Duration) Option {
 	return func(ctx context.Context, w *runnerConfig) error {
-		w.rlCfg = &ratelimitV1.RateLimiterConfig{
-			Type: &ratelimitV1.RateLimiterConfig_FixedMem{
-				FixedMem: &ratelimitV1.FixedMemoryLimiter{
-					Rate:   rate,
-					Period: durationpb.New(period),
-				},
-			},
-		}
+		w.rlCfg = ratelimitV1.RateLimiterConfig_builder{
+			FixedMem: ratelimitV1.FixedMemoryLimiter_builder{
+				Rate:   rate,
+				Period: durationpb.New(period),
+			}.Build(),
+		}.Build()
 
 		return nil
 	}
@@ -467,13 +481,29 @@ func WithOnDemandCreateAccount(c1zPath string, login string, email string, profi
 	}
 }
 
-func WithOnDemandInvokeAction(c1zPath string, action string, args *structpb.Struct) Option {
+// WithOnDemandInvokeAction creates an option for invoking an action.
+// If resourceTypeID is provided, it invokes a resource-scoped action.
+func WithOnDemandInvokeAction(c1zPath string, action string, resourceTypeID string, args *structpb.Struct) Option {
 	return func(ctx context.Context, cfg *runnerConfig) error {
 		cfg.onDemand = true
 		cfg.c1zPath = c1zPath
 		cfg.invokeActionConfig = &invokeActionConfig{
-			action: action,
-			args:   args,
+			action:         action,
+			resourceTypeID: resourceTypeID,
+			args:           args,
+		}
+		return nil
+	}
+}
+
+// WithOnDemandListActionSchemas creates an option for listing action schemas.
+// If resourceTypeID is provided, it filters schemas for that specific resource type.
+func WithOnDemandListActionSchemas(c1zPath string, resourceTypeID string) Option {
+	return func(ctx context.Context, cfg *runnerConfig) error {
+		cfg.onDemand = true
+		cfg.c1zPath = c1zPath
+		cfg.listActionSchemasConfig = &listActionSchemasConfig{
+			resourceTypeID: resourceTypeID,
 		}
 		return nil
 	}
@@ -511,12 +541,13 @@ func WithOnDemandSync(c1zPath string) Option {
 	}
 }
 
-func WithOnDemandEventStream(feedId string, startAt time.Time) Option {
+func WithOnDemandEventStream(feedId string, startAt time.Time, cursor string) Option {
 	return func(ctx context.Context, cfg *runnerConfig) error {
 		cfg.onDemand = true
 		cfg.eventFeedConfig = &eventStreamConfig{
 			feedId:  feedId,
 			startAt: startAt,
+			cursor:  cursor,
 		}
 		return nil
 	}
@@ -546,6 +577,13 @@ func WithFullSyncDisabled() Option {
 func WithTargetedSyncResourceIDs(resourceIDs []string) Option {
 	return func(ctx context.Context, cfg *runnerConfig) error {
 		cfg.targetedSyncResourceIDs = resourceIDs
+		return nil
+	}
+}
+
+func WithSyncResourceTypeIDs(resourceTypeIDs []string) Option {
+	return func(ctx context.Context, cfg *runnerConfig) error {
+		cfg.syncResourceTypeIDs = resourceTypeIDs
 		return nil
 	}
 }
@@ -649,6 +687,29 @@ func WithSkipEntitlementsAndGrants(skip bool) Option {
 	}
 }
 
+func WithSkipGrants(skip bool) Option {
+	return func(ctx context.Context, cfg *runnerConfig) error {
+		if skip && len(cfg.targetedSyncResourceIDs) == 0 {
+			return fmt.Errorf("skip-grants can only be set within a targeted sync")
+		}
+		cfg.skipGrants = skip
+		return nil
+	}
+}
+
+func IsSessionStoreEnabled(ctx context.Context, options ...Option) (bool, error) {
+	cfg := &runnerConfig{}
+
+	for _, o := range options {
+		err := o(ctx, cfg)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	return cfg.sessionStoreEnabled, nil
+}
+
 // NewConnectorRunner creates a new connector runner.
 func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Option) (*connectorRunner, error) {
 	runner := &connectorRunner{}
@@ -684,6 +745,14 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 		wrapperOpts = append(wrapperOpts, connector.WithTargetedSyncResourceIDs(cfg.targetedSyncResourceIDs))
 	}
 
+	if cfg.sessionStoreEnabled {
+		wrapperOpts = append(wrapperOpts, connector.WithSessionStoreEnabled())
+	}
+
+	if len(cfg.syncResourceTypeIDs) > 0 {
+		wrapperOpts = append(wrapperOpts, connector.WithSyncResourceTypeIDs(cfg.syncResourceTypeIDs))
+	}
+
 	cw, err := connector.NewWrapper(ctx, c, wrapperOpts...)
 	if err != nil {
 		return nil, err
@@ -692,7 +761,12 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 	runner.cw = cw
 
 	if cfg.onDemand {
-		if cfg.c1zPath == "" && cfg.eventFeedConfig == nil && cfg.createTicketConfig == nil && cfg.listTicketSchemasConfig == nil && cfg.getTicketConfig == nil && cfg.bulkCreateTicketConfig == nil {
+		if cfg.c1zPath == "" &&
+			cfg.eventFeedConfig == nil &&
+			cfg.createTicketConfig == nil &&
+			cfg.listTicketSchemasConfig == nil &&
+			cfg.getTicketConfig == nil &&
+			cfg.bulkCreateTicketConfig == nil {
 			return nil, errors.New("c1zPath must be set when in on-demand mode")
 		}
 
@@ -714,7 +788,10 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 			tm = local.NewCreateAccountManager(ctx, cfg.c1zPath, cfg.createAccountConfig.login, cfg.createAccountConfig.email, cfg.createAccountConfig.profile)
 
 		case cfg.invokeActionConfig != nil:
-			tm = local.NewActionInvoker(ctx, cfg.c1zPath, cfg.invokeActionConfig.action, cfg.invokeActionConfig.args)
+			tm = local.NewActionInvoker(ctx, cfg.c1zPath, cfg.invokeActionConfig.action, cfg.invokeActionConfig.resourceTypeID, cfg.invokeActionConfig.args)
+
+		case cfg.listActionSchemasConfig != nil:
+			tm = local.NewListActionSchemas(ctx, cfg.listActionSchemasConfig.resourceTypeID)
 
 		case cfg.deleteResourceConfig != nil:
 			tm = local.NewResourceDeleter(ctx, cfg.c1zPath, cfg.deleteResourceConfig.resourceId, cfg.deleteResourceConfig.resourceType)
@@ -723,7 +800,7 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 			tm = local.NewCredentialRotator(ctx, cfg.c1zPath, cfg.rotateCredentialsConfig.resourceId, cfg.rotateCredentialsConfig.resourceType)
 
 		case cfg.eventFeedConfig != nil:
-			tm = local.NewEventFeed(ctx, cfg.eventFeedConfig.feedId, cfg.eventFeedConfig.startAt)
+			tm = local.NewEventFeed(ctx, cfg.eventFeedConfig.feedId, cfg.eventFeedConfig.startAt, cfg.eventFeedConfig.cursor)
 		case cfg.createTicketConfig != nil:
 			tm = local.NewTicket(ctx, cfg.createTicketConfig.templatePath)
 		case cfg.listTicketSchemasConfig != nil:
@@ -754,6 +831,8 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 				local.WithExternalResourceEntitlementIdFilter(cfg.externalResourceEntitlementIdFilter),
 				local.WithTargetedSyncResourceIDs(cfg.targetedSyncResourceIDs),
 				local.WithSkipEntitlementsAndGrants(cfg.skipEntitlementsAndGrants),
+				local.WithSkipGrants(cfg.skipGrants),
+				local.WithSyncResourceTypeIDs(cfg.syncResourceTypeIDs),
 			)
 			if err != nil {
 				return nil, err
@@ -766,7 +845,16 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 		return runner, nil
 	}
 
-	tm, err := c1api.NewC1TaskManager(ctx, cfg.clientID, cfg.clientSecret, cfg.tempDir, cfg.skipFullSync, cfg.externalResourceC1Z, cfg.externalResourceEntitlementIdFilter, cfg.targetedSyncResourceIDs)
+	tm, err := c1api.NewC1TaskManager(ctx,
+		cfg.clientID,
+		cfg.clientSecret,
+		cfg.tempDir,
+		cfg.skipFullSync,
+		cfg.externalResourceC1Z,
+		cfg.externalResourceEntitlementIdFilter,
+		cfg.targetedSyncResourceIDs,
+		cfg.syncResourceTypeIDs,
+	)
 	if err != nil {
 		return nil, err
 	}

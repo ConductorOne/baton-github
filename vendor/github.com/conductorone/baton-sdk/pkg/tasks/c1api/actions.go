@@ -36,9 +36,13 @@ func (c *actionListSchemasTaskHandler) HandleTask(ctx context.Context) error {
 	if t == nil {
 		return c.helpers.FinishTask(ctx, nil, nil, errors.New("action list schemas task is nil"))
 	}
-	resp, err := cc.ListActionSchemas(ctx, &v2.ListActionSchemasRequest{
+	reqBuilder := v2.ListActionSchemasRequest_builder{
 		Annotations: t.GetAnnotations(),
-	})
+	}
+	if resourceTypeID := t.GetResourceTypeId(); resourceTypeID != "" {
+		reqBuilder.ResourceTypeId = resourceTypeID
+	}
+	resp, err := cc.ListActionSchemas(ctx, reqBuilder.Build())
 	if err != nil {
 		return c.helpers.FinishTask(ctx, nil, nil, err)
 	}
@@ -78,10 +82,10 @@ func (c *actionGetSchemaTaskHandler) HandleTask(ctx context.Context) error {
 		return c.helpers.FinishTask(ctx, nil, nil, errors.New("action name required"))
 	}
 
-	resp, err := cc.GetActionSchema(ctx, &v2.GetActionSchemaRequest{
+	resp, err := cc.GetActionSchema(ctx, v2.GetActionSchemaRequest_builder{
 		Name:        t.GetName(),
 		Annotations: t.GetAnnotations(),
-	})
+	}.Build())
 	if err != nil {
 		return c.helpers.FinishTask(ctx, nil, nil, err)
 	}
@@ -120,15 +124,16 @@ func (c *actionInvokeTaskHandler) HandleTask(ctx context.Context) error {
 	if t == nil || t.GetName() == "" {
 		return c.helpers.FinishTask(ctx, nil, nil, errors.New("action name required"))
 	}
-	if t.GetArgs() == nil {
-		return c.helpers.FinishTask(ctx, nil, nil, errors.New("args required"))
-	}
 
-	resp, err := cc.InvokeAction(ctx, &v2.InvokeActionRequest{
+	reqBuilder := v2.InvokeActionRequest_builder{
 		Name:        t.GetName(),
 		Args:        t.GetArgs(),
 		Annotations: t.GetAnnotations(),
-	})
+	}
+	if resourceTypeID := t.GetResourceTypeId(); resourceTypeID != "" {
+		reqBuilder.ResourceTypeId = resourceTypeID
+	}
+	resp, err := cc.InvokeAction(ctx, reqBuilder.Build())
 	if err != nil {
 		return c.helpers.FinishTask(ctx, nil, nil, err)
 	}
@@ -168,16 +173,16 @@ func (c *actionStatusTaskHandler) HandleTask(ctx context.Context) error {
 		return c.helpers.FinishTask(ctx, nil, nil, errors.New("action id required"))
 	}
 
-	resp, err := cc.GetActionStatus(ctx, &v2.GetActionStatusRequest{
+	resp, err := cc.GetActionStatus(ctx, v2.GetActionStatusRequest_builder{
 		Name:        t.GetName(),
 		Id:          t.GetId(),
 		Annotations: t.GetAnnotations(),
-	})
+	}.Build())
 	if err != nil {
 		return c.helpers.FinishTask(ctx, nil, nil, err)
 	}
 
-	l.Debug("ActionInvoke response", zap.Any("resp", resp))
+	l.Debug("ActionStatus response", zap.Any("resp", resp))
 
 	return c.helpers.FinishTask(ctx, resp, nil, nil)
 }

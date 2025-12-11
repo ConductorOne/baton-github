@@ -6,7 +6,7 @@ import (
 	"runtime/debug"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"github.com/shirou/gopsutil/v3/host"
+	"github.com/shirou/gopsutil/v4/host"
 	"go.uber.org/zap"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -38,7 +38,11 @@ func (c *helloTaskHandler) osInfo(ctx context.Context) (*v1.BatonServiceHelloReq
 		info.VirtualizationSystem = "none"
 	}
 
-	return &v1.BatonServiceHelloRequest_OSInfo{
+	if info.PlatformVersion == "" {
+		info.PlatformVersion = info.KernelVersion
+	}
+
+	return v1.BatonServiceHelloRequest_OSInfo_builder{
 		Hostname:             info.Hostname,
 		Os:                   info.OS,
 		Platform:             info.Platform,
@@ -47,23 +51,42 @@ func (c *helloTaskHandler) osInfo(ctx context.Context) (*v1.BatonServiceHelloReq
 		KernelVersion:        info.KernelVersion,
 		KernelArch:           info.KernelArch,
 		VirtualizationSystem: info.VirtualizationSystem,
-	}, nil
+	}.Build(), nil
 }
 
 func (c *helloTaskHandler) buildInfo(ctx context.Context) *v1.BatonServiceHelloRequest_BuildInfo {
 	l := ctxzap.Extract(ctx)
+	buildInfo := v1.BatonServiceHelloRequest_BuildInfo_builder{
+		LangVersion:    "0.0.0",
+		Package:        "/dummy/path",
+		PackageVersion: "0.0.0",
+	}.Build()
 
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {
 		l.Error("failed to get build info")
-		return &v1.BatonServiceHelloRequest_BuildInfo{}
+		return buildInfo
 	}
 
-	return &v1.BatonServiceHelloRequest_BuildInfo{
-		LangVersion:    bi.GoVersion,
-		Package:        bi.Main.Path,
-		PackageVersion: bi.Main.Version,
+	if bi.Main.Path == "" {
+		l.Warn("missing build info Main.path")
+	} else {
+		buildInfo.SetPackage(bi.Main.Path)
 	}
+
+	if bi.Main.Version == "" {
+		l.Warn("missing build info Main.version")
+	} else {
+		buildInfo.SetPackageVersion(bi.Main.Version)
+	}
+
+	if bi.GoVersion == "" {
+		l.Warn("missing build info GoVersion")
+	} else {
+		buildInfo.SetLangVersion(bi.GoVersion)
+	}
+
+	return buildInfo
 }
 
 func (c *helloTaskHandler) HandleTask(ctx context.Context) error {
@@ -91,12 +114,12 @@ func (c *helloTaskHandler) HandleTask(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = c.helpers.HelloClient().Hello(ctx, &v1.BatonServiceHelloRequest{
+	_, err = c.helpers.HelloClient().Hello(ctx, v1.BatonServiceHelloRequest_builder{
 		TaskId:            taskID,
 		BuildInfo:         c.buildInfo(ctx),
 		OsInfo:            osInfo,
 		ConnectorMetadata: mdResp.GetMetadata(),
-	})
+	}.Build())
 	if err != nil {
 		l.Error("failed while sending hello", zap.Error(err))
 		return err
