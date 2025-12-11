@@ -367,7 +367,7 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 
 // ResourceActions registers the resource actions for the team resource type.
 // This implements the ResourceActionProvider interface.
-func (o *teamResourceType) ResourceActions(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+func (o *teamResourceType) ResourceActions(ctx context.Context, registry actions.ActionRegistry) error {
 	if err := o.registerCreateTeamAction(ctx, registry); err != nil {
 		return err
 	}
@@ -380,7 +380,7 @@ func (o *teamResourceType) ResourceActions(ctx context.Context, registry actions
 	return nil
 }
 
-func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registry actions.ActionRegistry) error {
 	return registry.Register(ctx, &v2.BatonActionSchema{
 		Name:        "create",
 		DisplayName: "Create Team",
@@ -434,7 +434,7 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 	}, o.handleCreateTeamAction)
 }
 
-func (o *teamResourceType) registerDeleteTeamAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+func (o *teamResourceType) registerDeleteTeamAction(ctx context.Context, registry actions.ActionRegistry) error {
 	return registry.Register(ctx, &v2.BatonActionSchema{
 		Name:        "delete",
 		DisplayName: "Delete Team",
@@ -462,7 +462,7 @@ func (o *teamResourceType) registerDeleteTeamAction(ctx context.Context, registr
 	}, o.handleDeleteTeamAction)
 }
 
-func (o *teamResourceType) registerUpdateTeamAction(ctx context.Context, registry actions.ResourceTypeActionRegistry) error {
+func (o *teamResourceType) registerUpdateTeamAction(ctx context.Context, registry actions.ActionRegistry) error {
 	return registry.Register(ctx, &v2.BatonActionSchema{
 		Name:        "update",
 		DisplayName: "Update Team",
