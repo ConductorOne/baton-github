@@ -470,7 +470,7 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 				Name:        "parent",
 				DisplayName: "Parent Organization",
 				Description: "The organization to create the repository in",
-				Field:       &config.Field_ResourceIdField{},
+				Field:       &config.Field_StringField{},
 				IsRequired:  true,
 			},
 			{
@@ -795,16 +795,31 @@ func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Contex
 		return nil, nil, err
 	}
 
-	parentResourceID, err := actions.RequireResourceIDArg(args, "parent")
+	// parentResourceID, err := actions.RequireResourceIDArg(args, "parent")
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
+
+	orgName, err := actions.RequireStringArg(args, "parent")
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Get the organization name from the parent resource ID
-	orgName, err := o.orgCache.GetOrgName(ctx, parentResourceID)
+	org, resp, err := o.client.Organizations.Get(ctx, orgName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get organization name: %w", err)
+		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to get organization %s", orgName))
 	}
+
+	parentResourceID := &v2.ResourceId{
+		ResourceType: resourceTypeOrg.Id,
+		Resource:     fmt.Sprintf("%d", org.GetID()),
+	}
+
+	// // Get the organization name from the parent resource ID
+	// orgName, err := o.orgCache.GetOrgName(ctx, parentResourceID)
+	// if err != nil {
+	// 	return nil, nil, fmt.Errorf("failed to get organization name: %w", err)
+	// }
 
 	l.Info("github-connector: creating repository via action",
 		zap.String("repo_name", name),
