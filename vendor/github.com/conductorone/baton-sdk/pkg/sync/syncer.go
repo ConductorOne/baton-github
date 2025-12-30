@@ -12,8 +12,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	native_sync "sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
@@ -48,39 +46,6 @@ var tracer = otel.Tracer("baton-sdk/sync")
 var dontFixCycles, _ = strconv.ParseBool(os.Getenv("BATON_DONT_FIX_CYCLES"))
 
 var ErrSyncNotComplete = fmt.Errorf("sync exited without finishing")
-var ErrTooManyWarnings = fmt.Errorf("too many warnings, exiting sync")
-var ErrNoSyncIDFound = fmt.Errorf("no syncID found after starting or resuming sync")
-
-// IsSyncPreservable returns true if the error returned by Sync() means that the sync artifact is useful.
-// This either means that there was no error, or that the error is recoverable (we can resume the sync and possibly succeed next time).
-func IsSyncPreservable(err error) bool {
-	if err == nil {
-		return true
-	}
-	// ErrSyncNotComplete means we hit the run duration timeout.
-	// ErrTooManyWarnings means we hit too many warnings.
-	// Both are recoverable errors.
-	if errors.Is(err, ErrSyncNotComplete) || errors.Is(err, ErrTooManyWarnings) {
-		return true
-	}
-	statusErr, ok := status.FromError(err)
-	if !ok {
-		return false
-	}
-	switch statusErr.Code() {
-	case codes.OK,
-		codes.NotFound,
-		codes.PermissionDenied,
-		codes.ResourceExhausted,
-		codes.FailedPrecondition,
-		codes.Aborted,
-		codes.Unavailable,
-		codes.Unauthenticated:
-		return true
-	default:
-		return false
-	}
-}
 
 type Syncer interface {
 	Sync(context.Context) error
@@ -255,8 +220,6 @@ type syncer struct {
 	injectSyncIDAnnotation              bool
 	setSessionStore                     sessions.SetSessionStore
 	syncResourceTypes                   []string
-	previousSyncMu                      native_sync.Mutex
-	previousSyncIDPtr                   atomic.Pointer[string]
 }
 
 const minCheckpointInterval = 10 * time.Second
@@ -280,33 +243,6 @@ func (s *syncer) Checkpoint(ctx context.Context, force bool) error {
 	}
 
 	return nil
-}
-
-func (s *syncer) getPreviousFullSyncID(ctx context.Context) (string, error) {
-	if ptr := s.previousSyncIDPtr.Load(); ptr != nil {
-		return *ptr, nil
-	}
-
-	s.previousSyncMu.Lock()
-	defer s.previousSyncMu.Unlock()
-
-	if ptr := s.previousSyncIDPtr.Load(); ptr != nil {
-		return *ptr, nil
-	}
-
-	psf, ok := s.store.(latestSyncFetcher)
-	if !ok {
-		empty := ""
-		s.previousSyncIDPtr.Store(&empty)
-		return "", nil
-	}
-
-	previousSyncID, err := psf.LatestFinishedSync(ctx, connectorstore.SyncTypeFull)
-	if err == nil {
-		s.previousSyncIDPtr.Store(&previousSyncID)
-	}
-
-	return previousSyncID, err
 }
 
 func (s *syncer) handleInitialActionForStep(ctx context.Context, a Action) {
@@ -462,7 +398,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 
 	// Set the syncID on the wrapper after we have it
 	if syncID == "" {
-		err = ErrNoSyncIDFound
+		err = errors.New("no syncID found after starting or resuming sync")
 		l.Error("no syncID found after starting or resuming sync", zap.Error(err))
 		return err
 	}
@@ -537,7 +473,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 		if len(warnings) > 10 {
 			completedActionsCount := s.state.GetCompletedActionsCount()
 			if completedActionsCount > 0 && float64(len(warnings))/float64(completedActionsCount) > 0.1 {
-				return fmt.Errorf("%w: warnings: %v completed actions: %d", ErrTooManyWarnings, warnings, completedActionsCount)
+				return fmt.Errorf("too many warnings, exiting sync. warnings: %v completed actions: %d", warnings, completedActionsCount)
 			}
 		}
 		select {
@@ -907,12 +843,6 @@ func validateSyncResourceTypesFilter(resourceTypesFilter []string, validResource
 	return nil
 }
 
-func (s *syncer) hasChildResources(resource *v2.Resource) bool {
-	annos := annotations.Annotations(resource.GetAnnotations())
-
-	return annos.Contains((*v2.ChildResourceType)(nil))
-}
-
 // getSubResources fetches the sub resource types from a resources' annotations.
 func (s *syncer) getSubResources(ctx context.Context, parent *v2.Resource) error {
 	ctx, span := tracer.Start(ctx, "syncer.getSubResources")
@@ -1134,39 +1064,25 @@ func (s *syncer) syncResources(ctx context.Context) error {
 
 	bulkPutResoruces := []*v2.Resource{}
 	for _, r := range resp.GetList() {
-		validatedResource := false
-
 		// Check if we've already synced this resource, skip it if we have
 		_, err = s.store.GetResource(ctx, reader_v2.ResourcesReaderServiceGetResourceRequest_builder{
 			ResourceId: v2.ResourceId_builder{ResourceType: r.GetId().GetResourceType(), Resource: r.GetId().GetResource()}.Build(),
 		}.Build())
 		if err == nil {
-			err = s.validateResourceTraits(ctx, r)
-			if err != nil {
-				return err
-			}
-			validatedResource = true
-
-			// We must *ALSO* check if we have any child resources.
-			if !s.hasChildResources(r) {
-				// Since we only have the resource type IDs of child resources,
-				// we can't tell if we already have synced those child resources.
-				// Those children may also have their own child resources,
-				// so we are conservative here and just re-sync this resource.
-				continue
-			}
+			continue
 		}
 
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 
-		if !validatedResource {
-			err = s.validateResourceTraits(ctx, r)
-			if err != nil {
-				return err
-			}
+		err = s.validateResourceTraits(ctx, r)
+		if err != nil {
+			return err
 		}
+
+		// Set the resource creation source
+		r.SetCreationSource(v2.Resource_CREATION_SOURCE_CONNECTOR_LIST_RESOURCES)
 
 		bulkPutResoruces = append(bulkPutResoruces, r)
 
@@ -1944,9 +1860,14 @@ func (s *syncer) fetchResourceForPreviousSync(ctx context.Context, resourceID *v
 
 	l := ctxzap.Extract(ctx)
 
-	previousSyncID, err := s.getPreviousFullSyncID(ctx)
-	if err != nil {
-		return "", nil, err
+	var previousSyncID string
+	var err error
+
+	if psf, ok := s.store.(latestSyncFetcher); ok {
+		previousSyncID, err = psf.LatestFinishedSync(ctx, connectorstore.SyncTypeFull)
+		if err != nil {
+			return "", nil, err
+		}
 	}
 
 	if previousSyncID == "" {
@@ -2011,7 +1932,6 @@ func (s *syncer) fetchEtaggedGrantsForResource(
 	var ret []*v2.Grant
 
 	// No previous etag, so an etag match is not possible
-	// TODO(kans): do the request again to get the grants, but this time don't use the etag match!
 	if prevEtag == nil {
 		return nil, false, errors.New("connector returned an etag match but there is no previous sync generation to use")
 	}
@@ -2518,11 +2438,6 @@ func (s *syncer) listExternalEntitlementsForResource(ctx context.Context, resour
 			break
 		}
 	}
-	for _, ent := range ents {
-		annos := annotations.Annotations(ent.GetAnnotations())
-		annos.Update(&v2.EntitlementImmutable{})
-		ent.SetAnnotations(annos)
-	}
 	return ents, nil
 }
 
@@ -2540,12 +2455,6 @@ func (s *syncer) listExternalGrantsForEntitlement(ctx context.Context, ent *v2.E
 			}
 			grants := grantsForEntitlementResp.GetList()
 			if len(grants) > 0 {
-				// Add immutable annotation to external resource grants.
-				for _, grant := range grants {
-					annos := annotations.Annotations(grant.GetAnnotations())
-					annos.Update(&v2.GrantImmutable{})
-					grant.SetAnnotations(annos)
-				}
 				if !yield(grants, err) {
 					return
 				}
@@ -2977,14 +2886,14 @@ func (s *syncer) Close(ctx context.Context) error {
 
 	var err error
 	if s.store != nil {
-		err = s.store.Close(ctx)
+		err = s.store.Close()
 		if err != nil {
 			return fmt.Errorf("error closing store: %w", err)
 		}
 	}
 
 	if s.externalResourceReader != nil {
-		err = s.externalResourceReader.Close(ctx)
+		err = s.externalResourceReader.Close()
 		if err != nil {
 			return fmt.Errorf("error closing external resource reader: %w", err)
 		}

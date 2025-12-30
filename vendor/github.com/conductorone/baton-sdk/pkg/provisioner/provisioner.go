@@ -34,10 +34,9 @@ type Provisioner struct {
 
 	revokeGrantID string
 
-	createAccountLogin        string
-	createAccountEmail        string
-	createAccountProfile      *structpb.Struct
-	createAccountResourceType string
+	createAccountLogin   string
+	createAccountEmail   string
+	createAccountProfile *structpb.Struct
 
 	deleteResourceID   string
 	deleteResourceType string
@@ -119,7 +118,7 @@ func (p *Provisioner) Close(ctx context.Context) error {
 
 	var err error
 	if p.store != nil {
-		storeErr := p.store.Close(ctx)
+		storeErr := p.store.Close()
 		if storeErr != nil {
 			err = errors.Join(err, storeErr)
 		}
@@ -184,7 +183,7 @@ func (p *Provisioner) grant(ctx context.Context) error {
 		DisplayName: principal.GetResource().GetDisplayName(),
 		Annotations: principal.GetResource().GetAnnotations(),
 		Description: principal.GetResource().GetDescription(),
-		ExternalId:  principal.GetResource().GetExternalId(), //nolint:staticcheck // Deprecated.
+		ExternalId:  principal.GetResource().GetExternalId(),
 		// Omit parent resource ID so that behavior is the same as ConductorOne's provisioning mode
 		ParentResourceId: nil,
 	}.Build()
@@ -247,7 +246,7 @@ func (p *Provisioner) revoke(ctx context.Context) error {
 		DisplayName: principal.GetResource().GetDisplayName(),
 		Annotations: principal.GetResource().GetAnnotations(),
 		Description: principal.GetResource().GetDescription(),
-		ExternalId:  principal.GetResource().GetExternalId(), //nolint:staticcheck // Deprecated.
+		ExternalId:  principal.GetResource().GetExternalId(),
 		// Omit parent resource ID so that behavior is the same as ConductorOne's provisioning mode
 		ParentResourceId: nil,
 	}.Build()
@@ -286,7 +285,6 @@ func (p *Provisioner) createAccount(ctx context.Context) error {
 	}
 
 	_, err = p.connector.CreateAccount(ctx, v2.CreateAccountRequest_builder{
-		ResourceTypeId: p.createAccountResourceType,
 		AccountInfo: v2.AccountInfo_builder{
 			Emails:  emails,
 			Login:   p.createAccountLogin,
@@ -299,11 +297,7 @@ func (p *Provisioner) createAccount(ctx context.Context) error {
 		return err
 	}
 
-	l.Debug("account created",
-		zap.String("login", p.createAccountLogin),
-		zap.String("email", p.createAccountEmail),
-		zap.String("resource_type", p.createAccountResourceType),
-	)
+	l.Debug("account created", zap.String("login", p.createAccountLogin), zap.String("email", p.createAccountEmail))
 
 	return nil
 }
@@ -379,14 +373,13 @@ func NewResourceDeleter(c types.ConnectorClient, dbPath string, resourceId strin
 	}
 }
 
-func NewCreateAccountManager(c types.ConnectorClient, dbPath string, login string, email string, profile *structpb.Struct, resourceType string) *Provisioner {
+func NewCreateAccountManager(c types.ConnectorClient, dbPath string, login string, email string, profile *structpb.Struct) *Provisioner {
 	return &Provisioner{
-		dbPath:                    dbPath,
-		connector:                 c,
-		createAccountLogin:        login,
-		createAccountEmail:        email,
-		createAccountProfile:      profile,
-		createAccountResourceType: resourceType,
+		dbPath:               dbPath,
+		connector:            c,
+		createAccountLogin:   login,
+		createAccountEmail:   email,
+		createAccountProfile: profile,
 	}
 }
 

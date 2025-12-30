@@ -216,8 +216,7 @@ func (c *C1File) Clear(ctx context.Context, opt ...sessions.SessionStoreOption) 
 	q = q.Where(goqu.C("sync_id").Eq(bag.SyncID))
 
 	if bag.Prefix != "" {
-		pattern := escapeLike(bag.Prefix) + "%"
-		q = q.Where(goqu.L("key LIKE ? ESCAPE '\\'", pattern))
+		q = q.Where(goqu.C("key").Like(escapeLike(bag.Prefix) + "%"))
 	}
 
 	sql, params, err := q.ToSQL()
@@ -367,8 +366,7 @@ func (c *C1File) getAllChunk(ctx context.Context, pageToken string, sizeLimit in
 		Limit(100)
 
 	if bag.Prefix != "" {
-		pattern := escapeLike(bag.Prefix) + "%"
-		q = q.Where(goqu.L("key LIKE ? ESCAPE '\\'", pattern))
+		q = q.Where(goqu.C("key").Like(escapeLike(bag.Prefix) + "%"))
 	}
 
 	if pageToken != "" {

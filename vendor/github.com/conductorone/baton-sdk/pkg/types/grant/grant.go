@@ -36,10 +36,9 @@ func WithGrantMetadata(metadata map[string]interface{}) GrantOption {
 	}
 }
 
-// WithExternalPrincipalID: Deprecated. This field is no longer used.
 func WithExternalPrincipalID(externalID *v2.ExternalId) GrantOption {
 	return func(g *v2.Grant) error {
-		g.GetPrincipal().SetExternalId(externalID) //nolint:staticcheck // Deprecated.
+		g.GetPrincipal().SetExternalId(externalID)
 		return nil
 	}
 }

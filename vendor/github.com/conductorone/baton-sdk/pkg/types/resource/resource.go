@@ -9,8 +9,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/sessions"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -31,10 +29,9 @@ func WithAnnotation(msgs ...proto.Message) ResourceOption {
 	}
 }
 
-// WithExternalID: Deprecated. This field is no longer used.
 func WithExternalID(externalID *v2.ExternalId) ResourceOption {
 	return func(r *v2.Resource) error {
-		r.SetExternalId(externalID) //nolint:staticcheck // Deprecated.
+		r.SetExternalId(externalID)
 		return nil
 	}
 }
@@ -126,39 +123,6 @@ func WithRoleTrait(opts ...RoleTraitOption) ResourceOption {
 			if err != nil {
 				return err
 			}
-		}
-
-		annos.Update(rt)
-		r.SetAnnotations(annos)
-
-		return nil
-	}
-}
-
-func WithScopeBindingTrait(opts ...ScopeBindingTraitOption) ResourceOption {
-	return func(r *v2.Resource) error {
-		rt := &v2.ScopeBindingTrait{}
-
-		annos := annotations.Annotations(r.GetAnnotations())
-		_, err := annos.Pick(rt)
-		if err != nil {
-			return err
-		}
-
-		for _, o := range opts {
-			err := o(rt)
-			if err != nil {
-				return err
-			}
-		}
-
-		roleId := rt.GetRoleId()
-		scopeResourceId := rt.GetScopeResourceId()
-		if roleId == nil {
-			return status.Errorf(codes.InvalidArgument, "role ID is required for scope binding trait")
-		}
-		if scopeResourceId == nil {
-			return status.Errorf(codes.InvalidArgument, "scope resource ID is required for scope binding trait")
 		}
 
 		annos.Update(rt)
@@ -331,24 +295,6 @@ func NewRoleResource(
 	opts ...ResourceOption,
 ) (*v2.Resource, error) {
 	opts = append(opts, WithRoleTrait(roleTraitOpts...))
-
-	ret, err := NewResource(name, resourceType, objectID, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	return ret, nil
-}
-
-// NewScopeBindingResource returns a new resource instance with a configured scope binding trait.
-func NewScopeBindingResource(
-	name string,
-	resourceType *v2.ResourceType,
-	objectID any,
-	scopeBindingOpts []ScopeBindingTraitOption,
-	opts ...ResourceOption,
-) (*v2.Resource, error) {
-	opts = append(opts, WithScopeBindingTrait(scopeBindingOpts...))
 
 	ret, err := NewResource(name, resourceType, objectID, opts...)
 	if err != nil {

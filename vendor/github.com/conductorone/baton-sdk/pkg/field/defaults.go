@@ -49,12 +49,6 @@ var (
 		WithHidden(true),
 		WithDescription("JSON-formatted object of map keys and values like '{ 'key': 'value' }'"),
 		WithPersistent(true), WithExportTarget(ExportTargetNone))
-	createAccountResourceTypeField = StringField("create-account-resource-type",
-		WithHidden(true),
-		WithDescription("The resource type ID of the account to create"),
-		WithPersistent(true),
-		WithExportTarget(ExportTargetNone),
-	)
 	deleteResourceField     = StringField("delete-resource", WithHidden(true), WithDescription("The id of the resource to delete"), WithPersistent(true), WithExportTarget(ExportTargetNone))
 	deleteResourceTypeField = StringField("delete-resource-type", WithHidden(true), WithDescription("The type of the resource to delete"), WithPersistent(true), WithExportTarget(ExportTargetNone))
 	eventFeedField          = StringField("event-feed", WithHidden(true), WithDescription("Read feed events to stdout"), WithPersistent(true), WithExportTarget(ExportTargetNone))
@@ -290,25 +284,6 @@ var (
 		WithExportTarget(ExportTargetOps),
 		WithHidden(true),
 		WithPersistent(true))
-
-	healthCheckField = BoolField("health-check",
-		WithDescription("Enable the HTTP health check endpoint"),
-		WithDefaultValue(false),
-		WithPersistent(true),
-		WithExportTarget(ExportTargetOps))
-
-	healthCheckPortField = IntField("health-check-port",
-		WithDescription("Port for the HTTP health check endpoint"),
-		WithDefaultValue(8081),
-		WithPersistent(true),
-		WithExportTarget(ExportTargetOps))
-
-	healthCheckBindAddressField = StringField("health-check-bind-address",
-		WithDescription("Bind address for health check server (127.0.0.1 for localhost-only)"),
-		WithDefaultValue("127.0.0.1"),
-		WithPersistent(true),
-		WithHidden(true),
-		WithExportTarget(ExportTargetOps))
 )
 
 func LambdaServerFields() []SchemaField {
@@ -340,7 +315,6 @@ var DefaultFields = []SchemaField{
 	createAccountEmailField,
 	createAccountLoginField,
 	createAccountProfileField,
-	createAccountResourceTypeField,
 	deleteResourceField,
 	deleteResourceTypeField,
 	eventFeedField,
@@ -392,10 +366,6 @@ var DefaultFields = []SchemaField{
 	otelLoggingDisabled,
 
 	authMethod,
-
-	healthCheckField,
-	healthCheckPortField,
-	healthCheckBindAddressField,
 }
 
 func IsFieldAmongDefaultList(f SchemaField) bool {

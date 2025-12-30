@@ -83,11 +83,6 @@ type hasPrincipalResourceTypeIDsListRequest interface {
 	GetPrincipalResourceTypeIds() []string
 }
 
-type hasParentResourceIdListRequest interface {
-	listRequest
-	GetParentResourceId() *v2.ResourceId
-}
-
 type protoHasID interface {
 	proto.Message
 	GetId() string
@@ -194,14 +189,6 @@ func listConnectorObjects[T proto.Message](ctx context.Context, c *C1File, table
 		}
 	}
 
-	if parentResourceIdReq, ok := req.(hasParentResourceIdListRequest); ok {
-		p := parentResourceIdReq.GetParentResourceId()
-		if p != nil && p.GetResource() != "" {
-			q = q.Where(goqu.C("parent_resource_id").Eq(p.GetResource()))
-			q = q.Where(goqu.C("parent_resource_type_id").Eq(p.GetResourceType()))
-		}
-	}
-
 	// If a sync is running, be sure we only select from the current values
 	switch {
 	case reqSyncID != "":
@@ -292,8 +279,7 @@ func listConnectorObjects[T proto.Message](ctx context.Context, c *C1File, table
 	return ret, nextPageToken, nil
 }
 
-// This is required for sync diffs to work.  Its not much slower.
-var protoMarshaler = proto.MarshalOptions{Deterministic: true}
+var protoMarshaler = proto.MarshalOptions{Deterministic: false}
 
 // prepareSingleConnectorObjectRow processes a single message and returns the prepared record.
 func prepareSingleConnectorObjectRow[T proto.Message](
@@ -358,8 +344,8 @@ func prepareConnectorObjectRowsParallel[T proto.Message](
 
 	protoMarshallers := make([]proto.MarshalOptions, numWorkers)
 	for i := range numWorkers {
-		// Deterministic marshaling is required for sync diffs to work.  Its not much slower.
-		protoMarshallers[i] = proto.MarshalOptions{Deterministic: true}
+		// Don't enable deterministic marshaling, as it sorts keys in lexicographical order which hurts performance.
+		protoMarshallers[i] = proto.MarshalOptions{}
 	}
 
 	rows := make([]*goqu.Record, len(msgs))

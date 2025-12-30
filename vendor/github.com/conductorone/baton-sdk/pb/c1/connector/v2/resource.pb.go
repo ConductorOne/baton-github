@@ -35,7 +35,6 @@ const (
 	ResourceType_TRAIT_APP              ResourceType_Trait = 4
 	ResourceType_TRAIT_SECRET           ResourceType_Trait = 5
 	ResourceType_TRAIT_SECURITY_INSIGHT ResourceType_Trait = 6
-	ResourceType_TRAIT_SCOPE_BINDING    ResourceType_Trait = 7
 )
 
 // Enum value maps for ResourceType_Trait.
@@ -48,7 +47,6 @@ var (
 		4: "TRAIT_APP",
 		5: "TRAIT_SECRET",
 		6: "TRAIT_SECURITY_INSIGHT",
-		7: "TRAIT_SCOPE_BINDING",
 	}
 	ResourceType_Trait_value = map[string]int32{
 		"TRAIT_UNSPECIFIED":      0,
@@ -58,7 +56,6 @@ var (
 		"TRAIT_APP":              4,
 		"TRAIT_SECRET":           5,
 		"TRAIT_SECURITY_INSIGHT": 6,
-		"TRAIT_SCOPE_BINDING":    7,
 	}
 )
 
@@ -84,6 +81,7 @@ func (x ResourceType_Trait) Number() protoreflect.EnumNumber {
 	return protoreflect.EnumNumber(x)
 }
 
+// FIXME(mstanbCO): call this something else? Should it just be a bool? Possibly just use an annotation?
 type Resource_CreationSource int32
 
 const (
@@ -1880,7 +1878,6 @@ type CreateAccountRequest struct {
 	AccountInfo       *AccountInfo           `protobuf:"bytes,1,opt,name=account_info,json=accountInfo,proto3" json:"account_info,omitempty"`
 	CredentialOptions *CredentialOptions     `protobuf:"bytes,2,opt,name=credential_options,json=credentialOptions,proto3" json:"credential_options,omitempty"`
 	EncryptionConfigs []*EncryptionConfig    `protobuf:"bytes,3,rep,name=encryption_configs,json=encryptionConfigs,proto3" json:"encryption_configs,omitempty"`
-	ResourceTypeId    string                 `protobuf:"bytes,4,opt,name=resource_type_id,json=resourceTypeId,proto3" json:"resource_type_id,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -1931,13 +1928,6 @@ func (x *CreateAccountRequest) GetEncryptionConfigs() []*EncryptionConfig {
 	return nil
 }
 
-func (x *CreateAccountRequest) GetResourceTypeId() string {
-	if x != nil {
-		return x.ResourceTypeId
-	}
-	return ""
-}
-
 func (x *CreateAccountRequest) SetAccountInfo(v *AccountInfo) {
 	x.AccountInfo = v
 }
@@ -1948,10 +1938,6 @@ func (x *CreateAccountRequest) SetCredentialOptions(v *CredentialOptions) {
 
 func (x *CreateAccountRequest) SetEncryptionConfigs(v []*EncryptionConfig) {
 	x.EncryptionConfigs = v
-}
-
-func (x *CreateAccountRequest) SetResourceTypeId(v string) {
-	x.ResourceTypeId = v
 }
 
 func (x *CreateAccountRequest) HasAccountInfo() bool {
@@ -1982,7 +1968,6 @@ type CreateAccountRequest_builder struct {
 	AccountInfo       *AccountInfo
 	CredentialOptions *CredentialOptions
 	EncryptionConfigs []*EncryptionConfig
-	ResourceTypeId    string
 }
 
 func (b0 CreateAccountRequest_builder) Build() *CreateAccountRequest {
@@ -1992,7 +1977,6 @@ func (b0 CreateAccountRequest_builder) Build() *CreateAccountRequest {
 	x.AccountInfo = b.AccountInfo
 	x.CredentialOptions = b.CredentialOptions
 	x.EncryptionConfigs = b.EncryptionConfigs
-	x.ResourceTypeId = b.ResourceTypeId
 	return m0
 }
 
@@ -2822,23 +2806,17 @@ func (b0 ResourceId_builder) Build() *ResourceId {
 }
 
 type Resource struct {
-	state            protoimpl.MessageState `protogen:"hybrid.v1"`
-	Id               *ResourceId            `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	ParentResourceId *ResourceId            `protobuf:"bytes,2,opt,name=parent_resource_id,json=parentResourceId,proto3" json:"parent_resource_id,omitempty"`
-	DisplayName      string                 `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
-	Annotations      []*anypb.Any           `protobuf:"bytes,4,rep,name=annotations,proto3" json:"annotations,omitempty"`
-	Description      string                 `protobuf:"bytes,5,opt,name=description,proto3" json:"description,omitempty"`
-	BatonResource    bool                   `protobuf:"varint,6,opt,name=baton_resource,json=batonResource,proto3" json:"baton_resource,omitempty"`
-	// Deprecated. This is no longer used.
-	//
-	// Deprecated: Marked as deprecated in c1/connector/v2/resource.proto.
-	ExternalId *ExternalId `protobuf:"bytes,7,opt,name=external_id,json=externalId,proto3" json:"external_id,omitempty"`
-	// Deprecated. This is no longer used.
-	//
-	// Deprecated: Marked as deprecated in c1/connector/v2/resource.proto.
-	CreationSource Resource_CreationSource `protobuf:"varint,8,opt,name=creation_source,json=creationSource,proto3,enum=c1.connector.v2.Resource_CreationSource" json:"creation_source,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state            protoimpl.MessageState  `protogen:"hybrid.v1"`
+	Id               *ResourceId             `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ParentResourceId *ResourceId             `protobuf:"bytes,2,opt,name=parent_resource_id,json=parentResourceId,proto3" json:"parent_resource_id,omitempty"`
+	DisplayName      string                  `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	Annotations      []*anypb.Any            `protobuf:"bytes,4,rep,name=annotations,proto3" json:"annotations,omitempty"`
+	Description      string                  `protobuf:"bytes,5,opt,name=description,proto3" json:"description,omitempty"`
+	BatonResource    bool                    `protobuf:"varint,6,opt,name=baton_resource,json=batonResource,proto3" json:"baton_resource,omitempty"`
+	ExternalId       *ExternalId             `protobuf:"bytes,7,opt,name=external_id,json=externalId,proto3" json:"external_id,omitempty"`
+	CreationSource   Resource_CreationSource `protobuf:"varint,8,opt,name=creation_source,json=creationSource,proto3,enum=c1.connector.v2.Resource_CreationSource" json:"creation_source,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Resource) Reset() {
@@ -2908,7 +2886,6 @@ func (x *Resource) GetBatonResource() bool {
 	return false
 }
 
-// Deprecated: Marked as deprecated in c1/connector/v2/resource.proto.
 func (x *Resource) GetExternalId() *ExternalId {
 	if x != nil {
 		return x.ExternalId
@@ -2916,7 +2893,6 @@ func (x *Resource) GetExternalId() *ExternalId {
 	return nil
 }
 
-// Deprecated: Marked as deprecated in c1/connector/v2/resource.proto.
 func (x *Resource) GetCreationSource() Resource_CreationSource {
 	if x != nil {
 		return x.CreationSource
@@ -2948,12 +2924,10 @@ func (x *Resource) SetBatonResource(v bool) {
 	x.BatonResource = v
 }
 
-// Deprecated: Marked as deprecated in c1/connector/v2/resource.proto.
 func (x *Resource) SetExternalId(v *ExternalId) {
 	x.ExternalId = v
 }
 
-// Deprecated: Marked as deprecated in c1/connector/v2/resource.proto.
 func (x *Resource) SetCreationSource(v Resource_CreationSource) {
 	x.CreationSource = v
 }
@@ -2972,7 +2946,6 @@ func (x *Resource) HasParentResourceId() bool {
 	return x.ParentResourceId != nil
 }
 
-// Deprecated: Marked as deprecated in c1/connector/v2/resource.proto.
 func (x *Resource) HasExternalId() bool {
 	if x == nil {
 		return false
@@ -2988,7 +2961,6 @@ func (x *Resource) ClearParentResourceId() {
 	x.ParentResourceId = nil
 }
 
-// Deprecated: Marked as deprecated in c1/connector/v2/resource.proto.
 func (x *Resource) ClearExternalId() {
 	x.ExternalId = nil
 }
@@ -3002,14 +2974,8 @@ type Resource_builder struct {
 	Annotations      []*anypb.Any
 	Description      string
 	BatonResource    bool
-	// Deprecated. This is no longer used.
-	//
-	// Deprecated: Marked as deprecated in c1/connector/v2/resource.proto.
-	ExternalId *ExternalId
-	// Deprecated. This is no longer used.
-	//
-	// Deprecated: Marked as deprecated in c1/connector/v2/resource.proto.
-	CreationSource Resource_CreationSource
+	ExternalId       *ExternalId
+	CreationSource   Resource_CreationSource
 }
 
 func (b0 Resource_builder) Build() *Resource {
@@ -4473,7 +4439,7 @@ var File_c1_connector_v2_resource_proto protoreflect.FileDescriptor
 
 const file_c1_connector_v2_resource_proto_rawDesc = "" +
 	"\n" +
-	"\x1ec1/connector/v2/resource.proto\x12\x0fc1.connector.v2\x1a\x19google/protobuf/any.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x17validate/validate.proto\"\xea\x03\n" +
+	"\x1ec1/connector/v2/resource.proto\x12\x0fc1.connector.v2\x1a\x19google/protobuf/any.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x17validate/validate.proto\"\xd1\x03\n" +
 	"\fResourceType\x12\x1a\n" +
 	"\x02id\x18\x01 \x01(\tB\n" +
 	"\xfaB\ar\x05 \x01(\x80\bR\x02id\x120\n" +
@@ -4483,7 +4449,7 @@ const file_c1_connector_v2_resource_proto_rawDesc = "" +
 	"\vannotations\x18\x04 \x03(\v2\x14.google.protobuf.AnyR\vannotations\x12/\n" +
 	"\vdescription\x18\x05 \x01(\tB\r\xfaB\n" +
 	"r\b \x01(\x80 \xd0\x01\x01R\vdescription\x12-\n" +
-	"\x12sourced_externally\x18\x06 \x01(\bR\x11sourcedExternally\"\xa5\x01\n" +
+	"\x12sourced_externally\x18\x06 \x01(\bR\x11sourcedExternally\"\x8c\x01\n" +
 	"\x05Trait\x12\x15\n" +
 	"\x11TRAIT_UNSPECIFIED\x10\x00\x12\x0e\n" +
 	"\n" +
@@ -4493,8 +4459,7 @@ const file_c1_connector_v2_resource_proto_rawDesc = "" +
 	"TRAIT_ROLE\x10\x03\x12\r\n" +
 	"\tTRAIT_APP\x10\x04\x12\x10\n" +
 	"\fTRAIT_SECRET\x10\x05\x12\x1a\n" +
-	"\x16TRAIT_SECURITY_INSIGHT\x10\x06\x12\x17\n" +
-	"\x13TRAIT_SCOPE_BINDING\x10\a\"\xa6\x02\n" +
+	"\x16TRAIT_SECURITY_INSIGHT\x10\x06\"\xa6\x02\n" +
 	",ResourceTypesServiceListResourceTypesRequest\x121\n" +
 	"\x06parent\x18\x01 \x01(\v2\x19.c1.connector.v2.ResourceR\x06parent\x12'\n" +
 	"\tpage_size\x18\x02 \x01(\rB\n" +
@@ -4580,13 +4545,11 @@ const file_c1_connector_v2_resource_proto_rawDesc = "" +
 	"\aoptions\"L\n" +
 	"\x12PasswordConstraint\x12\x19\n" +
 	"\bchar_set\x18\x01 \x01(\tR\acharSet\x12\x1b\n" +
-	"\tmin_count\x18\x02 \x01(\rR\bminCount\"\xb5\x02\n" +
+	"\tmin_count\x18\x02 \x01(\rR\bminCount\"\xfc\x01\n" +
 	"\x14CreateAccountRequest\x12?\n" +
 	"\faccount_info\x18\x01 \x01(\v2\x1c.c1.connector.v2.AccountInfoR\vaccountInfo\x12Q\n" +
 	"\x12credential_options\x18\x02 \x01(\v2\".c1.connector.v2.CredentialOptionsR\x11credentialOptions\x12P\n" +
-	"\x12encryption_configs\x18\x03 \x03(\v2!.c1.connector.v2.EncryptionConfigR\x11encryptionConfigs\x127\n" +
-	"\x10resource_type_id\x18\x04 \x01(\tB\r\xfaB\n" +
-	"r\b \x01(\x80\b\xd0\x01\x01R\x0eresourceTypeId\"\xcc\b\n" +
+	"\x12encryption_configs\x18\x03 \x03(\v2!.c1.connector.v2.EncryptionConfigR\x11encryptionConfigs\"\xcc\b\n" +
 	"\x15CreateAccountResponse\x12P\n" +
 	"\asuccess\x18d \x01(\v24.c1.connector.v2.CreateAccountResponse.SuccessResultH\x00R\asuccess\x12f\n" +
 	"\x0faction_required\x18e \x01(\v2;.c1.connector.v2.CreateAccountResponse.ActionRequiredResultH\x00R\x0eactionRequired\x12c\n" +
@@ -4636,7 +4599,7 @@ const file_c1_connector_v2_resource_proto_rawDesc = "" +
 	"\xfaB\ar\x05 \x01(\x80\bR\fresourceType\x12&\n" +
 	"\bresource\x18\x02 \x01(\tB\n" +
 	"\xfaB\ar\x05 \x01(\x80\bR\bresource\x12%\n" +
-	"\x0ebaton_resource\x18\x03 \x01(\bR\rbatonResource\"\xf8\x04\n" +
+	"\x0ebaton_resource\x18\x03 \x01(\bR\rbatonResource\"\xf0\x04\n" +
 	"\bResource\x12+\n" +
 	"\x02id\x18\x01 \x01(\v2\x1b.c1.connector.v2.ResourceIdR\x02id\x12I\n" +
 	"\x12parent_resource_id\x18\x02 \x01(\v2\x1b.c1.connector.v2.ResourceIdR\x10parentResourceId\x120\n" +
@@ -4645,10 +4608,10 @@ const file_c1_connector_v2_resource_proto_rawDesc = "" +
 	"\vannotations\x18\x04 \x03(\v2\x14.google.protobuf.AnyR\vannotations\x12/\n" +
 	"\vdescription\x18\x05 \x01(\tB\r\xfaB\n" +
 	"r\b \x01(\x80\x10\xd0\x01\x01R\vdescription\x12%\n" +
-	"\x0ebaton_resource\x18\x06 \x01(\bR\rbatonResource\x12@\n" +
-	"\vexternal_id\x18\a \x01(\v2\x1b.c1.connector.v2.ExternalIdB\x02\x18\x01R\n" +
-	"externalId\x12U\n" +
-	"\x0fcreation_source\x18\b \x01(\x0e2(.c1.connector.v2.Resource.CreationSourceB\x02\x18\x01R\x0ecreationSource\"\x98\x01\n" +
+	"\x0ebaton_resource\x18\x06 \x01(\bR\rbatonResource\x12<\n" +
+	"\vexternal_id\x18\a \x01(\v2\x1b.c1.connector.v2.ExternalIdR\n" +
+	"externalId\x12Q\n" +
+	"\x0fcreation_source\x18\b \x01(\x0e2(.c1.connector.v2.Resource.CreationSourceR\x0ecreationSource\"\x98\x01\n" +
 	"\x0eCreationSource\x12\x1f\n" +
 	"\x1bCREATION_SOURCE_UNSPECIFIED\x10\x00\x12,\n" +
 	"(CREATION_SOURCE_CONNECTOR_LIST_RESOURCES\x10\x01\x127\n" +

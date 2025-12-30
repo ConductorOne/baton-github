@@ -68,6 +68,7 @@ type builder struct {
 	metadataProvider        MetadataProvider
 	validateProvider        ValidateProvider
 	ticketManager           TicketManagerLimited
+	accountManager          AccountManagerLimited
 	resourceSyncers         map[string]ResourceSyncerV2
 	resourceProvisioners    map[string]ResourceProvisionerV2Limited
 	resourceManagers        map[string]ResourceManagerV2Limited
@@ -75,8 +76,8 @@ type builder struct {
 	resourceTargetedSyncers map[string]ResourceTargetedSyncerLimited
 	credentialManagers      map[string]CredentialManagerLimited
 	eventFeeds              map[string]EventFeed
-	accountManagers         map[string]AccountManagerLimited
-	actionManager           ActionManager // Unified action manager for all actions
+	accountManagers         map[string]AccountManagerLimited // NOTE(kans): currently unused
+	actionManager           ActionManager                    // Unified action manager for all actions
 }
 
 // NewConnector creates a new ConnectorServer for a new resource.
@@ -104,6 +105,7 @@ func NewConnector(ctx context.Context, in interface{}, opts ...Opt) (types.Conne
 		metadataProvider:        nil,
 		validateProvider:        nil,
 		ticketManager:           nil,
+		accountManager:          nil,
 		nowFunc:                 time.Now,
 		clientSecret:            clientSecretJWK,
 		resourceSyncers:         make(map[string]ResourceSyncerV2),
@@ -263,13 +265,13 @@ func (b *builder) GetMetadata(ctx context.Context, request *v2.ConnectorServiceG
 	tt := tasks.GetMetadataType
 	md, err := b.metadataProvider.Metadata(ctx)
 	if err != nil {
-		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start), err)
+		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))
 		return nil, err
 	}
 
-	md.Capabilities, err = b.GetCapabilities(ctx)
+	md.Capabilities, err = b.getCapabilities(ctx)
 	if err != nil {
-		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start), err)
+		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start))
 		return nil, err
 	}
 
@@ -332,8 +334,8 @@ func (b *builder) Cleanup(ctx context.Context, request *v2.ConnectorServiceClean
 	return resp, err
 }
 
-// GetCapabilities gets all capabilities for a connector.
-func (b *builder) GetCapabilities(ctx context.Context) (*v2.ConnectorCapabilities, error) {
+// getCapabilities gets all capabilities for a connector.
+func (b *builder) getCapabilities(ctx context.Context) (*v2.ConnectorCapabilities, error) {
 	connectorCaps := make(map[v2.Capability]struct{})
 	resourceTypeCapabilities := []*v2.ResourceTypeCapability{}
 
@@ -343,7 +345,6 @@ func (b *builder) GetCapabilities(ctx context.Context) (*v2.ConnectorCapabilitie
 
 		if _, exists := b.resourceTargetedSyncers[resourceTypeID]; exists {
 			caps = append(caps, v2.Capability_CAPABILITY_TARGETED_SYNC)
-			connectorCaps[v2.Capability_CAPABILITY_SERVICE_MODE_TARGETED_SYNC] = struct{}{}
 		}
 
 		if _, exists := b.resourceProvisioners[resourceTypeID]; exists {
@@ -385,7 +386,7 @@ func (b *builder) GetCapabilities(ctx context.Context) (*v2.ConnectorCapabilitie
 	}
 
 	// Check for account provisioning capability (global, not per resource type)
-	if len(b.accountManagers) > 0 {
+	if b.accountManager != nil {
 		connectorCaps[v2.Capability_CAPABILITY_ACCOUNT_PROVISIONING] = struct{}{}
 	}
 	sort.Slice(resourceTypeCapabilities, func(i, j int) bool {
@@ -451,14 +452,13 @@ func getCredentialDetails(ctx context.Context, b *builder) (*v2.CredentialDetail
 	rv := &v2.CredentialDetails{}
 
 	// Check for account provisioning capability details
-	for _, am := range b.accountManagers {
-		accountProvisioningCapabilityDetails, _, err := am.CreateAccountCapabilityDetails(ctx)
+	if b.accountManager != nil {
+		accountProvisioningCapabilityDetails, _, err := b.accountManager.CreateAccountCapabilityDetails(ctx)
 		if err != nil {
 			l.Error("error: getting account provisioning details", zap.Error(err))
 			return nil, fmt.Errorf("error: getting account provisioning details: %w", err)
 		}
 		rv.SetCapabilityAccountProvisioning(accountProvisioningCapabilityDetails)
-		break // Only need one account manager's details
 	}
 
 	// Check for credential rotation capability details

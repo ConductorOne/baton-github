@@ -658,7 +658,7 @@ func (o *repositoryResourceType) registerUpdateRepositoryAction(ctx context.Cont
 		Name:        "update",
 		DisplayName: "Update Repository",
 		Description: "Update an existing repository in a GitHub organization",
-		ActionType:  []v2.ActionType{v2.ActionType_ACTION_TYPE_RESOURCE_MUTATE},
+		ActionType:  []v2.ActionType{},
 		Arguments: []*config.Field{
 			{
 				Name:        "resource",

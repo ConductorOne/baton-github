@@ -8,12 +8,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/conductorone/baton-sdk/pkg/bid"
-	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
-	"github.com/conductorone/baton-sdk/pkg/healthcheck"
 	"github.com/conductorone/baton-sdk/pkg/synccompactor"
 	"golang.org/x/sync/semaphore"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -40,103 +37,55 @@ const (
 )
 
 type connectorRunner struct {
-	cw             types.ClientWrapper
-	oneShot        bool
-	tasks          tasks.Manager
-	debugFile      *os.File
-	debugFileMutex sync.Mutex
-	healthServer   *healthcheck.Server
+	cw        types.ClientWrapper
+	oneShot   bool
+	tasks     tasks.Manager
+	debugFile *os.File
 }
 
 var ErrSigTerm = errors.New("context cancelled by process shutdown")
 
-// setupPersistentLog ensures that a log file on disk is created,
-// when required by either the stored Manager or by a Task.
-// A log file created by a stored Manager persists for our entire run,
-// while a log file created for a Task only lasts for that Task.
-// (There is currently no good way for a Manager to require this.)
-//
-// This function always returns a valid context, even if
-// a persistent log file could not be created.
-func (c *connectorRunner) setupPersistentLog(ctx context.Context, requiredByTask bool) (context.Context, error) {
-	var err error
-
-	// We lock around manipulation of the debug file field for safety,
-	// but make no attempt to serialize logging of concurrent tasks.
-	c.debugFileMutex.Lock()
-	defer c.debugFileMutex.Unlock()
-
-	l := ctxzap.Extract(ctx)
-
-	requiredByManager := c.tasks.ShouldDebug()
-	if !requiredByTask && !requiredByManager {
-		// If we're not being required to create a persistent log by a task
-		// and our runner doesn't want one, we have nothing to do.
-		return ctx, nil
-	} else if c.debugFile != nil && requiredByManager {
-		// If a log file already exists from our runner,
-		// we also have nothing to do.
-		return ctx, nil
-	}
-
-	if c.debugFile != nil {
-		// A log file already exists from a previous task, and it is time to rotate it.
-		// The file is likely already closed, but we attempt to Close() it to be sure
-		// and rotate it by calling Create() on it below - this is equivalent to open(O_TRUNC).
-		l.Info("Rotating existing log file")
-		err = c.debugFile.Close()
-		if err != nil {
-			l.Warn("cannot close existing log file, continuing to rotate log...", zap.Error(err))
-		}
-
-		c.debugFile = nil
-	}
-
-	// Create/truncate the log file, and open it.
-	tempDir := c.tasks.GetTempDir()
-	if tempDir == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			l.Warn("unable to get the current working directory", zap.Error(err))
-		}
-
-		if wd != "" {
-			l.Warn("no temporal folder found on this system according to our task manager,"+
-				" we may create files in the current working directory by mistake as a result",
-				zap.String("current working directory", wd))
-		} else {
-			l.Warn("no temporal folder found on this system according to our task manager")
-		}
-	}
-
-	debugFile := filepath.Join(tempDir, "debug.log")
-	c.debugFile, err = os.Create(debugFile)
-	if err != nil {
-		l.Warn("cannot create debug log file", zap.String("file_path", debugFile), zap.Error(err))
-		return ctx, err
-	}
-
-	// Modify the context to insert a logger directed to that file.
-	writeSyncer := zapcore.AddSync(c.debugFile)
-	encoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
-	core := zapcore.NewCore(encoder, writeSyncer, zapcore.DebugLevel)
-
-	l = l.WithOptions(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return zapcore.NewTee(c, core)
-	}))
-	return ctxzap.ToContext(ctx, l), nil
-}
-
 // Run starts a connector and creates a new C1Z file.
 func (c *connectorRunner) Run(ctx context.Context) error {
+	l := ctxzap.Extract(ctx)
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(ErrSigTerm)
 
-	var err error
-	ctx, err = c.setupPersistentLog(ctx, false)
-	if err != nil {
-		l := ctxzap.Extract(ctx)
-		l.Warn("Persistent logging could not be set up.", zap.Error(err))
+	if c.tasks.ShouldDebug() && c.debugFile == nil {
+		var err error
+		tempDir := c.tasks.GetTempDir()
+		if tempDir == "" {
+			wd, err := os.Getwd()
+			if err != nil {
+				l.Warn("unable to get the current working directory", zap.Error(err))
+			}
+
+			if wd != "" {
+				l.Warn("no temporal folder found on this system according to our task manager,"+
+					" we may create files in the current working directory by mistake as a result",
+					zap.String("current working directory", wd))
+			} else {
+				l.Warn("no temporal folder found on this system according to our task manager")
+			}
+		}
+		debugFile := filepath.Join(tempDir, "debug.log")
+		c.debugFile, err = os.Create(debugFile)
+		if err != nil {
+			l.Warn("cannot create file", zap.String("full file path", debugFile), zap.Error(err))
+		}
+	}
+
+	// modify the context to insert a logger directed to a file
+	if c.debugFile != nil {
+		writeSyncer := zapcore.AddSync(c.debugFile)
+		encoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
+		core := zapcore.NewCore(encoder, writeSyncer, zapcore.DebugLevel)
+
+		l = l.WithOptions(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
+			return zapcore.NewTee(c, core)
+		}))
+
+		ctx = ctxzap.ToContext(ctx, l)
 	}
 
 	sigChan := make(chan os.Signal, 1)
@@ -147,7 +96,7 @@ func (c *connectorRunner) Run(ctx context.Context) error {
 		}
 	}()
 
-	err = c.run(ctx)
+	err := c.run(ctx)
 	if err != nil {
 		return err
 	}
@@ -176,16 +125,6 @@ func (c *connectorRunner) processTask(ctx context.Context, task *v1.Task) error 
 	cc, err := c.cw.C(ctx)
 	if err != nil {
 		return fmt.Errorf("runner: error creating connector client: %w", err)
-	}
-
-	// While we may not have already set up a persistent log file,
-	// if the task requires one, we set it up here.
-	if task.GetDebug() {
-		ctx, err = c.setupPersistentLog(ctx, true)
-		if err != nil {
-			l := ctxzap.Extract(ctx)
-			l.Warn("Persistent logging for this Task could not be set up.", zap.Error(err))
-		}
 	}
 
 	err = c.tasks.Process(ctx, task, cc)
@@ -300,14 +239,6 @@ func (c *connectorRunner) run(ctx context.Context) error {
 func (c *connectorRunner) Close(ctx context.Context) error {
 	var retErr error
 
-	// Stop health check server if running
-	if c.healthServer != nil {
-		if err := c.healthServer.Stop(ctx); err != nil {
-			retErr = errors.Join(retErr, err)
-		}
-		c.healthServer = nil
-	}
-
 	if err := c.cw.Close(); err != nil {
 		retErr = errors.Join(retErr, err)
 	}
@@ -349,10 +280,9 @@ type revokeConfig struct {
 }
 
 type createAccountConfig struct {
-	login          string
-	email          string
-	profile        *structpb.Struct
-	resourceTypeID string // Optional: if set, creates an account for the specified resource type.
+	login   string
+	email   string
+	profile *structpb.Struct
 }
 
 type invokeActionConfig struct {
@@ -393,44 +323,39 @@ type syncCompactorConfig struct {
 }
 
 type runnerConfig struct {
-	rlCfg                                 *ratelimitV1.RateLimiterConfig
-	rlDescriptors                         []*ratelimitV1.RateLimitDescriptors_Entry
-	onDemand                              bool
-	c1zPath                               string
-	clientAuth                            bool
-	clientID                              string
-	clientSecret                          string
-	provisioningEnabled                   bool
-	ticketingEnabled                      bool
-	actionsEnabled                        bool
-	grantConfig                           *grantConfig
-	revokeConfig                          *revokeConfig
-	eventFeedConfig                       *eventStreamConfig
-	tempDir                               string
-	createAccountConfig                   *createAccountConfig
-	invokeActionConfig                    *invokeActionConfig
-	listActionSchemasConfig               *listActionSchemasConfig
-	deleteResourceConfig                  *deleteResourceConfig
-	rotateCredentialsConfig               *rotateCredentialsConfig
-	createTicketConfig                    *createTicketConfig
-	bulkCreateTicketConfig                *bulkCreateTicketConfig
-	listTicketSchemasConfig               *listTicketSchemasConfig
-	getTicketConfig                       *getTicketConfig
-	syncDifferConfig                      *syncDifferConfig
-	syncCompactorConfig                   *syncCompactorConfig
-	skipFullSync                          bool
-	targetedSyncResourceIDs               []string
-	externalResourceC1Z                   string
-	externalResourceEntitlementIdFilter   string
-	skipEntitlementsAndGrants             bool
-	skipGrants                            bool
-	sessionStoreEnabled                   bool
-	syncResourceTypeIDs                   []string
-	defaultCapabilitiesConnectorBuilder   connectorbuilder.ConnectorBuilder
-	defaultCapabilitiesConnectorBuilderV2 connectorbuilder.ConnectorBuilderV2
-	healthCheckEnabled                    bool
-	healthCheckPort                       int
-	healthCheckBindAddress                string
+	rlCfg                               *ratelimitV1.RateLimiterConfig
+	rlDescriptors                       []*ratelimitV1.RateLimitDescriptors_Entry
+	onDemand                            bool
+	c1zPath                             string
+	clientAuth                          bool
+	clientID                            string
+	clientSecret                        string
+	provisioningEnabled                 bool
+	ticketingEnabled                    bool
+	actionsEnabled                      bool
+	grantConfig                         *grantConfig
+	revokeConfig                        *revokeConfig
+	eventFeedConfig                     *eventStreamConfig
+	tempDir                             string
+	createAccountConfig                 *createAccountConfig
+	invokeActionConfig                  *invokeActionConfig
+	listActionSchemasConfig             *listActionSchemasConfig
+	deleteResourceConfig                *deleteResourceConfig
+	rotateCredentialsConfig             *rotateCredentialsConfig
+	createTicketConfig                  *createTicketConfig
+	bulkCreateTicketConfig              *bulkCreateTicketConfig
+	listTicketSchemasConfig             *listTicketSchemasConfig
+	getTicketConfig                     *getTicketConfig
+	syncDifferConfig                    *syncDifferConfig
+	syncCompactorConfig                 *syncCompactorConfig
+	skipFullSync                        bool
+	targetedSyncResourceIDs             []string
+	externalResourceC1Z                 string
+	externalResourceEntitlementIdFilter string
+	skipEntitlementsAndGrants           bool
+	skipGrants                          bool
+	sessionStoreEnabled                 bool
+	syncResourceTypeIDs                 []string
 }
 
 func WithSessionStoreEnabled() Option {
@@ -545,15 +470,14 @@ func WithOnDemandRevoke(c1zPath string, grantID string) Option {
 	}
 }
 
-func WithOnDemandCreateAccount(c1zPath string, login string, email string, profile *structpb.Struct, resourceTypeId string) Option {
+func WithOnDemandCreateAccount(c1zPath string, login string, email string, profile *structpb.Struct) Option {
 	return func(ctx context.Context, cfg *runnerConfig) error {
 		cfg.onDemand = true
 		cfg.c1zPath = c1zPath
 		cfg.createAccountConfig = &createAccountConfig{
-			login:          login,
-			email:          email,
-			profile:        profile,
-			resourceTypeID: resourceTypeId,
+			login:   login,
+			email:   email,
+			profile: profile,
 		}
 		return nil
 	}
@@ -775,55 +699,6 @@ func WithSkipGrants(skip bool) Option {
 	}
 }
 
-// WithDefaultCapabilitiesConnectorBuilder sets the default connector builder for the runner
-// This is used by the "capabilities" sub-command to instantiate the connector.
-func WithDefaultCapabilitiesConnectorBuilder(t connectorbuilder.ConnectorBuilder) Option {
-	return func(ctx context.Context, cfg *runnerConfig) error {
-		cfg.defaultCapabilitiesConnectorBuilder = t
-		return nil
-	}
-}
-
-// WithDefaultCapabilitiesConnectorBuilderV2 sets the default connector builder for the runner
-// This is used by the "capabilities" sub-command to instantiate the connector.
-func WithDefaultCapabilitiesConnectorBuilderV2(t connectorbuilder.ConnectorBuilderV2) Option {
-	return func(ctx context.Context, cfg *runnerConfig) error {
-		cfg.defaultCapabilitiesConnectorBuilderV2 = t
-		return nil
-	}
-}
-
-// WithHealthCheck enables the HTTP health check server.
-func WithHealthCheck(enabled bool, port int, bindAddress string) Option {
-	return func(ctx context.Context, cfg *runnerConfig) error {
-		cfg.healthCheckEnabled = enabled
-		cfg.healthCheckPort = port
-		cfg.healthCheckBindAddress = bindAddress
-		return nil
-	}
-}
-
-func ExtractDefaultConnector(ctx context.Context, options ...Option) (any, error) {
-	cfg := &runnerConfig{}
-
-	for _, o := range options {
-		err := o(ctx, cfg)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if cfg.defaultCapabilitiesConnectorBuilder != nil {
-		return cfg.defaultCapabilitiesConnectorBuilder, nil
-	}
-
-	if cfg.defaultCapabilitiesConnectorBuilderV2 != nil {
-		return cfg.defaultCapabilitiesConnectorBuilderV2, nil
-	}
-
-	return nil, nil
-}
-
 func IsSessionStoreEnabled(ctx context.Context, options ...Option) (bool, error) {
 	cfg := &runnerConfig{}
 
@@ -922,7 +797,7 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 			tm = local.NewRevoker(ctx, cfg.c1zPath, cfg.revokeConfig.grantID)
 
 		case cfg.createAccountConfig != nil:
-			tm = local.NewCreateAccountManager(ctx, cfg.c1zPath, cfg.createAccountConfig.login, cfg.createAccountConfig.email, cfg.createAccountConfig.profile, cfg.createAccountConfig.resourceTypeID)
+			tm = local.NewCreateAccountManager(ctx, cfg.c1zPath, cfg.createAccountConfig.login, cfg.createAccountConfig.email, cfg.createAccountConfig.profile)
 
 		case cfg.invokeActionConfig != nil:
 			tm = local.NewActionInvoker(ctx, cfg.c1zPath, cfg.invokeActionConfig.action, cfg.invokeActionConfig.resourceTypeID, cfg.invokeActionConfig.args)
@@ -996,21 +871,6 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 		return nil, err
 	}
 	runner.tasks = tm
-
-	// Start health check server if enabled (only for daemon mode)
-	if cfg.healthCheckEnabled {
-		healthCfg := healthcheck.Config{
-			Enabled:     true,
-			Port:        cfg.healthCheckPort,
-			BindAddress: cfg.healthCheckBindAddress,
-		}
-		healthServer := healthcheck.NewServer(healthCfg, cw.C)
-		if err := healthServer.Start(ctx); err != nil {
-			_ = cw.Close() // Clean up connector wrapper on failure
-			return nil, fmt.Errorf("failed to start health check server: %w", err)
-		}
-		runner.healthServer = healthServer
-	}
 
 	return runner, nil
 }

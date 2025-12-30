@@ -30,8 +30,7 @@ func RunConnector[T field.Configurable](
 ) {
 	f := func(ctx context.Context, cfg T, runTimeOpts cli.RunTimeOpts) (types.ConnectorServer, error) {
 		l := ctxzap.Extract(ctx)
-		connector, builderOpts, err := cf(ctx, cfg, &cli.ConnectorOpts{TokenSource: runTimeOpts.TokenSource,
-			SelectedAuthMethod: runTimeOpts.SelectedAuthMethod})
+		connector, builderOpts, err := cf(ctx, cfg, &cli.ConnectorOpts{TokenSource: runTimeOpts.TokenSource})
 		if err != nil {
 			return nil, err
 		}
@@ -208,27 +207,14 @@ func DefineConfigurationV2[T field.Configurable](
 		return nil, nil, err
 	}
 
-	defaultConnector, err := connectorrunner.ExtractDefaultConnector(ctx, options...)
+	_, err = cli.AddCommand(mainCMD, v, &schema, &cobra.Command{
+		Use:   "capabilities",
+		Short: "Get connector capabilities",
+		RunE:  cli.MakeCapabilitiesCommand(ctx, connectorName, v, confschema, connector),
+	})
+
 	if err != nil {
 		return nil, nil, err
-	}
-	if defaultConnector == nil {
-		_, err = cli.AddCommand(mainCMD, v, &schema, &cobra.Command{
-			Use:   "capabilities",
-			Short: "Get connector capabilities",
-			RunE:  cli.MakeCapabilitiesCommand(ctx, connectorName, v, confschema, connector),
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-	} else {
-		// We don't want to use cli.AddCommand here because we don't want to validate config flags
-		// So we can call capabilities even with incomplete config
-		mainCMD.AddCommand(&cobra.Command{
-			Use:   "capabilities",
-			Short: "Get connector capabilities",
-			RunE:  cli.MakeCapabilitiesCommand(ctx, connectorName, v, confschema, connector, options...),
-		})
 	}
 
 	_, err = cli.AddCommand(mainCMD, v, nil, &cobra.Command{
@@ -240,30 +226,6 @@ func DefineConfigurationV2[T field.Configurable](
 	if err != nil {
 		return nil, nil, err
 	}
-
-	// Health check client command - doesn't need connector config validation
-	healthCheckCmd := &cobra.Command{
-		Use:   "health-check",
-		Short: "Check the health of a running connector",
-		Long: `Query the health check server of a running connector.
-
-This command is designed for use in container/Kubernetes health check scenarios.
-It queries the specified endpoint and exits with code 0 if healthy, or non-zero otherwise.
-
-Examples:
-  # Check health using defaults (localhost:8081/health)
-  connector-name health-check
-
-  # Check readiness endpoint
-  connector-name health-check --endpoint=ready
-
-  # Check liveness with custom port
-  connector-name health-check --endpoint=live --health-check-port=9090`,
-		RunE: cli.MakeHealthCheckCommand(ctx, v),
-	}
-	healthCheckCmd.Flags().String("endpoint", "health", "Endpoint to check: health, ready, or live")
-	healthCheckCmd.Flags().Int("timeout", 5, "Request timeout in seconds")
-	mainCMD.AddCommand(healthCheckCmd)
 
 	return v, mainCMD, nil
 }

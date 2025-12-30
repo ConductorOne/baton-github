@@ -473,7 +473,7 @@ func (o *teamResourceType) registerUpdateTeamAction(ctx context.Context, registr
 		Name:        "update",
 		DisplayName: "Update Team",
 		Description: "Update an existing team in a GitHub organization",
-		ActionType:  []v2.ActionType{v2.ActionType_ACTION_TYPE_RESOURCE_MUTATE},
+		ActionType:  []v2.ActionType{},
 		Arguments: []*config.Field{
 			{
 				Name:        "resource",
