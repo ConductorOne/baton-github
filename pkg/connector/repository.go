@@ -476,8 +476,14 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 				Name:        "parent",
 				DisplayName: "Parent Organization",
 				Description: "The organization to create the repository in",
-				Field:       &config.Field_ResourceIdField{},
-				IsRequired:  true,
+				Field: &config.Field_ResourceIdField{
+					ResourceIdField: &config.ResourceIdField{
+						Rules: &config.ResourceIDRules{
+							AllowedResourceTypeIds: []string{resourceTypeOrg.Id},
+						},
+					},
+				},
+				IsRequired: true,
 			},
 			{
 				Name:        "description",

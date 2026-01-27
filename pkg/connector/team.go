@@ -404,7 +404,13 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 				Name:        "parent",
 				DisplayName: "Parent Organization",
 				Description: "The organization to create the team in",
-				Field:       &config.Field_ResourceIdField{},
+				Field:       &config.Field_ResourceIdField{
+					ResourceIdField: &config.ResourceIdField{
+						Rules: &config.ResourceIDRules{
+							AllowedResourceTypeIds: []string{resourceTypeOrg.Id},
+						},
+					},
+				},
 				IsRequired:  true,
 			},
 			{
@@ -417,7 +423,14 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 				Name:        "privacy",
 				DisplayName: "Privacy",
 				Description: "The privacy level: 'secret' or 'closed'",
-				Field:       &config.Field_StringField{},
+				Field:       &config.Field_StringField{
+					StringField: &config.StringField{
+						Options: []*config.StringFieldOption{
+							{Value: "secret", DisplayName: "Secret (only visible to org owners and team members)"},
+							{Value: "closed", DisplayName: "Closed (visible to all org members)"},
+						},
+					},
+				},
 			},
 			{
 				Name:        "notification_setting",
