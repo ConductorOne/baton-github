@@ -396,34 +396,46 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 			{
 				Name:        "name",
 				DisplayName: "Team Name",
-				Description: "The name of the team to create",
+				Description: "The name of the team.",
 				Field:       &config.Field_StringField{},
 				IsRequired:  true,
 			},
 			{
-				Name:        "parent",
-				DisplayName: "Parent Organization",
-				Description: "The organization to create the team in",
-				Field:       &config.Field_ResourceIdField{
+				Name:        "description",
+				DisplayName: "Description",
+				Description: "The description of the team.",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "org",
+				DisplayName: "Organization",
+				Description: "The organization name. The name is not case sensitive.",
+				Field: &config.Field_ResourceIdField{
 					ResourceIdField: &config.ResourceIdField{
 						Rules: &config.ResourceIDRules{
 							AllowedResourceTypeIds: []string{resourceTypeOrg.Id},
 						},
 					},
 				},
-				IsRequired:  true,
+				IsRequired: true,
 			},
 			{
-				Name:        "description",
-				DisplayName: "Description",
-				Description: "A description of the team",
-				Field:       &config.Field_StringField{},
+				Name:        "parent",
+				DisplayName: "Parent Team ID",
+				Description: "The name of a team to set as the parent team.",
+				Field: &config.Field_ResourceIdField{
+					ResourceIdField: &config.ResourceIdField{
+						Rules: &config.ResourceIDRules{
+							AllowedResourceTypeIds: []string{resourceTypeTeam.Id},
+						},
+					},
+				},
 			},
 			{
 				Name:        "privacy",
 				DisplayName: "Privacy",
-				Description: "The privacy level: 'secret' or 'closed'",
-				Field:       &config.Field_StringField{
+				Description: "The privacy level of the team",
+				Field: &config.Field_StringField{
 					StringField: &config.StringField{
 						Options: []*config.StringFieldOption{
 							{Value: "secret", DisplayName: "Secret (only visible to org owners and team members)"},
@@ -433,14 +445,35 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 				},
 			},
 			{
-				Name:        "notification_setting",
-				DisplayName: "Notification Setting",
-				Description: "The notification setting for the team",
-				Field: &config.Field_StringField{
-					StringField: &config.StringField{
-						Options: []*config.StringFieldOption{
-							{Value: "notifications_enabled", DisplayName: "Enabled"},
-							{Value: "notifications_disabled", DisplayName: "Disabled"},
+				Name:        "notifications_enabled",
+				DisplayName: "Team Notifications",
+				Description: "Enable team notifications. When enabled, team members receive notifications when the team is @mentioned. Default: enabled",
+				Field: &config.Field_BoolField{
+					BoolField: &config.BoolField{
+						DefaultValue: true,
+					},
+				},
+			},
+			{
+				Name:        "maintainers",
+				DisplayName: "Maintainers",
+				Description: "List GitHub usernames for organization members who will become team maintainers.",
+				Field: &config.Field_ResourceIdSliceField{
+					ResourceIdSliceField: &config.ResourceIdSliceField{
+						Rules: &config.RepeatedResourceIdRules{
+							AllowedResourceTypeIds: []string{resourceTypeUser.Id},
+						},
+					},
+				},
+			},
+			{
+				Name:        "repo_names",
+				DisplayName: "Repository Names",
+				Description: "The full name (e.g., organization-name/repository-name) of repositories to add the team to.",
+				Field: &config.Field_ResourceIdSliceField{
+					ResourceIdSliceField: &config.ResourceIdSliceField{
+						Rules: &config.RepeatedResourceIdRules{
+							AllowedResourceTypeIds: []string{resourceTypeRepository.Id},
 						},
 					},
 				},
@@ -557,7 +590,7 @@ func (o *teamResourceType) handleCreateTeamAction(ctx context.Context, args *str
 		return nil, nil, err
 	}
 
-	parentResourceID, err := actions.RequireResourceIDArg(args, "parent")
+	parentResourceID, err := actions.RequireResourceIDArg(args, "org")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -583,14 +616,79 @@ func (o *teamResourceType) handleCreateTeamAction(ctx context.Context, args *str
 		newTeam.Description = github.Ptr(description)
 	}
 
-	if privacy, ok := actions.GetStringArg(args, "privacy"); ok && privacy != "" {
-		if privacy == "secret" || privacy == "closed" {
-			newTeam.Privacy = github.Ptr(privacy)
-		} else {
-			l.Warn("github-connector: invalid privacy value, using default",
-				zap.String("provided_privacy", privacy),
-			)
+	// Check if this is a nested team (has parent)
+	isNestedTeam := false
+	if parentTeamResourceID, ok := actions.GetResourceIDArg(args, "parent"); ok {
+		parentTeamID, err := strconv.ParseInt(parentTeamResourceID.Resource, 10, 64)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid parent team ID: %w", err)
 		}
+		newTeam.ParentTeamID = github.Ptr(parentTeamID)
+		isNestedTeam = true
+	}
+
+	// Handle privacy with constraints based on team type:
+	// - For non-nested teams: "secret" (default) or "closed"
+	// - For nested/child teams: only "closed" is allowed (default: closed)
+	if privacy, ok := actions.GetStringArg(args, "privacy"); ok && privacy != "" {
+		if isNestedTeam {
+			// Nested teams can only be "closed"
+			if privacy == "secret" {
+				l.Warn("github-connector: secret privacy not allowed for nested teams, using closed",
+					zap.String("requested_privacy", privacy),
+				)
+			}
+			newTeam.Privacy = github.Ptr("closed")
+		} else {
+			// Non-nested teams can be "secret" or "closed"
+			if privacy == "secret" || privacy == "closed" {
+				newTeam.Privacy = github.Ptr(privacy)
+			}
+		}
+	} else if isNestedTeam {
+		// Default for nested teams is "closed"
+		newTeam.Privacy = github.Ptr("closed")
+	}
+	// Note: Default for non-nested teams is "secret" (handled by GitHub API)
+
+	if notificationsEnabled, ok := actions.GetBoolArg(args, "notifications_enabled"); ok {
+		if notificationsEnabled {
+			newTeam.NotificationSetting = github.Ptr("notifications_enabled")
+		} else {
+			newTeam.NotificationSetting = github.Ptr("notifications_disabled")
+		}
+	}
+
+	if maintainerIDs, ok := actions.GetResourceIdListArg(args, "maintainers"); ok && len(maintainerIDs) > 0 {
+		var maintainerLogins []string
+		for _, rid := range maintainerIDs {
+			userID, err := strconv.ParseInt(rid.Resource, 10, 64)
+			if err != nil {
+				return nil, nil, fmt.Errorf("invalid maintainer user ID %s: %w", rid.Resource, err)
+			}
+			user, resp, err := o.client.Users.GetByID(ctx, userID)
+			if err != nil {
+				return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to get user %d", userID))
+			}
+			maintainerLogins = append(maintainerLogins, user.GetLogin())
+		}
+		newTeam.Maintainers = maintainerLogins
+	}
+
+	if repoIDs, ok := actions.GetResourceIdListArg(args, "repo_names"); ok && len(repoIDs) > 0 {
+		var repoFullNames []string
+		for _, rid := range repoIDs {
+			repoID, err := strconv.ParseInt(rid.Resource, 10, 64)
+			if err != nil {
+				return nil, nil, fmt.Errorf("invalid repository ID %s: %w", rid.Resource, err)
+			}
+			repo, resp, err := o.client.Repositories.GetByID(ctx, repoID)
+			if err != nil {
+				return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to get repository %d", repoID))
+			}
+			repoFullNames = append(repoFullNames, repo.GetFullName())
+		}
+		newTeam.RepoNames = repoFullNames
 	}
 
 	// Create the team via GitHub API
