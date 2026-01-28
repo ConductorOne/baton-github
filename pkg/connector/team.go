@@ -25,6 +25,10 @@ import (
 const (
 	teamRoleMember     = "member"
 	teamRoleMaintainer = "maintainer"
+
+	// Team privacy levels
+	teamPrivacySecret = "secret"
+	teamPrivacyClosed = "closed"
 )
 
 var teamAccessLevels = []string{
@@ -633,21 +637,19 @@ func (o *teamResourceType) handleCreateTeamAction(ctx context.Context, args *str
 	if privacy, ok := actions.GetStringArg(args, "privacy"); ok && privacy != "" {
 		if isNestedTeam {
 			// Nested teams can only be "closed"
-			if privacy == "secret" {
+			if privacy == teamPrivacySecret {
 				l.Warn("github-connector: secret privacy not allowed for nested teams, using closed",
 					zap.String("requested_privacy", privacy),
 				)
 			}
-			newTeam.Privacy = github.Ptr("closed")
-		} else {
+			newTeam.Privacy = github.Ptr(teamPrivacyClosed)
+		} else if privacy == teamPrivacySecret || privacy == teamPrivacyClosed {
 			// Non-nested teams can be "secret" or "closed"
-			if privacy == "secret" || privacy == "closed" {
-				newTeam.Privacy = github.Ptr(privacy)
-			}
+			newTeam.Privacy = github.Ptr(privacy)
 		}
 	} else if isNestedTeam {
 		// Default for nested teams is "closed"
-		newTeam.Privacy = github.Ptr("closed")
+		newTeam.Privacy = github.Ptr(teamPrivacyClosed)
 	}
 	// Note: Default for non-nested teams is "secret" (handled by GitHub API)
 
@@ -758,7 +760,7 @@ func (o *teamResourceType) handleDeleteTeamAction(ctx context.Context, args *str
 	}
 
 	// Get the team to find its slug
-	team, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, teamID)
+	team, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, teamID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
 	if err != nil {
 		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to get team %d", teamID))
 	}
@@ -825,7 +827,7 @@ func (o *teamResourceType) handleUpdateTeamAction(ctx context.Context, args *str
 	}
 
 	// Get the team to find its slug
-	team, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, teamID)
+	team, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, teamID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
 	if err != nil {
 		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to get team %d", teamID))
 	}
@@ -857,7 +859,7 @@ func (o *teamResourceType) handleUpdateTeamAction(ctx context.Context, args *str
 	}
 
 	if privacy, ok := actions.GetStringArg(args, "privacy"); ok && privacy != "" {
-		if privacy == "secret" || privacy == "closed" {
+		if privacy == teamPrivacySecret || privacy == teamPrivacyClosed {
 			updateTeam.Privacy = github.Ptr(privacy)
 			hasUpdates = true
 		} else {
