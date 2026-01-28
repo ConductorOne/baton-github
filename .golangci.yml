@@ -1,3 +1,4 @@
+# This file is managed by baton-admin. DO NOT EDIT!!!
 version: "2"
 run:
   modules-download-mode: readonly
