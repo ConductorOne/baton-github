@@ -1,0 +1,61 @@
+# This file is managed by baton-admin. DO NOT EDIT!!!
+name: Update Go version and dependencies
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".versions.yaml"
+
+jobs:
+  update-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELENG_GITHUB_TOKEN }}
+      - name: "Get expected Go version"
+        uses: mathiasvr/command-output@v2.0.0
+        id: go-version
+        with:
+          run: |
+            yq -r '.go-version' .versions.yaml | tr -d '\n'
+      - name: "Update go.mod"
+        env:
+          GO_VERSION: ${{ steps.go-version.outputs.stdout }}
+        run: |
+          sed -i -e "s|(go\s)(([0-9]+\.?){2}([0-9]+)?)|go\ $GO_VERSION|g" go.mod
+      - name: "Setup Go"
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go-version.outputs.stdout }}
+      - name: "Update dependencies"
+        run: |
+          length=$(yq -r '.dependencies | length' .versions.yaml)
+          if [[ "$length" -eq  0 ]]; then
+            printf "No dependencies to update\n"
+            exit 1
+          fi
+          
+          deps=$(yq -r '.dependencies | keys | .[]' .versions.yaml)
+          for dep in $deps; do
+            version=$(dependency="$dep" yq -r '.dependencies[env(dependency)]' .versions.yaml)
+            printf "Updating %s to %s\n" "$dep" "$version"
+            go get -u "github.com/conductorone/$dep@$version"
+          done
+      - name: "go mod tidy && go mod vendor"
+        run: |
+          go mod tidy && go mod vendor
+      - name: "Verify build"
+        run: |
+          go build ./...
+      - name: "Commit changes"
+        uses: EndBug/add-and-commit@v9
+        with:
+          default_author: github_actions
+          message: "chore: update dependency & Go versions"
+          add: |
+            go.mod
+            go.sum
+            vendor/
