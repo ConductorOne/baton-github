@@ -221,6 +221,12 @@ type hasSAMLQuery struct {
 	} `graphql:"organization(login: $orgLoginName)"`
 }
 
+// enterpriseUserSAML holds SAML identity data fetched from the enterprise consumed-licenses endpoint.
+type enterpriseUserSAML struct {
+	SAMLNameID      string
+	VerifiedEmails  []string
+}
+
 func isNotFoundError(resp *github.Response) bool {
 	if resp == nil {
 		return false

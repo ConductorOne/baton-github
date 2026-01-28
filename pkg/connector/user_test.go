@@ -48,8 +48,10 @@ func TestUsersList(t *testing.T) {
 				githubClient,
 				testCase.hasSamlEnabled,
 				graphQLClient,
+				nil, // customClient - not needed for this test
 				cache,
 				[]string{organization.DisplayName},
+				nil, // enterprises - not needed for this test
 			)
 
 			users, nextToken, annotations, err := client.List(

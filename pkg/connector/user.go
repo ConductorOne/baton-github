@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/conductorone/baton-github/pkg/customclient"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
@@ -89,12 +90,15 @@ func userResource(ctx context.Context, user *github.User, userEmail string, extr
 }
 
 type userResourceType struct {
-	resourceType   *v2.ResourceType
-	client         *github.Client
-	graphqlClient  *githubv4.Client
-	hasSAMLEnabled *bool
-	orgCache       *orgNameCache
-	orgs           []string
+	resourceType       *v2.ResourceType
+	client             *github.Client
+	graphqlClient      *githubv4.Client
+	customClient       *customclient.Client
+	hasSAMLEnabled     *bool
+	orgCache           *orgNameCache
+	orgs               []string
+	enterprises        []string
+	enterpriseSAMLData map[string]*enterpriseUserSAML // login -> SAML data
 }
 
 func (o *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -122,6 +126,22 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 	if err != nil {
 		return nil, "", nil, err
 	}
+
+	// If org-level SAML is disabled but we have enterprise config, try to load enterprise SAML data.
+	// This handles the case where SAML is configured at the enterprise level instead of org level.
+	useEnterpriseSAML := false
+	if !hasSamlBool && len(o.enterprises) > 0 {
+		if err := o.loadEnterpriseSAMLData(ctx); err != nil {
+			l.Warn("failed to load enterprise SAML data", zap.Error(err))
+		}
+		if len(o.enterpriseSAMLData) > 0 {
+			useEnterpriseSAML = true
+			l.Debug("using enterprise SAML data for user email enrichment",
+				zap.String("org", orgName),
+				zap.Int("enterprise_saml_users", len(o.enterpriseSAMLData)))
+		}
+	}
+
 	var restApiRateLimit *v2.RateLimitDescription
 
 	opts := github.ListMembersOptions{
@@ -169,6 +189,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		userEmail := u.GetEmail()
 		var extraEmails []string
 		if hasSamlBool {
+			// Use org-level SAML
 			variables := map[string]interface{}{
 				"orgLoginName": githubv4.String(orgName),
 				"userName":     githubv4.String(u.GetLogin()),
@@ -198,6 +219,13 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 						extraEmails = append(extraEmails, email.Value)
 					}
 				}
+			}
+		} else if useEnterpriseSAML {
+			// Use enterprise-level SAML data when org-level SAML is not available
+			enterpriseEmail, enterpriseExtraEmails := o.getEnterpriseSAMLEmail(u.GetLogin())
+			if enterpriseEmail != "" {
+				userEmail = enterpriseEmail
+				extraEmails = enterpriseExtraEmails
 			}
 		}
 		ur, err := userResource(ctx, u, userEmail, extraEmails)
@@ -277,18 +305,128 @@ func (o *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId
 	return annotations, nil
 }
 
-func userBuilder(client *github.Client, hasSAMLEnabled *bool, graphqlClient *githubv4.Client, orgCache *orgNameCache, orgs []string) *userResourceType {
+func userBuilder(
+	client *github.Client,
+	hasSAMLEnabled *bool,
+	graphqlClient *githubv4.Client,
+	customClient *customclient.Client,
+	orgCache *orgNameCache,
+	orgs []string,
+	enterprises []string,
+) *userResourceType {
 	return &userResourceType{
-		resourceType:   resourceTypeUser,
-		client:         client,
-		graphqlClient:  graphqlClient,
-		hasSAMLEnabled: hasSAMLEnabled,
-		orgCache:       orgCache,
-		orgs:           orgs,
+		resourceType:       resourceTypeUser,
+		client:             client,
+		graphqlClient:      graphqlClient,
+		customClient:       customClient,
+		hasSAMLEnabled:     hasSAMLEnabled,
+		orgCache:           orgCache,
+		orgs:               orgs,
+		enterprises:        enterprises,
+		enterpriseSAMLData: make(map[string]*enterpriseUserSAML),
 	}
 }
 
+// loadEnterpriseSAMLData fetches SAML identity data from the enterprise consumed-licenses endpoint
+// and builds a lookup map by user login. This is used when org-level SAML is disabled because
+// SAML is configured at the enterprise level.
+func (o *userResourceType) loadEnterpriseSAMLData(ctx context.Context) error {
+	l := ctxzap.Extract(ctx)
+
+	if len(o.enterprises) == 0 || o.customClient == nil {
+		return nil
+	}
+
+	// Only load once
+	if len(o.enterpriseSAMLData) > 0 {
+		return nil
+	}
+
+	l.Debug("loading enterprise SAML data", zap.Strings("enterprises", o.enterprises))
+
+	for _, enterprise := range o.enterprises {
+		page := 0
+		for {
+			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
+			if err != nil {
+				l.Warn("failed to load enterprise consumed licenses for SAML data",
+					zap.String("enterprise", enterprise),
+					zap.Error(err))
+				// Don't fail the sync, just continue without enterprise SAML data
+				return nil
+			}
+
+			if len(consumedLicenses.Users) == 0 {
+				break
+			}
+
+			for _, user := range consumedLicenses.Users {
+				if user.GitHubComLogin == "" {
+					continue
+				}
+
+				samlData := &enterpriseUserSAML{}
+
+				// Get SAML name ID if available
+				if user.GitHubComSAMLNameID != nil && *user.GitHubComSAMLNameID != "" {
+					samlData.SAMLNameID = *user.GitHubComSAMLNameID
+				}
+
+				// Get verified domain emails
+				if len(user.GitHubComVerifiedDomainEmails) > 0 {
+					samlData.VerifiedEmails = user.GitHubComVerifiedDomainEmails
+				}
+
+				// Only store if we have useful data
+				if samlData.SAMLNameID != "" || len(samlData.VerifiedEmails) > 0 {
+					o.enterpriseSAMLData[user.GitHubComLogin] = samlData
+				}
+			}
+
+			page++
+		}
+	}
+
+	l.Debug("loaded enterprise SAML data", zap.Int("users_with_saml_data", len(o.enterpriseSAMLData)))
+	return nil
+}
+
+// getEnterpriseSAMLEmail returns the best email for a user from enterprise SAML data.
+// Returns the SAML name ID if it looks like an email, otherwise returns the first verified email.
+func (o *userResourceType) getEnterpriseSAMLEmail(login string) (string, []string) {
+	samlData, ok := o.enterpriseSAMLData[login]
+	if !ok {
+		return "", nil
+	}
+
+	// Check if SAML name ID is an email
+	if samlData.SAMLNameID != "" && isEmail(samlData.SAMLNameID) {
+		primary := samlData.SAMLNameID
+		var extra []string
+		// Add verified emails as extra emails
+		for _, email := range samlData.VerifiedEmails {
+			if email != primary {
+				extra = append(extra, email)
+			}
+		}
+		return primary, extra
+	}
+
+	// Use verified emails
+	if len(samlData.VerifiedEmails) > 0 {
+		primary := samlData.VerifiedEmails[0]
+		var extra []string
+		if len(samlData.VerifiedEmails) > 1 {
+			extra = samlData.VerifiedEmails[1:]
+		}
+		return primary, extra
+	}
+
+	return "", nil
+}
+
 func (o *userResourceType) hasSAML(ctx context.Context, orgName string) (bool, error) {
+	l := ctxzap.Extract(ctx)
 	if o.hasSAMLEnabled != nil {
 		return *o.hasSAMLEnabled, nil
 	}
@@ -300,6 +438,16 @@ func (o *userResourceType) hasSAML(ctx context.Context, orgName string) (bool, e
 	}
 	err := o.graphqlClient.Query(ctx, &q, variables)
 	if err != nil {
+		// Check if the error is due to Enterprise SAML being configured instead of org-level SAML.
+		// In this case, we should not fail but instead treat org-level SAML as disabled.
+		if strings.Contains(err.Error(), "SAML identity provider is disabled when an Enterprise SAML identity provider is available") ||
+			strings.Contains(err.Error(), "Organization's SAML identity provider is disabled") {
+			l.Info("org-level SAML is disabled because Enterprise SAML is configured",
+				zap.String("org", orgName),
+				zap.Error(err))
+			o.hasSAMLEnabled = &samlBool
+			return false, nil
+		}
 		return false, err
 	}
 	if q.Organization.SamlIdentityProvider.Id != "" {
