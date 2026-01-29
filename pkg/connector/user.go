@@ -305,6 +305,7 @@ func (o *userResourceType) hasSAML(ctx context.Context, orgName string) (bool, e
 		return *o.hasSAMLEnabled, nil
 	}
 
+	l := ctxzap.Extract(ctx)
 	samlBool := false
 	q := hasSAMLQuery{}
 	variables := map[string]interface{}{
@@ -312,6 +313,14 @@ func (o *userResourceType) hasSAML(ctx context.Context, orgName string) (bool, e
 	}
 	err := o.graphqlClient.Query(ctx, &q, variables)
 	if err != nil {
+		// When SAML is configured at the Enterprise level (not org level),
+		// GitHub returns this error. Fall back to treating SAML as disabled.
+		if strings.Contains(err.Error(), "SAML identity provider is disabled when an Enterprise SAML identity provider is available") {
+			l.Debug("org SAML disabled in favor of Enterprise SAML, skipping SAML identity enrichment",
+				zap.String("org", orgName))
+			o.hasSAMLEnabled = &samlBool
+			return false, nil
+		}
 		return false, err
 	}
 	if q.Organization.SamlIdentityProvider.Id != "" {
