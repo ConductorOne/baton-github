@@ -175,9 +175,21 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 			}
 			err = o.graphqlClient.Query(ctx, &q, variables)
 			if err != nil {
-				return nil, "", nil, err
+				// When SAML is configured at the Enterprise level (not org level),
+				// GitHub returns this error. Fall back to using the regular user email
+				// and disable further SAML queries for this connector instance.
+				if strings.Contains(err.Error(), "SAML identity provider is disabled when an Enterprise SAML identity provider is available") {
+					l.Debug("org SAML disabled in favor of Enterprise SAML, skipping SAML identity enrichment",
+						zap.String("org", orgName),
+						zap.String("user", u.GetLogin()))
+					samlDisabled := false
+					o.hasSAMLEnabled = &samlDisabled
+					hasSamlBool = false
+				} else {
+					return nil, "", nil, err
+				}
 			}
-			if len(q.Organization.SamlIdentityProvider.ExternalIdentities.Edges) == 1 {
+			if err == nil && len(q.Organization.SamlIdentityProvider.ExternalIdentities.Edges) == 1 {
 				samlIdent := q.Organization.SamlIdentityProvider.ExternalIdentities.Edges[0].Node.SamlIdentity
 				userEmail = samlIdent.NameId
 				setUserEmail := false
