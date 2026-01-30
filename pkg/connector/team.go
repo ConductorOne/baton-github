@@ -26,7 +26,6 @@ const (
 	teamRoleMember     = "member"
 	teamRoleMaintainer = "maintainer"
 
-	// Team privacy levels
 	teamPrivacySecret = "secret"
 	teamPrivacyClosed = "closed"
 )
