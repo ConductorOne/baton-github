@@ -393,21 +393,21 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 		Arguments: []*config.Field{
 			{
 				Name:        "name",
-				DisplayName: "Team Name",
-				Description: "The name of the team.",
+				DisplayName: "Team name",
+				Description: "You’ll use this name to mention this team in conversations.",
 				Field:       &config.Field_StringField{},
 				IsRequired:  true,
 			},
 			{
 				Name:        "description",
 				DisplayName: "Description",
-				Description: "The description of the team.",
+				Description: "What is this team all about?",
 				Field:       &config.Field_StringField{},
 			},
 			{
 				Name:        "org",
 				DisplayName: "Organization",
-				Description: "The organization name. The name is not case sensitive.",
+				Description: "The organization name.",
 				Field: &config.Field_ResourceIdField{
 					ResourceIdField: &config.ResourceIdField{
 						Rules: &config.ResourceIDRules{
@@ -419,8 +419,8 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 			},
 			{
 				Name:        "parent",
-				DisplayName: "Parent Team ID",
-				Description: "The name of a team to set as the parent team.",
+				DisplayName: "Parent team",
+				Description: "The team to set as the parent team.",
 				Field: &config.Field_ResourceIdField{
 					ResourceIdField: &config.ResourceIdField{
 						Rules: &config.ResourceIDRules{
@@ -432,20 +432,20 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 			{
 				Name:        "privacy",
 				DisplayName: "Privacy",
-				Description: "The privacy level of the team",
+				Description: "The level of privacy this team should have.",
 				Field: &config.Field_StringField{
 					StringField: &config.StringField{
 						Options: []*config.StringFieldOption{
-							{Value: "secret", DisplayName: "Secret (only visible to org owners and team members)"},
-							{Value: "closed", DisplayName: "Closed (visible to all org members)"},
+							{Value: "secret", Name: "Secret is only visible to org owners and team members", DisplayName: "Secret"},
+							{Value: "closed", Name: "Closed is visible to all org members. When parent team is set, this is the only allowed privacy level.", DisplayName: "Closed"},
 						},
 					},
 				},
 			},
 			{
 				Name:        "notifications_enabled",
-				DisplayName: "Team Notifications",
-				Description: "Enable team notifications. When enabled, team members receive notifications when the team is @mentioned. Default: enabled",
+				DisplayName: "Team notifications",
+				Description: "When enabled, team members receive notifications when the team is @mentioned.",
 				Field: &config.Field_BoolField{
 					BoolField: &config.BoolField{
 						DefaultValue: true,
@@ -466,7 +466,7 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 			},
 			{
 				Name:        "repo_names",
-				DisplayName: "Repository Names",
+				DisplayName: "Repository names",
 				Description: "The full name (e.g., organization-name/repository-name) of repositories to add the team to.",
 				Field: &config.Field_ResourceIdSliceField{
 					ResourceIdSliceField: &config.ResourceIdSliceField{
@@ -611,18 +611,71 @@ func (o *teamResourceType) handleCreateTeamAction(ctx context.Context, args *str
 	)
 
 	// Create the resource representation of the newly created team
-	resource, err := teamResource(createdTeam, parentResourceID)
+	teamRes, err := teamResource(createdTeam, parentResourceID)
 	if err != nil {
 		return nil, annos, fmt.Errorf("failed to create resource representation: %w", err)
 	}
 
+	// Generate entitlements for the newly created team
+	entitlements := make([]*v2.Entitlement, 0, len(teamAccessLevels))
+	for _, level := range teamAccessLevels {
+		entitlements = append(entitlements, entitlement.NewPermissionEntitlement(teamRes, level,
+			entitlement.WithAnnotation(&v2.V1Identifier{
+				Id: fmt.Sprintf("team:%s:role:%s", teamRes.Id.Resource, level),
+			}),
+			entitlement.WithDisplayName(fmt.Sprintf("%s Team %s", teamRes.DisplayName, titleCase(level))),
+			entitlement.WithDescription(fmt.Sprintf("Access to %s team in GitHub", teamRes.DisplayName)),
+			entitlement.WithGrantableTo(resourceTypeUser),
+		))
+	}
+
+	// Fetch grants for the newly created team by listing members
+	var grants []*v2.Grant
+	for _, role := range teamAccessLevels {
+		opts := &github.TeamListTeamMembersOptions{
+			Role: role,
+			ListOptions: github.ListOptions{
+				PerPage: maxPageSize,
+			},
+		}
+		members, _, err := o.client.Teams.ListTeamMembersByID(ctx, createdTeam.GetOrganization().GetID(), createdTeam.GetID(), opts)
+		if err != nil {
+			l.Warn("github-connector: failed to list team members for grants",
+				zap.Error(err),
+				zap.String("role", role),
+			)
+			continue
+		}
+		for _, member := range members {
+			ur, err := userResource(ctx, member, member.GetEmail(), nil)
+			if err != nil {
+				continue
+			}
+			grants = append(grants, grant.NewGrant(teamRes, role, ur.Id,
+				grant.WithAnnotation(&v2.V1Identifier{
+					Id: fmt.Sprintf("team-grant:%s:%d:%s", teamRes.Id.Resource, member.GetID(), role),
+				}),
+			))
+		}
+	}
+
 	// Build return values using SDK helpers
-	resourceRv, err := actions.NewResourceReturnField("resource", resource)
+	resourceRv, err := actions.NewResourceReturnField("resource", teamRes)
 	if err != nil {
 		return nil, annos, err
 	}
 
-	return actions.NewReturnValues(true, resourceRv), annos, nil
+	entitlementsRv, err := actions.NewEntitlementListReturnField("entitlements", entitlements)
+	if err != nil {
+		return nil, annos, err
+	}
+
+	grantsRv, err := actions.NewGrantListReturnField("grants", grants)
+	if err != nil {
+		return nil, annos, err
+	}
+
+	return actions.NewReturnValues(true, resourceRv, entitlementsRv, grantsRv), annos, nil
 }
 
 func teamBuilder(client *github.Client, orgCache *orgNameCache) *teamResourceType {

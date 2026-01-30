@@ -461,14 +461,20 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 		Arguments: []*config.Field{
 			{
 				Name:        "name",
-				DisplayName: "Repository Name",
+				DisplayName: "Repository name",
 				Description: "The name of the repository to create",
 				Field:       &config.Field_StringField{},
 				IsRequired:  true,
 			},
 			{
-				Name:        "parent",
-				DisplayName: "Parent Organization",
+				Name:        "description",
+				DisplayName: "Description",
+				Description: "A description of the repository",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "org",
+				DisplayName: "Organization",
 				Description: "The organization to create the repository in",
 				Field: &config.Field_ResourceIdField{
 					ResourceIdField: &config.ResourceIdField{
@@ -480,60 +486,27 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 				IsRequired: true,
 			},
 			{
-				Name:        "description",
-				DisplayName: "Description",
-				Description: "A description of the repository",
-				Field:       &config.Field_StringField{},
-			},
-			{
-				Name:        "private",
-				DisplayName: "Private",
-				Description: "Whether the repository should be private (true/false)",
-				Field:       &config.Field_BoolField{},
-			},
-			{
 				Name:        "visibility",
 				DisplayName: "Visibility",
 				Description: "The visibility level of the repository",
 				Field: &config.Field_StringField{
 					StringField: &config.StringField{
 						Options: []*config.StringFieldOption{
-							{Value: "public", DisplayName: "Public"},
-							{Value: "private", DisplayName: "Private"},
-							{Value: "internal", DisplayName: "Internal (Enterprise only)"},
+							{Value: "public", DisplayName: "Public", Name: "Anyone on the internet can view this repository"},
+							{Value: "private", DisplayName: "Private", Name: "You can choose who can see this repository"},
 						},
 					},
 				},
 			},
 			{
-				Name:        "has_issues",
-				DisplayName: "Has Issues",
-				Description: "Enable issues for this repository (true/false)",
-				Field:       &config.Field_BoolField{},
-			},
-			{
-				Name:        "has_projects",
-				DisplayName: "Has Projects",
-				Description: "Enable projects for this repository (true/false)",
-				Field:       &config.Field_BoolField{},
-			},
-			{
-				Name:        "has_wiki",
-				DisplayName: "Has Wiki",
-				Description: "Enable wiki for this repository (true/false)",
-				Field:       &config.Field_BoolField{},
-			},
-			{
-				Name:        "has_discussions",
-				DisplayName: "Has Discussions",
-				Description: "Enable discussions for this repository (true/false)",
-				Field:       &config.Field_BoolField{},
-			},
-			{
-				Name:        "auto_init",
-				DisplayName: "Auto Initialize",
-				Description: "Create an initial commit with empty README (true/false)",
-				Field:       &config.Field_BoolField{},
+				Name:        "add_readme",
+				DisplayName: "Add README.md",
+				Description: "Add a README.md file to the repository",
+				Field: &config.Field_BoolField{
+					BoolField: &config.BoolField{
+						DefaultValue: true,
+					},
+				},
 			},
 			{
 				Name:        "gitignore_template",
@@ -542,7 +515,7 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 				Field: &config.Field_StringField{
 					StringField: &config.StringField{
 						Options: []*config.StringFieldOption{
-							{Value: "", DisplayName: "None"},
+							{Value: "", DisplayName: "No .gitignore template"},
 							{Value: "Go", DisplayName: "Go"},
 							{Value: "Python", DisplayName: "Python"},
 							{Value: "Node", DisplayName: "Node"},
@@ -566,7 +539,7 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 				Field: &config.Field_StringField{
 					StringField: &config.StringField{
 						Options: []*config.StringFieldOption{
-							{Value: "", DisplayName: "None"},
+							{Value: "", DisplayName: "No license"},
 							{Value: "mit", DisplayName: "MIT License"},
 							{Value: "apache-2.0", DisplayName: "Apache License 2.0"},
 							{Value: "gpl-3.0", DisplayName: "GNU GPLv3"},
@@ -580,42 +553,6 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 						},
 					},
 				},
-			},
-			{
-				Name:        "allow_squash_merge",
-				DisplayName: "Allow Squash Merge",
-				Description: "Allow squash-merging pull requests (true/false)",
-				Field:       &config.Field_BoolField{},
-			},
-			{
-				Name:        "allow_merge_commit",
-				DisplayName: "Allow Merge Commit",
-				Description: "Allow merging pull requests with a merge commit (true/false)",
-				Field:       &config.Field_BoolField{},
-			},
-			{
-				Name:        "allow_rebase_merge",
-				DisplayName: "Allow Rebase Merge",
-				Description: "Allow rebase-merging pull requests (true/false)",
-				Field:       &config.Field_BoolField{},
-			},
-			{
-				Name:        "allow_auto_merge",
-				DisplayName: "Allow Auto Merge",
-				Description: "Allow auto-merge on pull requests (true/false)",
-				Field:       &config.Field_BoolField{},
-			},
-			{
-				Name:        "delete_branch_on_merge",
-				DisplayName: "Delete Branch on Merge",
-				Description: "Automatically delete head branches after pull requests are merged (true/false)",
-				Field:       &config.Field_BoolField{},
-			},
-			{
-				Name:        "is_template",
-				DisplayName: "Is Template",
-				Description: "Make this repository available as a template (true/false)",
-				Field:       &config.Field_BoolField{},
 			},
 		},
 		ReturnTypes: []*config.Field{
@@ -634,7 +571,7 @@ func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Contex
 		return nil, nil, err
 	}
 
-	parentResourceID, err := actions.RequireResourceIDArg(args, "parent")
+	parentResourceID, err := actions.RequireResourceIDArg(args, "org")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -660,12 +597,8 @@ func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Contex
 		newRepo.Description = github.Ptr(description)
 	}
 
-	if private, ok := actions.GetBoolArg(args, "private"); ok {
-		newRepo.Private = github.Ptr(private)
-	}
-
 	if visibility, ok := actions.GetStringArg(args, "visibility"); ok && visibility != "" {
-		if visibility == "public" || visibility == "private" || visibility == "internal" {
+		if visibility == "public" || visibility == "private" {
 			newRepo.Visibility = github.Ptr(visibility)
 		} else {
 			l.Warn("github-connector: invalid visibility value, using default",
@@ -674,24 +607,9 @@ func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Contex
 		}
 	}
 
-	if hasIssues, ok := actions.GetBoolArg(args, "has_issues"); ok {
-		newRepo.HasIssues = github.Ptr(hasIssues)
-	}
-
-	if hasProjects, ok := actions.GetBoolArg(args, "has_projects"); ok {
-		newRepo.HasProjects = github.Ptr(hasProjects)
-	}
-
-	if hasWiki, ok := actions.GetBoolArg(args, "has_wiki"); ok {
-		newRepo.HasWiki = github.Ptr(hasWiki)
-	}
-
-	if hasDiscussions, ok := actions.GetBoolArg(args, "has_discussions"); ok {
-		newRepo.HasDiscussions = github.Ptr(hasDiscussions)
-	}
-
-	if autoInit, ok := actions.GetBoolArg(args, "auto_init"); ok {
-		newRepo.AutoInit = github.Ptr(autoInit)
+	// add_readme maps to AutoInit in GitHub API
+	if addReadme, ok := actions.GetBoolArg(args, "add_readme"); ok {
+		newRepo.AutoInit = github.Ptr(addReadme)
 	}
 
 	if gitignoreTemplate, ok := actions.GetStringArg(args, "gitignore_template"); ok && gitignoreTemplate != "" {
@@ -700,30 +618,6 @@ func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Contex
 
 	if licenseTemplate, ok := actions.GetStringArg(args, "license_template"); ok && licenseTemplate != "" {
 		newRepo.LicenseTemplate = github.Ptr(licenseTemplate)
-	}
-
-	if allowSquashMerge, ok := actions.GetBoolArg(args, "allow_squash_merge"); ok {
-		newRepo.AllowSquashMerge = github.Ptr(allowSquashMerge)
-	}
-
-	if allowMergeCommit, ok := actions.GetBoolArg(args, "allow_merge_commit"); ok {
-		newRepo.AllowMergeCommit = github.Ptr(allowMergeCommit)
-	}
-
-	if allowRebaseMerge, ok := actions.GetBoolArg(args, "allow_rebase_merge"); ok {
-		newRepo.AllowRebaseMerge = github.Ptr(allowRebaseMerge)
-	}
-
-	if allowAutoMerge, ok := actions.GetBoolArg(args, "allow_auto_merge"); ok {
-		newRepo.AllowAutoMerge = github.Ptr(allowAutoMerge)
-	}
-
-	if deleteBranchOnMerge, ok := actions.GetBoolArg(args, "delete_branch_on_merge"); ok {
-		newRepo.DeleteBranchOnMerge = github.Ptr(deleteBranchOnMerge)
-	}
-
-	if isTemplate, ok := actions.GetBoolArg(args, "is_template"); ok {
-		newRepo.IsTemplate = github.Ptr(isTemplate)
 	}
 
 	// Create the repository via GitHub API
@@ -750,11 +644,88 @@ func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Contex
 		return nil, annos, fmt.Errorf("failed to create resource representation: %w", err)
 	}
 
+	// Generate entitlements for the newly created repository
+	entitlements := make([]*v2.Entitlement, 0, len(repoAccessLevels))
+	for _, level := range repoAccessLevels {
+		entitlements = append(entitlements, entitlement.NewPermissionEntitlement(repoResource, level,
+			entitlement.WithDisplayName(fmt.Sprintf("%s Repo %s", repoResource.DisplayName, titleCase(level))),
+			entitlement.WithDescription(fmt.Sprintf("Access to %s repository in GitHub", repoResource.DisplayName)),
+			entitlement.WithAnnotation(&v2.V1Identifier{
+				Id: fmt.Sprintf("repo:%s:role:%s", repoResource.Id.Resource, level),
+			}),
+			entitlement.WithGrantableTo(resourceTypeUser, resourceTypeTeam),
+		))
+	}
+
+	// Fetch grants for the newly created repository by listing collaborators
+	var grants []*v2.Grant
+
+	// List user collaborators
+	collabOpts := &github.ListCollaboratorsOptions{
+		Affiliation: "all",
+		ListOptions: github.ListOptions{
+			PerPage: maxPageSize,
+		},
+	}
+	users, _, err := o.client.Repositories.ListCollaborators(ctx, orgName, createdRepo.GetName(), collabOpts)
+	if err != nil {
+		l.Warn("github-connector: failed to list collaborators for grants", zap.Error(err))
+	} else {
+		for _, user := range users {
+			for permission, hasPermission := range user.Permissions {
+				if !hasPermission {
+					continue
+				}
+				ur, err := userResource(ctx, user, user.GetEmail(), nil)
+				if err != nil {
+					continue
+				}
+				g := grant.NewGrant(repoResource, permission, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
+					Id: fmt.Sprintf("repo-grant:%s:%d:%s", repoResource.Id.Resource, user.GetID(), permission),
+				}))
+				g.Principal = ur
+				grants = append(grants, g)
+			}
+		}
+	}
+
+	// List team collaborators
+	teamOpts := &github.ListOptions{
+		PerPage: maxPageSize,
+	}
+	teams, _, err := o.client.Repositories.ListTeams(ctx, orgName, createdRepo.GetName(), teamOpts)
+	if err != nil {
+		l.Warn("github-connector: failed to list teams for grants", zap.Error(err))
+	} else {
+		for _, team := range teams {
+			permission := team.GetPermission()
+			tr, err := teamResource(team, parentResourceID)
+			if err != nil {
+				continue
+			}
+			g := grant.NewGrant(repoResource, permission, tr.Id, grant.WithAnnotation(&v2.V1Identifier{
+				Id: fmt.Sprintf("repo-grant:%s:%d:%s", repoResource.Id.Resource, team.GetID(), permission),
+			}))
+			g.Principal = tr
+			grants = append(grants, g)
+		}
+	}
+
 	// Build return values using SDK helpers
 	resourceRv, err := actions.NewResourceReturnField("resource", repoResource)
 	if err != nil {
 		return nil, annos, err
 	}
 
-	return actions.NewReturnValues(true, resourceRv), annos, nil
+	entitlementsRv, err := actions.NewEntitlementListReturnField("entitlements", entitlements)
+	if err != nil {
+		return nil, annos, err
+	}
+
+	grantsRv, err := actions.NewGrantListReturnField("grants", grants)
+	if err != nil {
+		return nil, annos, err
+	}
+
+	return actions.NewReturnValues(true, resourceRv, entitlementsRv, grantsRv), annos, nil
 }
