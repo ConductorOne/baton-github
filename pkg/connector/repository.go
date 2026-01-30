@@ -608,9 +608,7 @@ func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Contex
 		if visibility == "public" || visibility == "private" {
 			newRepo.Visibility = github.Ptr(visibility)
 		} else {
-			l.Warn("github-connector: invalid visibility value, using default",
-				zap.String("provided_visibility", visibility),
-			)
+			return nil, nil, fmt.Errorf("invalid visibility: %q (must be \"public\" or \"private\")", visibility)
 		}
 	}
 
@@ -657,69 +655,21 @@ func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Contex
 		return nil, annos, fmt.Errorf("failed to generate entitlements: %w", err)
 	}
 
-	// Fetch grants for the newly created repository by listing collaborators
+	// Fetch grants for the newly created repository by reusing the existing Grants method
 	var grants []*v2.Grant
-
-	// List user collaborators
-	collabOpts := &github.ListCollaboratorsOptions{
-		Affiliation: "all",
-		ListOptions: github.ListOptions{
-			PerPage: maxPageSize,
-		},
-	}
-	users, _, err := o.client.Repositories.ListCollaborators(ctx, orgName, createdRepo.GetName(), collabOpts)
-	if err != nil {
-		l.Warn("github-connector: failed to list collaborators for grants", zap.Error(err))
-	} else {
-		for _, user := range users {
-			for permission, hasPermission := range user.Permissions {
-				if !hasPermission {
-					continue
-				}
-				ur, err := userResource(ctx, user, user.GetEmail(), nil)
-				if err != nil {
-					continue
-				}
-				g := grant.NewGrant(repoResource, permission, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
-					Id: fmt.Sprintf("repo-grant:%s:%d:%s", repoResource.Id.Resource, user.GetID(), permission),
-				}))
-				g.Principal = ur
-				grants = append(grants, g)
-			}
+	pageToken := ""
+	for {
+		pToken := &pagination.Token{Token: pageToken}
+		pageGrants, nextToken, _, err := o.Grants(ctx, repoResource, pToken)
+		if err != nil {
+			l.Warn("github-connector: failed to fetch grants for repository", zap.Error(err))
+			break
 		}
-	}
-
-	// List team collaborators
-	teamOpts := &github.ListOptions{
-		PerPage: maxPageSize,
-	}
-	teams, _, err := o.client.Repositories.ListTeams(ctx, orgName, createdRepo.GetName(), teamOpts)
-	if err != nil {
-		l.Warn("github-connector: failed to list teams for grants", zap.Error(err))
-	} else {
-		for _, team := range teams {
-			for permission, hasPermission := range team.Permissions {
-				if !hasPermission {
-					continue
-				}
-				tr, err := teamResource(team, parentResourceID)
-				if err != nil {
-					continue
-				}
-				grants = append(grants, grant.NewGrant(repoResource, permission, tr.Id, grant.WithAnnotation(
-					&v2.V1Identifier{
-						Id: fmt.Sprintf("repo-grant:%s:%d:%s", repoResource.Id.Resource, team.GetID(), permission),
-					},
-					&v2.GrantExpandable{
-						EntitlementIds: []string{
-							entitlement.NewEntitlementID(tr, teamRoleMaintainer),
-							entitlement.NewEntitlementID(tr, teamRoleMember),
-						},
-						Shallow: true,
-					},
-				)))
-			}
+		grants = append(grants, pageGrants...)
+		if nextToken == "" {
+			break
 		}
+		pageToken = nextToken
 	}
 
 	// Build return values using SDK helpers

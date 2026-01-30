@@ -628,34 +628,21 @@ func (o *teamResourceType) handleCreateTeamAction(ctx context.Context, args *str
 		return nil, annos, fmt.Errorf("failed to generate entitlements: %w", err)
 	}
 
-	// Fetch grants for the newly created team by listing members
+	// Fetch grants for the newly created team by reusing the existing Grants method
 	var grants []*v2.Grant
-	for _, role := range teamAccessLevels {
-		opts := &github.TeamListTeamMembersOptions{
-			Role: role,
-			ListOptions: github.ListOptions{
-				PerPage: maxPageSize,
-			},
-		}
-		members, _, err := o.client.Teams.ListTeamMembersByID(ctx, createdTeam.GetOrganization().GetID(), createdTeam.GetID(), opts)
+	pageToken := ""
+	for {
+		pToken := &pagination.Token{Token: pageToken}
+		pageGrants, nextToken, _, err := o.Grants(ctx, teamRes, pToken)
 		if err != nil {
-			l.Warn("github-connector: failed to list team members for grants",
-				zap.Error(err),
-				zap.String("role", role),
-			)
-			continue
+			l.Warn("github-connector: failed to fetch grants for team", zap.Error(err))
+			break
 		}
-		for _, member := range members {
-			ur, err := userResource(ctx, member, member.GetEmail(), nil)
-			if err != nil {
-				continue
-			}
-			grants = append(grants, grant.NewGrant(teamRes, role, ur.Id,
-				grant.WithAnnotation(&v2.V1Identifier{
-					Id: fmt.Sprintf("team-grant:%s:%d:%s", teamRes.Id.Resource, member.GetID(), role),
-				}),
-			))
+		grants = append(grants, pageGrants...)
+		if nextToken == "" {
+			break
 		}
+		pageToken = nextToken
 	}
 
 	// Build return values using SDK helpers
