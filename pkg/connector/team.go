@@ -622,17 +622,10 @@ func (o *teamResourceType) handleCreateTeamAction(ctx context.Context, args *str
 		return nil, annos, fmt.Errorf("failed to create resource representation: %w", err)
 	}
 
-	// Generate entitlements for the newly created team
-	entitlements := make([]*v2.Entitlement, 0, len(teamAccessLevels))
-	for _, level := range teamAccessLevels {
-		entitlements = append(entitlements, entitlement.NewPermissionEntitlement(teamRes, level,
-			entitlement.WithAnnotation(&v2.V1Identifier{
-				Id: fmt.Sprintf("team:%s:role:%s", teamRes.Id.Resource, level),
-			}),
-			entitlement.WithDisplayName(fmt.Sprintf("%s Team %s", teamRes.DisplayName, titleCase(level))),
-			entitlement.WithDescription(fmt.Sprintf("Access to %s team in GitHub", teamRes.DisplayName)),
-			entitlement.WithGrantableTo(resourceTypeUser),
-		))
+	// Generate entitlements for the newly created team (reuse existing method)
+	entitlements, _, _, err := o.Entitlements(ctx, teamRes, nil)
+	if err != nil {
+		return nil, annos, fmt.Errorf("failed to generate entitlements: %w", err)
 	}
 
 	// Fetch grants for the newly created team by listing members

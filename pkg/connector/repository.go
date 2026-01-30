@@ -651,17 +651,10 @@ func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Contex
 		return nil, annos, fmt.Errorf("failed to create resource representation: %w", err)
 	}
 
-	// Generate entitlements for the newly created repository
-	entitlements := make([]*v2.Entitlement, 0, len(repoAccessLevels))
-	for _, level := range repoAccessLevels {
-		entitlements = append(entitlements, entitlement.NewPermissionEntitlement(repoResource, level,
-			entitlement.WithDisplayName(fmt.Sprintf("%s Repo %s", repoResource.DisplayName, titleCase(level))),
-			entitlement.WithDescription(fmt.Sprintf("Access to %s repository in GitHub", repoResource.DisplayName)),
-			entitlement.WithAnnotation(&v2.V1Identifier{
-				Id: fmt.Sprintf("repo:%s:role:%s", repoResource.Id.Resource, level),
-			}),
-			entitlement.WithGrantableTo(resourceTypeUser, resourceTypeTeam),
-		))
+	// Generate entitlements for the newly created repository (reuse existing method)
+	entitlements, _, _, err := o.Entitlements(ctx, repoResource, nil)
+	if err != nil {
+		return nil, annos, fmt.Errorf("failed to generate entitlements: %w", err)
 	}
 
 	// Fetch grants for the newly created repository by listing collaborators
