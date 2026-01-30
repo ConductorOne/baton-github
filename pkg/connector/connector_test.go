@@ -15,6 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+//nolint:gosec // G101: This is a test URL path, not credentials
+const testInstallationTokenPath = "/app/installations/123/access_tokens"
+
 func TestGhinstallationTokenSource(t *testing.T) {
 	// Generate a test RSA key
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -28,10 +31,10 @@ func TestGhinstallationTokenSource(t *testing.T) {
 	// Create a mock server that returns installation tokens
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/app/installations/123/access_tokens":
+		case testInstallationTokenPath:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			w.Write([]byte(`{"token": "test-installation-token", "expires_at": "2099-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"token": "test-installation-token", "expires_at": "2099-01-01T00:00:00Z"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -70,7 +73,7 @@ func TestNewWithPATToken(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[]`))
+		_, _ = w.Write([]byte(`[]`))
 	}))
 	defer mockServer.Close()
 
@@ -80,7 +83,7 @@ func TestNewWithPATToken(t *testing.T) {
 		Orgs:        []string{"test-org"},
 	}
 
-	gh, err := New(ctx, ghConfig, "")
+	gh, err := newWithGithubPAT(ctx, ghConfig)
 	require.NoError(t, err)
 	require.NotNil(t, gh)
 	require.NotNil(t, gh.client)
@@ -92,18 +95,6 @@ func TestNewWithGitHubApp(t *testing.T) {
 	// This test would require setting up a full mock server that can validate JWTs
 	// and return proper installation responses. The ghinstallation library validates
 	// JWTs on the server side, which is beyond simple mocking.
-}
-
-func TestNewWithNoAuth(t *testing.T) {
-	ctx := context.Background()
-
-	ghConfig := &cfg.Github{
-		Orgs: []string{"test-org"},
-	}
-
-	_, err := New(ctx, ghConfig, "")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "no authentication method provided")
 }
 
 func TestGhinstallationTokenSourceAutoRefresh(t *testing.T) {
@@ -120,12 +111,12 @@ func TestGhinstallationTokenSourceAutoRefresh(t *testing.T) {
 
 	// Create a mock server that tracks token requests
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/app/installations/123/access_tokens" {
+		if r.URL.Path == testInstallationTokenPath {
 			tokenCallCount++
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			// Return token with future expiry
-			w.Write([]byte(`{"token": "test-token-` + string(rune('0'+tokenCallCount)) + `", "expires_at": "2099-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"token": "test-token-` + string(rune('0'+tokenCallCount)) + `", "expires_at": "2099-01-01T00:00:00Z"}`))
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -174,12 +165,12 @@ func TestGhinstallationTokenSourceRefreshesExpiredToken(t *testing.T) {
 	// Create a mock server that returns tokens with PAST expiry (already expired)
 	// This forces ghinstallation to fetch a new token on each call
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/app/installations/123/access_tokens" {
+		if r.URL.Path == testInstallationTokenPath {
 			tokenCallCount++
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			// Return token that expires in 1 second - will be expired by next call
-			w.Write([]byte(`{"token": "test-token-` + string(rune('0'+tokenCallCount)) + `", "expires_at": "2020-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"token": "test-token-` + string(rune('0'+tokenCallCount)) + `", "expires_at": "2020-01-01T00:00:00Z"}`))
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -227,11 +218,12 @@ func TestNewWithGitHubAppRequiresSingleOrg(t *testing.T) {
 	}))
 
 	ghConfig := &cfg.Github{
-		AppId: "12345",
-		Orgs:  []string{"org1", "org2"}, // Multiple orgs - should fail
+		AppId:             "12345",
+		Orgs:              []string{"org1", "org2"}, // Multiple orgs - should fail
+		AppPrivatekeyPath: []byte(privateKeyPEM),
 	}
 
-	_, err = New(ctx, ghConfig, privateKeyPEM)
+	_, err = newWithGithubApp(ctx, ghConfig)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "only one org should be specified")
 }

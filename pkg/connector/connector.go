@@ -3,7 +3,6 @@ package connector
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -412,20 +411,6 @@ func findInstallation(ctx context.Context, c *github.Client, orgName string) (*g
 	return installation, nil
 }
 
-func getInstallationToken(ctx context.Context, c *github.Client, id int64) (*github.InstallationToken, error) {
-	token, resp, err := c.Apps.CreateInstallationToken(ctx, id, &github.InstallationTokenOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API error: %s", body)
-	}
-
-	return token, nil
-}
-
 // ghinstallationTokenSource wraps ghinstallation.Transport to implement oauth2.TokenSource
 // for use with the GraphQL client.
 type ghinstallationTokenSource struct {
@@ -437,10 +422,12 @@ func (g *ghinstallationTokenSource) Token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Use actual token expiry from ghinstallation transport
-	expiresAt, _, err := g.transport.Expiry()
-	if err != nil {
-		// Fallback: force re-evaluation if expiry unavailable
+	// Use actual token expiry from ghinstallation transport.
+	// If Expiry() fails, fallback to forcing re-evaluation by returning
+	// time.Now() which will cause oauth2 to refresh the token.
+	expiresAt, _, expiryErr := g.transport.Expiry()
+	if expiryErr != nil {
+		//nolint:nilerr // Intentional: gracefully degrade when expiry unavailable
 		return &oauth2.Token{AccessToken: token, Expiry: time.Now()}, nil
 	}
 	return &oauth2.Token{AccessToken: token, Expiry: expiresAt}, nil
