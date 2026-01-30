@@ -438,6 +438,7 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 							{Value: "secret", Name: "Secret is only visible to org owners and team members", DisplayName: "Secret"},
 							{Value: "closed", Name: "Closed is visible to all org members. When parent team is set, this is the only allowed privacy level.", DisplayName: "Closed"},
 						},
+						DefaultValue: "closed",
 					},
 				},
 			},
@@ -479,6 +480,12 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 		ReturnTypes: []*config.Field{
 			{Name: "success", Field: &config.Field_BoolField{}},
 			{Name: "resource", Field: &config.Field_ResourceField{}},
+			{Name: "entitlements", DisplayName: "Entitlements", Field: &config.Field_EntitlementSliceField{
+				EntitlementSliceField: &config.EntitlementSliceField{},
+			}},
+			{Name: "grants", DisplayName: "Grants", Field: &config.Field_GrantSliceField{
+				GrantSliceField: &config.GrantSliceField{},
+			}},
 		},
 	}, o.handleCreateTeamAction)
 }

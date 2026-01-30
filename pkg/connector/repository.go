@@ -495,6 +495,7 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 							{Value: "public", DisplayName: "Public", Name: "Anyone on the internet can view this repository"},
 							{Value: "private", DisplayName: "Private", Name: "You can choose who can see this repository"},
 						},
+						DefaultValue: "private",
 					},
 				},
 			},
@@ -558,6 +559,12 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 		ReturnTypes: []*config.Field{
 			{Name: "success", Field: &config.Field_BoolField{}},
 			{Name: "resource", Field: &config.Field_ResourceField{}},
+			{Name: "entitlements", DisplayName: "Entitlements", Field: &config.Field_EntitlementSliceField{
+				EntitlementSliceField: &config.EntitlementSliceField{},
+			}},
+			{Name: "grants", DisplayName: "Grants", Field: &config.Field_GrantSliceField{
+				GrantSliceField: &config.GrantSliceField{},
+			}},
 		},
 	}, o.handleCreateRepositoryAction)
 }
@@ -698,16 +705,27 @@ func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Contex
 		l.Warn("github-connector: failed to list teams for grants", zap.Error(err))
 	} else {
 		for _, team := range teams {
-			permission := team.GetPermission()
-			tr, err := teamResource(team, parentResourceID)
-			if err != nil {
-				continue
+			for permission, hasPermission := range team.Permissions {
+				if !hasPermission {
+					continue
+				}
+				tr, err := teamResource(team, parentResourceID)
+				if err != nil {
+					continue
+				}
+				grants = append(grants, grant.NewGrant(repoResource, permission, tr.Id, grant.WithAnnotation(
+					&v2.V1Identifier{
+						Id: fmt.Sprintf("repo-grant:%s:%d:%s", repoResource.Id.Resource, team.GetID(), permission),
+					},
+					&v2.GrantExpandable{
+						EntitlementIds: []string{
+							entitlement.NewEntitlementID(tr, teamRoleMaintainer),
+							entitlement.NewEntitlementID(tr, teamRoleMember),
+						},
+						Shallow: true,
+					},
+				)))
 			}
-			g := grant.NewGrant(repoResource, permission, tr.Id, grant.WithAnnotation(&v2.V1Identifier{
-				Id: fmt.Sprintf("repo-grant:%s:%d:%s", repoResource.Id.Resource, team.GetID(), permission),
-			}))
-			g.Principal = tr
-			grants = append(grants, g)
 		}
 	}
 
