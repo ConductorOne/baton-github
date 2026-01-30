@@ -30,6 +30,9 @@ import (
 
 const githubDotCom = "https://github.com"
 
+// The JWT token expires in 10 minutes, so we set it to 9 minutes to leave some buffer.
+const jwtExpiryTime = 9 * time.Minute
+
 var (
 	ValidAssetDomains     = []string{"avatars.githubusercontent.com"}
 	maxPageSize       int = 100 // maximum page size github supported.
@@ -219,9 +222,9 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 		return nil, fmt.Errorf("github-connector: only one org is allowed when using github app")
 	}
 
-	_, resp, err := findInstallation(ctx, gh.appClient, orgLogins[0])
+	_, err := findInstallation(ctx, gh.appClient, orgLogins[0])
 	if err != nil {
-		return nil, wrapGitHubError(err, resp, "github-connector: failed to retrieve org installation")
+		return nil, err
 	}
 	return nil, nil
 }
@@ -273,9 +276,9 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 		if err != nil {
 			return nil, err
 		}
-		installation, resp, err := findInstallation(ctx, appClient, ghc.Orgs[0])
+		installation, err := findInstallation(ctx, appClient, ghc.Orgs[0])
 		if err != nil {
-			return nil, wrapGitHubError(err, resp, "github-connector: failed to find app installation")
+			return nil, err
 		}
 
 		token, err := getInstallationToken(ctx, appClient, installation.GetID())
@@ -292,7 +295,16 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 				ctx:            ctx,
 				instanceURL:    ghc.InstanceUrl,
 				installationID: installation.GetID(),
-				jwttoken:       jwttoken,
+				jwtTokenSource: oauth2.ReuseTokenSource(
+					&oauth2.Token{
+						AccessToken: jwttoken,
+						Expiry:      time.Now().Add(jwtExpiryTime),
+					},
+					&appJWTTokenRefresher{
+						appID:      ghc.AppId,
+						privateKey: appKey,
+					},
+				),
 			},
 		)
 	}
@@ -377,28 +389,36 @@ func getClientToken(ghc *cfg.Github, privateKey string) (string, string, error) 
 		return "", ghc.Token, nil
 	}
 
-	key, err := loadPrivateKeyFromString(privateKey)
-	if err != nil {
-		return "", "", err
-	}
-	now := time.Now()
-	token, err := jwtv5.NewWithClaims(jwtv5.SigningMethodRS256, jwtv5.MapClaims{
-		"iat": now.Unix() - 60,                  // issued at
-		"exp": now.Add(time.Minute * 10).Unix(), // expires
-		"iss": ghc.AppId,                        // GitHub App ID
-	}).SignedString(key)
+	token, err := getJWTToken(ghc.AppId, privateKey)
 	if err != nil {
 		return "", "", err
 	}
 	return token, "", nil
 }
 
-func findInstallation(ctx context.Context, c *github.Client, orgName string) (*github.Installation, *github.Response, error) {
+func getJWTToken(appID string, privateKey string) (string, error) {
+	key, err := loadPrivateKeyFromString(privateKey)
+	if err != nil {
+		return "", err
+	}
+	now := time.Now()
+	token, err := jwtv5.NewWithClaims(jwtv5.SigningMethodRS256, jwtv5.MapClaims{
+		"iat": now.Unix() - 60,                  // issued at
+		"exp": now.Add(time.Minute * 10).Unix(), // expires
+		"iss": appID,                            // GitHub App ID
+	}).SignedString(key)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func findInstallation(ctx context.Context, c *github.Client, orgName string) (*github.Installation, error) {
 	installation, resp, err := c.Apps.FindOrganizationInstallation(ctx, orgName)
 	if err != nil {
-		return nil, nil, err
+		return nil, wrapGitHubError(err, resp, "github-connector: failed to find installation")
 	}
-	return installation, resp, nil
+	return installation, nil
 }
 
 func getInstallationToken(ctx context.Context, c *github.Client, id int64) (*github.InstallationToken, error) {
@@ -415,9 +435,27 @@ func getInstallationToken(ctx context.Context, c *github.Client, id int64) (*git
 	return token, nil
 }
 
+// appJWTTokenRefresher is used to refresh the app jwt token when it expires.
+type appJWTTokenRefresher struct {
+	appID      string
+	privateKey string
+}
+
+func (r *appJWTTokenRefresher) Token() (*oauth2.Token, error) {
+	token, err := getJWTToken(r.appID, r.privateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return &oauth2.Token{
+		AccessToken: token,
+		Expiry:      time.Now().Add(jwtExpiryTime),
+	}, nil
+}
+
 type appTokenRefresher struct {
 	ctx            context.Context
-	jwttoken       string
+	jwtTokenSource oauth2.TokenSource
 	instanceURL    string
 	installationID int64
 }
@@ -425,9 +463,7 @@ type appTokenRefresher struct {
 func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
 	appClient, err := newGitHubClient(r.ctx,
 		r.instanceURL,
-		oauth2.StaticTokenSource(
-			&oauth2.Token{AccessToken: r.jwttoken},
-		),
+		r.jwtTokenSource,
 	)
 	if err != nil {
 		return nil, err
