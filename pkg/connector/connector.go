@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	cfg "github.com/conductorone/baton-github/pkg/config"
@@ -320,6 +321,12 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	}
 
 	appClient := github.NewClient(&http.Client{Transport: appTransport})
+	if instanceURL != "" && instanceURL != githubDotCom {
+		appClient, err = appClient.WithEnterpriseURLs(instanceURL, instanceURL)
+		if err != nil {
+			return nil, fmt.Errorf("github-connector: failed to set enterprise URLs for app client: %w", err)
+		}
+	}
 
 	// Find installation for the org
 	installation, err := findInstallation(ctx, appClient, ghc.Orgs[0])
@@ -344,6 +351,12 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	}
 
 	ghClient := github.NewClient(&http.Client{Transport: installTransport})
+	if instanceURL != "" && instanceURL != githubDotCom {
+		ghClient, err = ghClient.WithEnterpriseURLs(instanceURL, instanceURL)
+		if err != nil {
+			return nil, fmt.Errorf("github-connector: failed to set enterprise URLs for install client: %w", err)
+		}
+	}
 
 	// Wrap for GraphQL client which needs oauth2.TokenSource
 	ts := &ghinstallationTokenSource{transport: installTransport}
@@ -424,7 +437,13 @@ func (g *ghinstallationTokenSource) Token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &oauth2.Token{AccessToken: token}, nil
+	// Use actual token expiry from ghinstallation transport
+	expiresAt, _, err := g.transport.Expiry()
+	if err != nil {
+		// Fallback: force re-evaluation if expiry unavailable
+		return &oauth2.Token{AccessToken: token, Expiry: time.Now()}, nil
+	}
+	return &oauth2.Token{AccessToken: token, Expiry: expiresAt}, nil
 }
 
 func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]string, error) {
