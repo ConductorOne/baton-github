@@ -179,6 +179,13 @@ func MakeMainCommand[T field.Configurable](
 			if v.GetBool("skip-full-sync") {
 				opts = append(opts, connectorrunner.WithFullSyncDisabled())
 			}
+			if v.GetBool("health-check") {
+				opts = append(opts, connectorrunner.WithHealthCheck(
+					true,
+					v.GetInt("health-check-port"),
+					v.GetString("health-check-bind-address"),
+				))
+			}
 		} else {
 			switch {
 			case v.GetString("grant-entitlement") != "":
@@ -373,7 +380,8 @@ func MakeMainCommand[T field.Configurable](
 			opts = append(opts, connectorrunner.WithSkipGrants(v.GetBool("skip-grants")))
 		}
 
-		c, err := getconnector(runCtx, t, RunTimeOpts{})
+		// Save the selected authentication method and get the connector.
+		c, err := getconnector(runCtx, t, RunTimeOpts{SelectedAuthMethod: v.GetString("auth-method")})
 		if err != nil {
 			return err
 		}
@@ -542,6 +550,7 @@ func MakeGRPCServerCommand[T field.Configurable](
 					otterOptions.MaximumWeight = uint64(sessionStoreMaximumSize)
 				}
 			}),
+			SelectedAuthMethod: v.GetString("auth-method"),
 		})
 		if err != nil {
 			return err
@@ -643,12 +652,13 @@ func MakeCapabilitiesCommand[T field.Configurable](
 			if err != nil {
 				return fmt.Errorf("failed to make configuration: %w", err)
 			}
+			authMethod := v.GetString("auth-method")
 			// validate required fields and relationship constraints
-			if err := field.Validate(confschema, t, field.WithAuthMethod(v.GetString("auth-method"))); err != nil {
+			if err := field.Validate(confschema, t, field.WithAuthMethod(authMethod)); err != nil {
 				return err
 			}
 
-			c, err = getconnector(runCtx, t, RunTimeOpts{})
+			c, err = getconnector(runCtx, t, RunTimeOpts{SelectedAuthMethod: authMethod})
 			if err != nil {
 				return err
 			}
