@@ -3,10 +3,10 @@ module github.com/conductorone/baton-github
 go 1.25.2
 
 require (
+	github.com/bradleyfalzon/ghinstallation/v2 v2.17.0
 	github.com/conductorone/baton-sdk v0.7.14
 	github.com/deckarep/golang-set/v2 v2.8.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
-	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/go-github/v69 v69.2.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/migueleliasweb/go-github-mock v1.1.0
@@ -62,8 +62,10 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
+	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/go-github/v64 v64.0.0 // indirect
+	github.com/google/go-github/v75 v75.0.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect

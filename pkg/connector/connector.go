@@ -2,17 +2,14 @@ package connector
 
 import (
 	"context"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
-	"time"
 
+	"github.com/bradleyfalzon/ghinstallation/v2"
 	cfg "github.com/conductorone/baton-github/pkg/config"
 	"github.com/conductorone/baton-github/pkg/customclient"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -20,7 +17,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/cli"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
@@ -30,9 +26,6 @@ import (
 )
 
 const githubDotCom = "https://github.com"
-
-// JWT token expires in 10 minutes, so we set it to 9 minutes to leave some buffer.
-const jwtExpiryTime = 9 * time.Minute
 
 var (
 	ValidAssetDomains     = []string{"avatars.githubusercontent.com"}
@@ -297,75 +290,80 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 }
 
 func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
-	jwttoken, err := getJWTToken(ghc.AppId, string(ghc.AppPrivatekeyPath))
-	if err != nil {
-		return nil, err
+	if len(ghc.Orgs) != 1 {
+		return nil, fmt.Errorf("github-connector: only one org should be specified for GitHub App authentication")
 	}
 
-	appClient, err := newGitHubClient(ctx,
-		ghc.InstanceUrl,
-		oauth2.StaticTokenSource(
-			&oauth2.Token{AccessToken: jwttoken},
-		),
+	// Parse App ID
+	appID, err := strconv.ParseInt(ghc.AppId, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("github-connector: invalid app-id: %w", err)
+	}
+
+	// Get the private key content
+	appKey := string(ghc.AppPrivatekeyPath)
+
+	// Create app transport for finding installation
+	appTransport, err := ghinstallation.NewAppsTransport(
+		http.DefaultTransport,
+		appID,
+		[]byte(appKey),
 	)
+	if err != nil {
+		return nil, fmt.Errorf("github-connector: failed to create app transport: %w", err)
+	}
 
+	// Set base URL for GitHub Enterprise
+	instanceURL := strings.TrimSuffix(ghc.InstanceUrl, "/")
+	if instanceURL != "" && instanceURL != githubDotCom {
+		appTransport.BaseURL = instanceURL + "/api/v3"
+	}
+
+	appClient := github.NewClient(&http.Client{Transport: appTransport})
+
+	// Find installation for the org
+	installation, err := findInstallation(ctx, appClient, ghc.Orgs[0])
 	if err != nil {
 		return nil, err
 	}
-	installation, err := findInstallation(ctx, appClient, ghc.Org)
-	if err != nil {
-		return nil, err
-	}
 
-	token, err := getInstallationToken(ctx, appClient, installation.GetID())
-	if err != nil {
-		return nil, err
-	}
-
-	ts := oauth2.ReuseTokenSource(
-		&oauth2.Token{
-			AccessToken: token.GetToken(),
-			Expiry:      token.GetExpiresAt().Time,
-		},
-		&appTokenRefresher{
-			ctx:            ctx,
-			instanceURL:    ghc.InstanceUrl,
-			installationID: installation.GetID(),
-			jwtTokenSource: oauth2.ReuseTokenSource(
-				&oauth2.Token{
-					AccessToken: jwttoken,
-					Expiry:      time.Now().Add(jwtExpiryTime),
-				},
-				&appJWTTokenRefresher{
-					appID:      ghc.AppId,
-					privateKey: string(ghc.AppPrivatekeyPath),
-				},
-			),
-		},
+	// Create installation transport - handles all token refresh automatically
+	installTransport, err := ghinstallation.New(
+		http.DefaultTransport,
+		appID,
+		installation.GetID(),
+		[]byte(appKey),
 	)
-
-	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("github-connector: failed to create installation transport: %w", err)
 	}
+
+	// Set base URL for GitHub Enterprise
+	if instanceURL != "" && instanceURL != githubDotCom {
+		installTransport.BaseURL = instanceURL + "/api/v3"
+	}
+
+	ghClient := github.NewClient(&http.Client{Transport: installTransport})
+
+	// Wrap for GraphQL client which needs oauth2.TokenSource
+	ts := &ghinstallationTokenSource{transport: installTransport}
 	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ts)
 	if err != nil {
 		return nil, err
 	}
 
-	gh := &GitHub{
+	return &GitHub{
 		client:                   ghClient,
 		appClient:                appClient,
 		customClient:             customclient.New(ghClient),
 		instanceURL:              ghc.InstanceUrl,
-		orgs:                     []string{ghc.Org},
+		orgs:                     ghc.Orgs,
 		enterprises:              ghc.Enterprises,
 		graphqlClient:            graphqlClient,
 		orgCache:                 newOrgNameCache(ghClient),
 		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
-	}
-	return gh, nil
+	}, nil
 }
 
 func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
@@ -393,46 +391,6 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.T
 	return githubv4.NewClient(tc), nil
 }
 
-func loadPrivateKeyFromString(p string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(p))
-	if block == nil || (block.Type != "PRIVATE KEY" && block.Type != "RSA PRIVATE KEY") {
-		return nil, errors.New("invalid private key PEM format")
-	}
-
-	// PKCS8 format
-	if block.Type == "PRIVATE KEY" {
-		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err != nil {
-			return nil, err
-		}
-		rsaKey, ok := key.(*rsa.PrivateKey)
-		if !ok {
-			return nil, errors.New("not an RSA private key")
-		}
-		return rsaKey, nil
-	}
-
-	// PKCS1 format
-	return x509.ParsePKCS1PrivateKey(block.Bytes)
-}
-
-func getJWTToken(appID string, privateKey string) (string, error) {
-	key, err := loadPrivateKeyFromString(privateKey)
-	if err != nil {
-		return "", err
-	}
-	now := time.Now()
-	token, err := jwtv5.NewWithClaims(jwtv5.SigningMethodRS256, jwtv5.MapClaims{
-		"iat": now.Unix() - 60,                  // issued at
-		"exp": now.Add(time.Minute * 10).Unix(), // expires
-		"iss": appID,                            // GitHub App ID
-	}).SignedString(key)
-	if err != nil {
-		return "", err
-	}
-	return token, nil
-}
-
 func findInstallation(ctx context.Context, c *github.Client, orgName string) (*github.Installation, error) {
 	installation, resp, err := c.Apps.FindOrganizationInstallation(ctx, orgName)
 	if err != nil {
@@ -455,48 +413,18 @@ func getInstallationToken(ctx context.Context, c *github.Client, id int64) (*git
 	return token, nil
 }
 
-// appJWTTokenRefresher is used to refresh the app jwt token when it expires.
-type appJWTTokenRefresher struct {
-	appID      string
-	privateKey string
+// ghinstallationTokenSource wraps ghinstallation.Transport to implement oauth2.TokenSource
+// for use with the GraphQL client.
+type ghinstallationTokenSource struct {
+	transport *ghinstallation.Transport
 }
 
-func (r *appJWTTokenRefresher) Token() (*oauth2.Token, error) {
-	token, err := getJWTToken(r.appID, r.privateKey)
+func (g *ghinstallationTokenSource) Token() (*oauth2.Token, error) {
+	token, err := g.transport.Token(context.Background())
 	if err != nil {
 		return nil, err
 	}
-
-	return &oauth2.Token{
-		AccessToken: token,
-		Expiry:      time.Now().Add(jwtExpiryTime),
-	}, nil
-}
-
-type appTokenRefresher struct {
-	ctx            context.Context
-	jwtTokenSource oauth2.TokenSource
-	instanceURL    string
-	installationID int64
-}
-
-func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
-	appClient, err := newGitHubClient(r.ctx,
-		r.instanceURL,
-		r.jwtTokenSource,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	token, err := getInstallationToken(r.ctx, appClient, r.installationID)
-	if err != nil {
-		return nil, err
-	}
-	return &oauth2.Token{
-		AccessToken: token.GetToken(),
-		Expiry:      token.GetExpiresAt().Time,
-	}, nil
+	return &oauth2.Token{AccessToken: token}, nil
 }
 
 func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]string, error) {
