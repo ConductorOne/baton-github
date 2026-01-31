@@ -275,7 +275,7 @@ func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
 		}
 		installation, resp, err := findInstallation(ctx, appClient, ghc.Orgs[0])
 		if err != nil {
-			return nil, wrapGitHubError(err, resp, "github-connector: failed to find app installation")
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to find app installation hello")
 		}
 
 		token, err := getInstallationToken(ctx, appClient, installation.GetID())
