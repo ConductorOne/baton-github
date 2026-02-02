@@ -30,7 +30,7 @@ import (
 
 const githubDotCom = "https://github.com"
 
-// The JWT token expires in 10 minutes, so we set it to 9 minutes to leave some buffer.
+// JWT token expires in 10 minutes, so we set it to 9 minutes to leave some buffer.
 const jwtExpiryTime = 9 * time.Minute
 
 var (
