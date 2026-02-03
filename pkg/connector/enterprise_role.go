@@ -8,8 +8,6 @@ import (
 
 	"github.com/conductorone/baton-github/pkg/customclient"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
-	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -82,12 +80,12 @@ func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
 func (o *enterpriseRoleResourceType) List(
 	ctx context.Context,
 	parentID *v2.ResourceId,
-	pToken *pagination.Token,
-) ([]*v2.Resource, string, annotations.Annotations, error) {
+	opts resourceSdk.SyncOpAttrs,
+) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
 	var ret []*v2.Resource
 	cache, err := o.getRoleUsersCache(ctx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("baton-github: error getting user roles cache: %w", err)
+		return nil, nil, fmt.Errorf("baton-github: error getting user roles cache: %w", err)
 	}
 
 	for roleId := range cache {
@@ -101,19 +99,19 @@ func (o *enterpriseRoleResourceType) List(
 			[]resourceSdk.RoleTraitOption{},
 		)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("baton-github: error creating role resource for %s in enterprise %s: %w", roleName, enterprise, err)
+			return nil, nil, fmt.Errorf("baton-github: error creating role resource for %s in enterprise %s: %w", roleName, enterprise, err)
 		}
 		ret = append(ret, roleResource)
 	}
 
-	return ret, "", nil, nil
+	return ret, &resourceSdk.SyncOpResults{}, nil
 }
 
 func (o *enterpriseRoleResourceType) Entitlements(
 	_ context.Context,
 	resource *v2.Resource,
-	_ *pagination.Token,
-) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+	_ resourceSdk.SyncOpAttrs,
+) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
 	rv := []*v2.Entitlement{}
 	rv = append(rv, entitlement.NewAssignmentEntitlement(resource, "assigned",
 		entitlement.WithDisplayName(resource.DisplayName),
@@ -124,29 +122,29 @@ func (o *enterpriseRoleResourceType) Entitlements(
 		entitlement.WithGrantableTo(resourceTypeUser),
 	))
 
-	return rv, "", nil, nil
+	return rv, &resourceSdk.SyncOpResults{}, nil
 }
 
 func (o *enterpriseRoleResourceType) Grants(
 	ctx context.Context,
 	resource *v2.Resource,
-	pToken *pagination.Token,
-) ([]*v2.Grant, string, annotations.Annotations, error) {
+	opts resourceSdk.SyncOpAttrs,
+) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
 	cache, err := o.getRoleUsersCache(ctx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("baton-github: error getting user roles cache: %w", err)
+		return nil, nil, fmt.Errorf("baton-github: error getting user roles cache: %w", err)
 	}
 
 	ret := []*v2.Grant{}
 	for _, userLogin := range cache[resource.Id.Resource] {
 		user, resp, err := o.client.Users.Get(ctx, userLogin)
 		if err != nil {
-			return nil, "", nil, wrapGitHubError(err, resp, fmt.Sprintf("baton-github: failed to get user %s", userLogin))
+			return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("baton-github: failed to get user %s", userLogin))
 		}
 
 		principalId, err := resourceSdk.NewResourceID(resourceTypeUser, *user.ID)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("baton-github: error creating resource ID for user %s: %w", userLogin, err)
+			return nil, nil, fmt.Errorf("baton-github: error creating resource ID for user %s: %w", userLogin, err)
 		}
 
 		ret = append(ret, grant.NewGrant(
@@ -156,7 +154,7 @@ func (o *enterpriseRoleResourceType) Grants(
 		))
 	}
 
-	return ret, "", nil, nil
+	return ret, &resourceSdk.SyncOpResults{}, nil
 }
 
 func enterpriseRoleBuilder(client *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {

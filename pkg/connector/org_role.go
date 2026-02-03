@@ -12,7 +12,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
-	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
@@ -49,15 +49,15 @@ func orgRoleResource(
 		"description": role.Description,
 	}
 
-	return resource.NewRoleResource(
+	return resourceSdk.NewRoleResource(
 		role.Name,
 		resourceTypeOrgRole,
 		role.ID,
-		[]resource.RoleTraitOption{
-			resource.WithRoleProfile(profile),
+		[]resourceSdk.RoleTraitOption{
+			resourceSdk.WithRoleProfile(profile),
 		},
-		resource.WithParentResourceID(org.Id),
-		resource.WithAnnotation(
+		resourceSdk.WithParentResourceID(org.Id),
+		resourceSdk.WithAnnotation(
 			&v2.V1Identifier{Id: fmt.Sprintf("org_role:%d", role.ID)},
 		),
 	)
@@ -70,15 +70,15 @@ func (o *orgRoleResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 func (o *orgRoleResourceType) List(
 	ctx context.Context,
 	parentID *v2.ResourceId,
-	pToken *pagination.Token,
-) ([]*v2.Resource, string, annotations.Annotations, error) {
+	opts resourceSdk.SyncOpAttrs,
+) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
 	if parentID == nil {
-		return nil, "", nil, nil
+		return nil, &resourceSdk.SyncOpResults{}, nil
 	}
 
 	orgName, err := o.orgCache.GetOrgName(ctx, parentID)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	roles, resp, err := o.client.Organizations.ListRoles(ctx, orgName)
@@ -86,9 +86,9 @@ func (o *orgRoleResourceType) List(
 		// Handle permission errors gracefully
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 			// Return empty list with no error to indicate we skipped this resource
-			return nil, "", nil, nil
+			return nil, &resourceSdk.SyncOpResults{}, nil
 		}
-		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list organization roles")
+		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list organization roles")
 	}
 
 	var ret []*v2.Resource
@@ -99,19 +99,19 @@ func (o *orgRoleResourceType) List(
 			Description: role.GetDescription(),
 		}, &v2.Resource{Id: parentID})
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		ret = append(ret, roleResource)
 	}
 
-	return ret, "", nil, nil
+	return ret, &resourceSdk.SyncOpResults{}, nil
 }
 
 func (o *orgRoleResourceType) Entitlements(
 	_ context.Context,
 	resource *v2.Resource,
-	_ *pagination.Token,
-) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+	_ resourceSdk.SyncOpAttrs,
+) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
 	rv := make([]*v2.Entitlement, 0, 1)
 	rv = append(rv, entitlement.NewAssignmentEntitlement(resource, "assigned",
 		entitlement.WithDisplayName(resource.DisplayName),
@@ -122,26 +122,26 @@ func (o *orgRoleResourceType) Entitlements(
 		entitlement.WithGrantableTo(resourceTypeUser),
 	))
 
-	return rv, "", nil, nil
+	return rv, &resourceSdk.SyncOpResults{}, nil
 }
 
 func (o *orgRoleResourceType) Grants(
 	ctx context.Context,
 	resource *v2.Resource,
-	pToken *pagination.Token,
-) ([]*v2.Grant, string, annotations.Annotations, error) {
+	opts resourceSdk.SyncOpAttrs,
+) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
 	if resource == nil {
-		return nil, "", nil, nil
+		return nil, &resourceSdk.SyncOpResults{}, nil
 	}
 
-	bag, page, err := parsePageToken(pToken.Token, resource.Id)
+	bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	orgName, err := o.orgCache.GetOrgName(ctx, resource.ParentResourceId)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	var rv []*v2.Grant
@@ -149,7 +149,7 @@ func (o *orgRoleResourceType) Grants(
 
 	roleID, err := strconv.ParseInt(resource.Id.Resource, 10, 64)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("invalid role ID: %w", err)
+		return nil, nil, fmt.Errorf("invalid role ID: %w", err)
 	}
 
 	switch bag.ResourceTypeID() {
@@ -162,37 +162,37 @@ func (o *orgRoleResourceType) Grants(
 			ResourceTypeID: resourceTypeTeam.Id,
 		})
 	case resourceTypeUser.Id:
-		opts := &github.ListOptions{
+		listOpts := &github.ListOptions{
 			Page:    page,
 			PerPage: maxPageSize,
 		}
-		users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, opts)
+		users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, listOpts)
 		if err != nil {
 			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 				pageToken, err := bag.NextToken("")
 				if err != nil {
-					return nil, "", nil, err
+					return nil, nil, err
 				}
-				return rv, pageToken, nil, nil
+				return rv, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
 			}
-			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list users assigned to org role")
+			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list users assigned to org role")
 		}
 		nextPage, respAnnos, err := parseResp(resp)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		reqAnnos = respAnnos
 
 		err = bag.Next(nextPage)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		// Create regular grants for direct user assignments.
 		for _, user := range users {
 			userResource, err := userResource(ctx, user, user.GetEmail(), nil)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
 
 			grant := grant.NewGrant(
@@ -207,40 +207,40 @@ func (o *orgRoleResourceType) Grants(
 			rv = append(rv, grant)
 		}
 	case resourceTypeTeam.Id:
-		opts := &github.ListOptions{
+		listOpts := &github.ListOptions{
 			Page:    page,
 			PerPage: maxPageSize,
 		}
-		teams, resp, err := o.client.Organizations.ListTeamsAssignedToOrgRole(ctx, orgName, roleID, opts)
+		teams, resp, err := o.client.Organizations.ListTeamsAssignedToOrgRole(ctx, orgName, roleID, listOpts)
 		if err != nil {
 			// Handle permission errors without erroring out. Some customers may not want to give us permissions to get org roles and members.
 			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 				// Return empty list with no error to indicate we skipped this resource
 				pageToken, err := bag.NextToken("")
 				if err != nil {
-					return nil, "", nil, err
+					return nil, nil, err
 				}
-				return nil, pageToken, nil, nil
+				return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
 			}
-			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list teams assigned to org role")
+			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list teams assigned to org role")
 		}
 
 		nextPage, respAnnos, err := parseResp(resp)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		reqAnnos = respAnnos
 
 		err = bag.Next(nextPage)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		// Create expandable grants for teams. To show inherited roles, we need to show the teams that have the role.
 		for _, team := range teams {
 			teamResource, err := teamResource(team, resource.ParentResourceId)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
 			rv = append(rv, grant.NewGrant(
 				resource,
@@ -260,14 +260,17 @@ func (o *orgRoleResourceType) Grants(
 			))
 		}
 	default:
-		return nil, "", nil, fmt.Errorf("unexpected resource type while fetching grants for org role")
+		return nil, nil, fmt.Errorf("unexpected resource type while fetching grants for org role")
 	}
 	pageToken, err := bag.Marshal()
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	return rv, pageToken, reqAnnos, nil
+	return rv, &resourceSdk.SyncOpResults{
+		NextPageToken: pageToken,
+		Annotations:   reqAnnos,
+	}, nil
 }
 
 func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
