@@ -454,8 +454,8 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 			},
 			{
 				Name:        "maintainers",
-				DisplayName: "Maintainers",
-				Description: "List GitHub usernames for organization members who will become team maintainers.",
+				DisplayName: "Team Maintainers",
+				Description: "List of user resource IDs for organization members who will become team maintainers.",
 				Field: &config.Field_ResourceIdSliceField{
 					ResourceIdSliceField: &config.ResourceIdSliceField{
 						Rules: &config.RepeatedResourceIdRules{
@@ -466,8 +466,8 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 			},
 			{
 				Name:        "repo_names",
-				DisplayName: "Repository names",
-				Description: "The full name (e.g., organization-name/repository-name) of repositories to add the team to.",
+				DisplayName: "Repositories",
+				Description: "List of repository resource IDs to add the team to.",
 				Field: &config.Field_ResourceIdSliceField{
 					ResourceIdSliceField: &config.ResourceIdSliceField{
 						Rules: &config.RepeatedResourceIdRules{
@@ -532,6 +532,21 @@ func (o *teamResourceType) handleCreateTeamAction(ctx context.Context, args *str
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid parent team ID: %w", err)
 		}
+
+		// Fetch the parent team to validate it's not a secret team
+		// GitHub does not allow child teams under secret parent teams
+		org, resp, err := o.client.Organizations.Get(ctx, orgName)
+		if err != nil {
+			return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to get organization %s", orgName))
+		}
+		parentTeam, resp, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), parentTeamID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
+		if err != nil {
+			return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to get parent team %d", parentTeamID))
+		}
+		if parentTeam.GetPrivacy() == teamPrivacySecret {
+			return nil, nil, fmt.Errorf("cannot create child team: parent team %q has privacy set to \"secret\"; GitHub does not allow child teams under secret parent teams", parentTeam.GetName())
+		}
+
 		newTeam.ParentTeamID = github.Ptr(parentTeamID)
 		isNestedTeam = true
 	}
@@ -551,6 +566,9 @@ func (o *teamResourceType) handleCreateTeamAction(ctx context.Context, args *str
 		} else if privacy == teamPrivacySecret || privacy == teamPrivacyClosed {
 			// Non-nested teams can be "secret" or "closed"
 			newTeam.Privacy = github.Ptr(privacy)
+		} else {
+			// Invalid privacy value for non-nested team
+			return nil, nil, fmt.Errorf("invalid privacy value: %q (must be \"secret\" or \"closed\")", privacy)
 		}
 	} else if isNestedTeam {
 		// Default for nested teams is "closed"

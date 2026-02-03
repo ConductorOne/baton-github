@@ -494,6 +494,7 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 						Options: []*config.StringFieldOption{
 							{Value: "public", DisplayName: "Public", Name: "Anyone on the internet can view this repository"},
 							{Value: "private", DisplayName: "Private", Name: "You can choose who can see this repository"},
+							{Value: "internal", DisplayName: "Internal", Name: "Members of the enterprise can view this repository (enterprise only)"},
 						},
 						DefaultValue: "private",
 					},
@@ -605,23 +606,35 @@ func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Contex
 	}
 
 	if visibility, ok := actions.GetStringArg(args, "visibility"); ok && visibility != "" {
-		if visibility == "public" || visibility == "private" {
+		if visibility == "public" || visibility == "private" || visibility == "internal" {
 			newRepo.Visibility = github.Ptr(visibility)
 		} else {
-			return nil, nil, fmt.Errorf("invalid visibility: %q (must be \"public\" or \"private\")", visibility)
+			return nil, nil, fmt.Errorf("invalid visibility: %q (must be \"public\", \"private\", or \"internal\")", visibility)
 		}
 	}
 
+	// Extract template options first to validate AutoInit requirements
+	gitignoreTemplate, hasGitignore := actions.GetStringArg(args, "gitignore_template")
+	licenseTemplate, hasLicense := actions.GetStringArg(args, "license_template")
+	hasTemplates := (hasGitignore && gitignoreTemplate != "") || (hasLicense && licenseTemplate != "")
+
 	// add_readme maps to AutoInit in GitHub API
+	// GitHub requires AutoInit=true when using gitignore_template or license_template
 	if addReadme, ok := actions.GetBoolArg(args, "add_readme"); ok {
+		if !addReadme && hasTemplates {
+			return nil, nil, fmt.Errorf("add_readme must be true when gitignore_template or license_template is provided (GitHub requires auto_init=true for templates)")
+		}
 		newRepo.AutoInit = github.Ptr(addReadme)
+	} else if hasTemplates {
+		// If templates are provided but add_readme wasn't explicitly set, enable AutoInit
+		newRepo.AutoInit = github.Ptr(true)
 	}
 
-	if gitignoreTemplate, ok := actions.GetStringArg(args, "gitignore_template"); ok && gitignoreTemplate != "" {
+	if hasGitignore && gitignoreTemplate != "" {
 		newRepo.GitignoreTemplate = github.Ptr(gitignoreTemplate)
 	}
 
-	if licenseTemplate, ok := actions.GetStringArg(args, "license_template"); ok && licenseTemplate != "" {
+	if hasLicense && licenseTemplate != "" {
 		newRepo.LicenseTemplate = github.Ptr(licenseTemplate)
 	}
 
