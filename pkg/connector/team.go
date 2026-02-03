@@ -555,7 +555,8 @@ func (o *teamResourceType) handleCreateTeamAction(ctx context.Context, args *str
 	// - For non-nested teams: "secret" (default) or "closed"
 	// - For nested/child teams: only "closed" is allowed (default: closed)
 	if privacy, ok := actions.GetStringArg(args, "privacy"); ok && privacy != "" {
-		if isNestedTeam {
+		switch {
+		case isNestedTeam:
 			// Nested teams can only be "closed"
 			if privacy == teamPrivacySecret {
 				l.Warn("github-connector: secret privacy not allowed for nested teams, using closed",
@@ -563,10 +564,10 @@ func (o *teamResourceType) handleCreateTeamAction(ctx context.Context, args *str
 				)
 			}
 			newTeam.Privacy = github.Ptr(teamPrivacyClosed)
-		} else if privacy == teamPrivacySecret || privacy == teamPrivacyClosed {
+		case privacy == teamPrivacySecret || privacy == teamPrivacyClosed:
 			// Non-nested teams can be "secret" or "closed"
 			newTeam.Privacy = github.Ptr(privacy)
-		} else {
+		default:
 			// Invalid privacy value for non-nested team
 			return nil, nil, fmt.Errorf("invalid privacy value: %q (must be \"secret\" or \"closed\")", privacy)
 		}
