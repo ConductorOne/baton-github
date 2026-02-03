@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -17,12 +18,15 @@ import (
 	"github.com/conductorone/baton-github/pkg/customclient"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/cli"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
+	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -105,8 +109,8 @@ type GitHub struct {
 	enterprises              []string
 }
 
-func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
-	resourceSyncers := []connectorbuilder.ResourceSyncer{
+func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
+	resourceSyncers := []connectorbuilder.ResourceSyncerV2{
 		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
 		teamBuilder(gh.client, gh.orgCache),
 		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache, gh.orgs),
@@ -247,6 +251,33 @@ func newGitHubClient(ctx context.Context, instanceURL string, ts oauth2.TokenSou
 	}
 
 	return gc, nil
+}
+
+func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.ConnectorOpts) (connectorbuilder.ConnectorBuilderV2, []connectorbuilder.Opt, error) {
+	// TODO(Ben.Su) Update to use field groups rather than schema relationships.
+	if err := field.Validate(cfg.Config, ghc); err != nil {
+		return nil, nil, err
+	}
+
+	var (
+		l          = ctxzap.Extract(ctx)
+		privateKey string
+	)
+	if ghc.AppPrivatekeyPath != "" {
+		keyBytes, err := os.ReadFile(ghc.AppPrivatekeyPath)
+		if err != nil {
+			l.Error("error reading app private key file", zap.Error(err), zap.String("appPrivateKeyPath", ghc.AppPrivatekeyPath))
+			return nil, nil, fmt.Errorf("failed to read app private key file: %w", err)
+		}
+		privateKey = string(keyBytes)
+	}
+
+	cb, err := New(ctx, ghc, privateKey)
+	if err != nil {
+		l.Error("error creating connector", zap.Error(err))
+		return nil, nil, err
+	}
+	return cb, nil, nil
 }
 
 // New returns the GitHub connector configured to sync against the instance URL.

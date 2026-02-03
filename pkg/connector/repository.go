@@ -12,7 +12,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
-	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -39,15 +39,15 @@ var repoAccessLevels = []string{
 
 // repositoryResource returns a new connector resource for a GitHub repository.
 func repositoryResource(ctx context.Context, repo *github.Repository, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
-	ret, err := resource.NewResource(
+	ret, err := resourceSdk.NewResource(
 		repo.GetName(),
 		resourceTypeRepository,
 		repo.GetID(),
-		resource.WithAnnotation(
+		resourceSdk.WithAnnotation(
 			&v2.ExternalLink{Url: repo.GetHTMLURL()},
 			&v2.V1Identifier{Id: fmt.Sprintf("repo:%d", repo.GetID())},
 		),
-		resource.WithParentResourceID(parentResourceID),
+		resourceSdk.WithParentResourceID(parentResourceID),
 	)
 	if err != nil {
 		return nil, err
@@ -67,41 +67,41 @@ func (o *repositoryResourceType) ResourceType(_ context.Context) *v2.ResourceTyp
 	return o.resourceType
 }
 
-func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.ResourceId, opts resourceSdk.SyncOpAttrs) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
 	if parentID == nil {
-		return nil, "", nil, nil
+		return nil, &resourceSdk.SyncOpResults{}, nil
 	}
 
-	bag, page, err := parsePageToken(pt.Token, &v2.ResourceId{ResourceType: resourceTypeRepository.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeRepository.Id})
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	orgName, err := o.orgCache.GetOrgName(ctx, parentID)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	opts := &github.RepositoryListByOrgOptions{
+	listOpts := &github.RepositoryListByOrgOptions{
 		ListOptions: github.ListOptions{
 			Page:    page,
 			PerPage: maxPageSize,
 		},
 	}
 
-	repos, resp, err := o.client.Repositories.ListByOrg(ctx, orgName, opts)
+	repos, resp, err := o.client.Repositories.ListByOrg(ctx, orgName, listOpts)
 	if err != nil {
-		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list repositories")
+		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list repositories")
 	}
 
 	nextPage, reqAnnos, err := parseResp(resp)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	pageToken, err := bag.NextToken(nextPage)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	rv := make([]*v2.Resource, 0, len(repos))
@@ -111,15 +111,18 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 		}
 		rr, err := repositoryResource(ctx, repo, parentID)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		rv = append(rv, rr)
 	}
 
-	return rv, pageToken, reqAnnos, nil
+	return rv, &resourceSdk.SyncOpResults{
+		NextPageToken: pageToken,
+		Annotations:   reqAnnos,
+	}, nil
 }
 
-func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ resourceSdk.SyncOpAttrs) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
 	rv := make([]*v2.Entitlement, 0, len(repoAccessLevels))
 	for _, level := range repoAccessLevels {
 		rv = append(rv, entitlement.NewPermissionEntitlement(resource, level,
@@ -132,23 +135,23 @@ func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Re
 		))
 	}
 
-	return rv, "", nil, nil
+	return rv, &resourceSdk.SyncOpResults{}, nil
 }
 
 func (o *repositoryResourceType) Grants(
 	ctx context.Context,
 	resource *v2.Resource,
-	pToken *pagination.Token,
-) ([]*v2.Grant, string, annotations.Annotations, error) {
+	opts resourceSdk.SyncOpAttrs,
+) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
 	l := ctxzap.Extract(ctx)
-	bag, page, err := parsePageToken(pToken.Token, resource.Id)
+	bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	orgName, err := o.orgCache.GetOrgName(ctx, resource.ParentResourceId)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	var rv []*v2.Grant
@@ -165,38 +168,38 @@ func (o *repositoryResourceType) Grants(
 		})
 
 	case resourceTypeUser.Id:
-		opts := &github.ListCollaboratorsOptions{
+		listOpts := &github.ListCollaboratorsOptions{
 			Affiliation: "all",
 			ListOptions: github.ListOptions{
 				Page:    page,
 				PerPage: maxPageSize,
 			},
 		}
-		users, resp, err := o.client.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, opts)
+		users, resp, err := o.client.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, listOpts)
 		if err != nil {
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
 				l.Warn("insufficient access to list collaborators", zap.String("repository", resource.DisplayName))
 				pageToken, err := skipGrantsForResourceType(bag)
 				if err != nil {
-					return nil, "", nil, err
+					return nil, nil, err
 				}
-				return nil, pageToken, nil, nil
+				return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
 			}
 			if isNotFoundError(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
+				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
 			}
-			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list collaborators")
+			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list collaborators")
 		}
 
 		nextPage, respAnnos, err := parseResp(resp)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		reqAnnos = respAnnos
 
 		err = bag.Next(nextPage)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		for _, user := range users {
@@ -207,7 +210,7 @@ func (o *repositoryResourceType) Grants(
 
 				ur, err := userResource(ctx, user, user.GetEmail(), nil)
 				if err != nil {
-					return nil, "", nil, err
+					return nil, nil, err
 				}
 
 				grant := grant.NewGrant(resource, permission, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
@@ -219,37 +222,37 @@ func (o *repositoryResourceType) Grants(
 		}
 
 	case resourceTypeTeam.Id:
-		opts := &github.ListOptions{
+		listOpts := &github.ListOptions{
 			Page:    page,
 			PerPage: maxPageSize,
 		}
-		teams, resp, err := o.client.Repositories.ListTeams(ctx, orgName, resource.DisplayName, opts)
+		teams, resp, err := o.client.Repositories.ListTeams(ctx, orgName, resource.DisplayName, listOpts)
 		if err != nil {
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
 				l.Warn("insufficient access to list teams", zap.String("repository", resource.DisplayName))
 				pageToken, err := skipGrantsForResourceType(bag)
 				if err != nil {
-					return nil, "", nil, err
+					return nil, nil, err
 				}
-				return nil, pageToken, nil, nil
+				return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
 			}
 
 			if isNotFoundError(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
+				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
 			}
 
-			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list repository teams")
+			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list repository teams")
 		}
 
 		nextPage, respAnnos, err := parseResp(resp)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		reqAnnos = respAnnos
 
 		err = bag.Next(nextPage)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		for _, team := range teams {
@@ -260,7 +263,7 @@ func (o *repositoryResourceType) Grants(
 
 				tr, err := teamResource(team, resource.ParentResourceId)
 				if err != nil {
-					return nil, "", nil, err
+					return nil, nil, err
 				}
 
 				rv = append(rv, grant.NewGrant(resource, permission, tr.Id, grant.WithAnnotation(
@@ -278,15 +281,18 @@ func (o *repositoryResourceType) Grants(
 			}
 		}
 	default:
-		return nil, "", nil, fmt.Errorf("unexpected resource type while fetching grants for repo")
+		return nil, nil, fmt.Errorf("unexpected resource type while fetching grants for repo")
 	}
 
 	pageToken, err := bag.Marshal()
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	return rv, pageToken, reqAnnos, nil
+	return rv, &resourceSdk.SyncOpResults{
+		NextPageToken: pageToken,
+		Annotations:   reqAnnos,
+	}, nil
 }
 
 func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resource, en *v2.Entitlement) (annotations.Annotations, error) {
