@@ -5,27 +5,43 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/conductorone/baton-sdk/pkg/types"
+	"github.com/conductorone/baton-sdk/pkg/types/sessions"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"golang.org/x/oauth2"
 )
+
+type RunTimeOpts struct {
+	SessionStore       sessions.SessionStore
+	TokenSource        oauth2.TokenSource
+	SelectedAuthMethod string
+}
 
 // GetConnectorFunc is a function type that creates a connector instance.
 // It takes a context and configuration. The session cache constructor is retrieved from the context.
 type GetConnectorFunc[T field.Configurable] func(ctx context.Context, cfg T) (types.ConnectorServer, error)
+type GetConnectorFunc2[T field.Configurable] func(ctx context.Context, cfg T, runTimeOpts RunTimeOpts) (types.ConnectorServer, error)
 
 // WithSessionCache creates a session cache using the provided constructor and adds it to the context.
-func WithSessionCache(ctx context.Context, constructor types.SessionCacheConstructor) (context.Context, error) {
+func WithSessionCache(ctx context.Context, constructor sessions.SessionStoreConstructor) (context.Context, error) {
 	sessionCache, err := constructor(ctx)
 	if err != nil {
 		return ctx, fmt.Errorf("failed to create session cache: %w", err)
 	}
-	return context.WithValue(ctx, types.SessionCacheKey{}, sessionCache), nil
+	return context.WithValue(ctx, sessions.SessionStoreKey{}, sessionCache), nil
 }
 
-func MakeGenericConfiguration[T field.Configurable](v *viper.Viper) (T, error) {
+type ConnectorOpts struct {
+	TokenSource        oauth2.TokenSource
+	SelectedAuthMethod string
+}
+type NewConnector[T field.Configurable] func(ctx context.Context, cfg T, opts *ConnectorOpts) (connectorbuilder.ConnectorBuilderV2, []connectorbuilder.Opt, error)
+
+func MakeGenericConfiguration[T field.Configurable](v *viper.Viper, opts ...field.DecodeHookOption) (T, error) {
 	// Create an instance of the struct type T using reflection
 	var config T // Create a zero-value instance of T
 
@@ -37,8 +53,8 @@ func MakeGenericConfiguration[T field.Configurable](v *viper.Viper) (T, error) {
 		return config, fmt.Errorf("cannot convert *viper.Viper to %T", config)
 	}
 
-	// Unmarshal into the config struct
-	err := v.Unmarshal(&config)
+	// Unmarshal into the config struct with any decode hook options provided
+	err := v.Unmarshal(&config, viper.DecodeHook(field.ComposeDecodeHookFunc(opts...)))
 	if err != nil {
 		return config, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
@@ -207,7 +223,7 @@ func SetFlagsAndConstraints(command *cobra.Command, schema field.Configuration) 
 		}
 
 		// mark required
-		if f.Required {
+		if f.Required && len(schema.FieldGroups) == 0 {
 			if f.Variant == field.BoolVariant {
 				return fmt.Errorf("requiring %s of type %s does not make sense", f.FieldName, f.Variant)
 			}

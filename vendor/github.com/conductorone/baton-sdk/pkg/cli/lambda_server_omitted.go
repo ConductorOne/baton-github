@@ -15,9 +15,10 @@ func OptionallyAddLambdaCommand[T field.Configurable](
 	ctx context.Context,
 	name string,
 	v *viper.Viper,
-	getconnector GetConnectorFunc[T],
+	getconnector GetConnectorFunc2[T],
 	connectorSchema field.Configuration,
 	mainCmd *cobra.Command,
+	sessionStoreEnabled bool,
 ) error {
 	return nil
 }

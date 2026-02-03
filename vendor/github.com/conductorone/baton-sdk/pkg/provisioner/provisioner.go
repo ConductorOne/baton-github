@@ -34,9 +34,10 @@ type Provisioner struct {
 
 	revokeGrantID string
 
-	createAccountLogin   string
-	createAccountEmail   string
-	createAccountProfile *structpb.Struct
+	createAccountLogin        string
+	createAccountEmail        string
+	createAccountProfile      *structpb.Struct
+	createAccountResourceType string
 
 	deleteResourceID   string
 	deleteResourceType string
@@ -59,13 +60,11 @@ func makeCrypto(ctx context.Context) (*v2.CredentialOptions, []*v2.EncryptionCon
 		return nil, nil, err
 	}
 
-	opts := &v2.CredentialOptions{
-		Options: &v2.CredentialOptions_RandomPassword_{
-			RandomPassword: &v2.CredentialOptions_RandomPassword{
-				Length: 20,
-			},
-		},
-	}
+	opts := v2.CredentialOptions_builder{
+		RandomPassword: v2.CredentialOptions_RandomPassword_builder{
+			Length: 20,
+		}.Build(),
+	}.Build()
 	return opts, []*v2.EncryptionConfig{config}, nil
 }
 
@@ -120,7 +119,7 @@ func (p *Provisioner) Close(ctx context.Context) error {
 
 	var err error
 	if p.store != nil {
-		storeErr := p.store.Close()
+		storeErr := p.store.Close(ctx)
 		if storeErr != nil {
 			err = errors.Join(err, storeErr)
 		}
@@ -151,16 +150,16 @@ func (p *Provisioner) grant(ctx context.Context) error {
 		return err
 	}
 
-	entitlement, err := store.GetEntitlement(ctx, &reader_v2.EntitlementsReaderServiceGetEntitlementRequest{
+	entitlement, err := store.GetEntitlement(ctx, reader_v2.EntitlementsReaderServiceGetEntitlementRequest_builder{
 		EntitlementId: p.grantEntitlementID,
-	})
+	}.Build())
 	if err != nil {
 		return err
 	}
 
-	entitlementResource, err := store.GetResource(ctx, &reader_v2.ResourcesReaderServiceGetResourceRequest{
+	entitlementResource, err := store.GetResource(ctx, reader_v2.ResourcesReaderServiceGetResourceRequest_builder{
 		ResourceId: entitlement.GetEntitlement().GetResource().GetId(),
-	})
+	}.Build())
 	if err != nil {
 		return err
 	}
@@ -170,30 +169,30 @@ func (p *Provisioner) grant(ctx context.Context) error {
 		return errors.New("cannot grant entitlement on external resource")
 	}
 
-	principal, err := store.GetResource(ctx, &reader_v2.ResourcesReaderServiceGetResourceRequest{
-		ResourceId: &v2.ResourceId{
+	principal, err := store.GetResource(ctx, reader_v2.ResourcesReaderServiceGetResourceRequest_builder{
+		ResourceId: v2.ResourceId_builder{
 			Resource:     p.grantPrincipalID,
 			ResourceType: p.grantPrincipalType,
-		},
-	})
+		}.Build(),
+	}.Build())
 	if err != nil {
 		return err
 	}
 
-	resource := &v2.Resource{
-		Id:          principal.Resource.Id,
-		DisplayName: principal.Resource.DisplayName,
-		Annotations: principal.Resource.Annotations,
-		Description: principal.Resource.Description,
-		ExternalId:  principal.Resource.ExternalId,
+	resource := v2.Resource_builder{
+		Id:          principal.GetResource().GetId(),
+		DisplayName: principal.GetResource().GetDisplayName(),
+		Annotations: principal.GetResource().GetAnnotations(),
+		Description: principal.GetResource().GetDescription(),
+		ExternalId:  principal.GetResource().GetExternalId(), //nolint:staticcheck // Deprecated.
 		// Omit parent resource ID so that behavior is the same as ConductorOne's provisioning mode
 		ParentResourceId: nil,
-	}
+	}.Build()
 
-	_, err = p.connector.Grant(ctx, &v2.GrantManagerServiceGrantRequest{
-		Entitlement: entitlement.Entitlement,
+	_, err = p.connector.Grant(ctx, v2.GrantManagerServiceGrantRequest_builder{
+		Entitlement: entitlement.GetEntitlement(),
 		Principal:   resource,
-	})
+	}.Build())
 	if err != nil {
 		return err
 	}
@@ -210,30 +209,30 @@ func (p *Provisioner) revoke(ctx context.Context) error {
 		return err
 	}
 
-	grant, err := store.GetGrant(ctx, &reader_v2.GrantsReaderServiceGetGrantRequest{
+	grant, err := store.GetGrant(ctx, reader_v2.GrantsReaderServiceGetGrantRequest_builder{
 		GrantId: p.revokeGrantID,
-	})
+	}.Build())
 	if err != nil {
 		return err
 	}
 
-	entitlement, err := store.GetEntitlement(ctx, &reader_v2.EntitlementsReaderServiceGetEntitlementRequest{
-		EntitlementId: grant.Grant.Entitlement.Id,
-	})
+	entitlement, err := store.GetEntitlement(ctx, reader_v2.EntitlementsReaderServiceGetEntitlementRequest_builder{
+		EntitlementId: grant.GetGrant().GetEntitlement().GetId(),
+	}.Build())
 	if err != nil {
 		return err
 	}
 
-	principal, err := store.GetResource(ctx, &reader_v2.ResourcesReaderServiceGetResourceRequest{
-		ResourceId: grant.Grant.Principal.Id,
-	})
+	principal, err := store.GetResource(ctx, reader_v2.ResourcesReaderServiceGetResourceRequest_builder{
+		ResourceId: grant.GetGrant().GetPrincipal().GetId(),
+	}.Build())
 	if err != nil {
 		return err
 	}
 
-	entitlementResource, err := store.GetResource(ctx, &reader_v2.ResourcesReaderServiceGetResourceRequest{
+	entitlementResource, err := store.GetResource(ctx, reader_v2.ResourcesReaderServiceGetResourceRequest_builder{
 		ResourceId: entitlement.GetEntitlement().GetResource().GetId(),
-	})
+	}.Build())
 	if err != nil {
 		return err
 	}
@@ -243,24 +242,24 @@ func (p *Provisioner) revoke(ctx context.Context) error {
 		return errors.New("cannot revoke grant on external resource")
 	}
 
-	resource := &v2.Resource{
-		Id:          principal.Resource.Id,
-		DisplayName: principal.Resource.DisplayName,
-		Annotations: principal.Resource.Annotations,
-		Description: principal.Resource.Description,
-		ExternalId:  principal.Resource.ExternalId,
+	resource := v2.Resource_builder{
+		Id:          principal.GetResource().GetId(),
+		DisplayName: principal.GetResource().GetDisplayName(),
+		Annotations: principal.GetResource().GetAnnotations(),
+		Description: principal.GetResource().GetDescription(),
+		ExternalId:  principal.GetResource().GetExternalId(), //nolint:staticcheck // Deprecated.
 		// Omit parent resource ID so that behavior is the same as ConductorOne's provisioning mode
 		ParentResourceId: nil,
-	}
+	}.Build()
 
-	_, err = p.connector.Revoke(ctx, &v2.GrantManagerServiceRevokeRequest{
-		Grant: &v2.Grant{
-			Id:          grant.Grant.Id,
-			Entitlement: entitlement.Entitlement,
+	_, err = p.connector.Revoke(ctx, v2.GrantManagerServiceRevokeRequest_builder{
+		Grant: v2.Grant_builder{
+			Id:          grant.GetGrant().GetId(),
+			Entitlement: entitlement.GetEntitlement(),
 			Principal:   resource,
-			Annotations: grant.Grant.Annotations,
-		},
-	})
+			Annotations: grant.GetGrant().GetAnnotations(),
+		}.Build(),
+	}.Build())
 	if err != nil {
 		return err
 	}
@@ -275,10 +274,10 @@ func (p *Provisioner) createAccount(ctx context.Context) error {
 	l := ctxzap.Extract(ctx)
 	var emails []*v2.AccountInfo_Email
 	if p.createAccountEmail != "" {
-		emails = append(emails, &v2.AccountInfo_Email{
+		emails = append(emails, v2.AccountInfo_Email_builder{
 			Address:   p.createAccountEmail,
 			IsPrimary: true,
-		})
+		}.Build())
 	}
 
 	opts, config, err := makeCrypto(ctx)
@@ -286,20 +285,25 @@ func (p *Provisioner) createAccount(ctx context.Context) error {
 		return err
 	}
 
-	_, err = p.connector.CreateAccount(ctx, &v2.CreateAccountRequest{
-		AccountInfo: &v2.AccountInfo{
+	_, err = p.connector.CreateAccount(ctx, v2.CreateAccountRequest_builder{
+		ResourceTypeId: p.createAccountResourceType,
+		AccountInfo: v2.AccountInfo_builder{
 			Emails:  emails,
 			Login:   p.createAccountLogin,
 			Profile: p.createAccountProfile,
-		},
+		}.Build(),
 		CredentialOptions: opts,
 		EncryptionConfigs: config,
-	})
+	}.Build())
 	if err != nil {
 		return err
 	}
 
-	l.Debug("account created", zap.String("login", p.createAccountLogin), zap.String("email", p.createAccountEmail))
+	l.Debug("account created",
+		zap.String("login", p.createAccountLogin),
+		zap.String("email", p.createAccountEmail),
+		zap.String("resource_type", p.createAccountResourceType),
+	)
 
 	return nil
 }
@@ -308,12 +312,12 @@ func (p *Provisioner) deleteResource(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "Provisioner.deleteResource")
 	defer span.End()
 
-	_, err := p.connector.DeleteResource(ctx, &v2.DeleteResourceRequest{
-		ResourceId: &v2.ResourceId{
+	_, err := p.connector.DeleteResource(ctx, v2.DeleteResourceRequest_builder{
+		ResourceId: v2.ResourceId_builder{
 			Resource:     p.deleteResourceID,
 			ResourceType: p.deleteResourceType,
-		},
-	})
+		}.Build(),
+	}.Build())
 	if err != nil {
 		return err
 	}
@@ -331,14 +335,14 @@ func (p *Provisioner) rotateCredentials(ctx context.Context) error {
 		return err
 	}
 
-	_, err = p.connector.RotateCredential(ctx, &v2.RotateCredentialRequest{
-		ResourceId: &v2.ResourceId{
+	_, err = p.connector.RotateCredential(ctx, v2.RotateCredentialRequest_builder{
+		ResourceId: v2.ResourceId_builder{
 			Resource:     p.rotateCredentialsId,
 			ResourceType: p.rotateCredentialsType,
-		},
+		}.Build(),
 		CredentialOptions: opts,
 		EncryptionConfigs: config,
-	})
+	}.Build())
 	if err != nil {
 		return err
 	}
@@ -375,13 +379,14 @@ func NewResourceDeleter(c types.ConnectorClient, dbPath string, resourceId strin
 	}
 }
 
-func NewCreateAccountManager(c types.ConnectorClient, dbPath string, login string, email string, profile *structpb.Struct) *Provisioner {
+func NewCreateAccountManager(c types.ConnectorClient, dbPath string, login string, email string, profile *structpb.Struct, resourceType string) *Provisioner {
 	return &Provisioner{
-		dbPath:               dbPath,
-		connector:            c,
-		createAccountLogin:   login,
-		createAccountEmail:   email,
-		createAccountProfile: profile,
+		dbPath:                    dbPath,
+		connector:                 c,
+		createAccountLogin:        login,
+		createAccountEmail:        email,
+		createAccountProfile:      profile,
+		createAccountResourceType: resourceType,
 	}
 }
 
