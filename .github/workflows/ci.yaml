@@ -53,6 +53,6 @@ jobs:
         uses: ConductorOne/github-workflows/actions/sync-test@v2
         with:
           connector: ./baton-github
-          baton-entitlement: 'repository:642588514:triage'
+          baton-entitlement: 'repository:642588514:admin'
           baton-principal: '166871869'
           baton-principal-type: 'user'
