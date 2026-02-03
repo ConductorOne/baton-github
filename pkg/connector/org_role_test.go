@@ -7,6 +7,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	entitlement2 "github.com/conductorone/baton-sdk/pkg/types/entitlement"
+	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
 
@@ -54,16 +55,16 @@ func TestOrgRole(t *testing.T) {
 				pToken.Token = token
 			}
 
-			nextGrants, nextToken, grantsAnnotations, err := client.Grants(ctx, roleResource, &pToken)
+			nextGrants, results, err := client.Grants(ctx, roleResource, resourceSdk.SyncOpAttrs{PageToken: pToken})
 			grants = append(grants, nextGrants...)
 
 			require.Nil(t, err)
-			test.AssertHasRatelimitAnnotations(t, grantsAnnotations)
-			if nextToken == "" {
+			test.AssertHasRatelimitAnnotations(t, results.Annotations)
+			if results.NextPageToken == "" {
 				break
 			}
 
-			err = bag.Unmarshal(nextToken)
+			err = bag.Unmarshal(results.NextPageToken)
 			if err != nil {
 				t.Error(err)
 			}
@@ -94,11 +95,11 @@ func TestOrgRole(t *testing.T) {
 		organization, _ := organizationResource(ctx, githubOrganization, nil, true)
 
 		// Test List with permission error
-		resources, nextToken, annotations, err := client.List(ctx, organization.Id, &pagination.Token{})
+		resources, results, err := client.List(ctx, organization.Id, resourceSdk.SyncOpAttrs{PageToken: pagination.Token{}})
 		require.Nil(t, err)
 		require.Empty(t, resources)
-		require.Empty(t, nextToken)
-		test.AssertHasRatelimitAnnotations(t, annotations)
+		require.Empty(t, results.NextPageToken)
+		test.AssertHasRatelimitAnnotations(t, results.Annotations)
 
 		// Test Grants with permission error
 		role, _ := orgRoleResource(ctx, &OrganizationRole{
@@ -107,11 +108,11 @@ func TestOrgRole(t *testing.T) {
 			Description: orgRole.Description,
 		}, organization)
 
-		grants, nextToken, grantsAnnotations, err := client.Grants(ctx, role, &pagination.Token{})
+		grants, grantsResults, err := client.Grants(ctx, role, resourceSdk.SyncOpAttrs{PageToken: pagination.Token{}})
 		require.Nil(t, err)
 		require.Empty(t, grants)
 		// The token should contain the initial state for users
-		require.NotEmpty(t, nextToken)
-		test.AssertHasRatelimitAnnotations(t, grantsAnnotations)
+		require.NotEmpty(t, grantsResults.NextPageToken)
+		test.AssertHasRatelimitAnnotations(t, grantsResults.Annotations)
 	})
 }

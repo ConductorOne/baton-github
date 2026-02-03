@@ -7,6 +7,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	entitlement2 "github.com/conductorone/baton-sdk/pkg/types/entitlement"
+	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
 
@@ -39,10 +40,10 @@ func TestTeam(t *testing.T) {
 		require.Nil(t, err)
 		require.Empty(t, grantAnnotations)
 
-		_, nextToken, grantsAnnotations, err := client.Grants(ctx, team, &pagination.Token{})
+		_, results, err := client.Grants(ctx, team, resourceSdk.SyncOpAttrs{PageToken: pagination.Token{}})
 		require.Nil(t, err)
-		test.AssertHasRatelimitAnnotations(t, grantsAnnotations)
-		require.Equal(t, "{\"states\":[{\"type\":\"member\"}],\"current_state\":{\"type\":\"maintainer\"}}", nextToken)
+		test.AssertHasRatelimitAnnotations(t, results.Annotations)
+		require.Equal(t, "{\"states\":[{\"type\":\"member\"}],\"current_state\":{\"type\":\"maintainer\"}}", results.NextPageToken)
 
 		grant := v2.Grant{
 			Entitlement: &entitlement,
