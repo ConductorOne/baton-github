@@ -11,8 +11,10 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	v1 "github.com/conductorone/baton-sdk/pb/c1/connectorapi/baton/v1"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/session"
 	sdkSync "github.com/conductorone/baton-sdk/pkg/sync"
 	"github.com/conductorone/baton-sdk/pkg/tasks"
 	"github.com/conductorone/baton-sdk/pkg/types"
@@ -32,7 +34,8 @@ type fullSyncTaskHandler struct {
 	skipFullSync                        bool
 	externalResourceC1ZPath             string
 	externalResourceEntitlementIdFilter string
-	targetedSyncResourceIDs             []string
+	targetedSyncResources               []*v2.Resource
+	syncResourceTypeIDs                 []string
 }
 
 func (c *fullSyncTaskHandler) sync(ctx context.Context, c1zPath string) error {
@@ -55,6 +58,10 @@ func (c *fullSyncTaskHandler) sync(ctx context.Context, c1zPath string) error {
 		syncOpts = append(syncOpts, sdkSync.WithDontExpandGrants())
 	}
 
+	if resources := c.task.GetSyncFull().GetTargetedSyncResources(); len(resources) > 0 {
+		syncOpts = append(syncOpts, sdkSync.WithTargetedSyncResources(resources))
+	}
+
 	if c.task.GetSyncFull().GetSkipEntitlementsAndGrants() {
 		// Sync only resources. This is meant to be used for a first sync so initial data gets into the UI faster.
 		syncOpts = append(syncOpts, sdkSync.WithSkipEntitlementsAndGrants(true))
@@ -72,11 +79,20 @@ func (c *fullSyncTaskHandler) sync(ctx context.Context, c1zPath string) error {
 		syncOpts = append(syncOpts, sdkSync.WithSkipFullSync())
 	}
 
-	if len(c.targetedSyncResourceIDs) > 0 {
-		syncOpts = append(syncOpts, sdkSync.WithTargetedSyncResourceIDs(c.targetedSyncResourceIDs))
+	if len(c.targetedSyncResources) > 0 {
+		syncOpts = append(syncOpts, sdkSync.WithTargetedSyncResources(c.targetedSyncResources))
+	}
+	cc := c.helpers.ConnectorClient()
+
+	if len(c.syncResourceTypeIDs) > 0 {
+		syncOpts = append(syncOpts, sdkSync.WithSyncResourceTypes(c.syncResourceTypeIDs))
 	}
 
-	syncer, err := sdkSync.NewSyncer(ctx, c.helpers.ConnectorClient(), syncOpts...)
+	if setSessionStore, ok := cc.(session.SetSessionStore); ok {
+		syncOpts = append(syncOpts, sdkSync.WithSessionStore(setSessionStore))
+	}
+
+	syncer, err := sdkSync.NewSyncer(ctx, cc, syncOpts...)
 	if err != nil {
 		l.Error("failed to create syncer", zap.Error(err))
 		return err
@@ -181,7 +197,8 @@ func newFullSyncTaskHandler(
 	skipFullSync bool,
 	externalResourceC1ZPath string,
 	externalResourceEntitlementIdFilter string,
-	targetedSyncResourceIDs []string,
+	targetedSyncResources []*v2.Resource,
+	syncResourceTypeIDs []string,
 ) tasks.TaskHandler {
 	return &fullSyncTaskHandler{
 		task:                                task,
@@ -189,7 +206,8 @@ func newFullSyncTaskHandler(
 		skipFullSync:                        skipFullSync,
 		externalResourceC1ZPath:             externalResourceC1ZPath,
 		externalResourceEntitlementIdFilter: externalResourceEntitlementIdFilter,
-		targetedSyncResourceIDs:             targetedSyncResourceIDs,
+		targetedSyncResources:               targetedSyncResources,
+		syncResourceTypeIDs:                 syncResourceTypeIDs,
 	}
 }
 

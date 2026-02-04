@@ -7,6 +7,10 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/types/sessions"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -14,29 +18,30 @@ type ResourceOption func(*v2.Resource) error
 
 func WithAnnotation(msgs ...proto.Message) ResourceOption {
 	return func(r *v2.Resource) error {
-		annos := annotations.Annotations(r.Annotations)
+		annos := annotations.Annotations(r.GetAnnotations())
 		for _, msg := range msgs {
 			if msg == nil {
 				continue
 			}
 			annos.Append(msg)
 		}
-		r.Annotations = annos
+		r.SetAnnotations(annos)
 
 		return nil
 	}
 }
 
+// WithExternalID: Deprecated. This field is no longer used.
 func WithExternalID(externalID *v2.ExternalId) ResourceOption {
 	return func(r *v2.Resource) error {
-		r.ExternalId = externalID
+		r.SetExternalId(externalID) //nolint:staticcheck // Deprecated.
 		return nil
 	}
 }
 
 func WithParentResourceID(parentResourceID *v2.ResourceId) ResourceOption {
 	return func(r *v2.Resource) error {
-		r.ParentResourceId = parentResourceID
+		r.SetParentResourceId(parentResourceID)
 
 		return nil
 	}
@@ -44,7 +49,7 @@ func WithParentResourceID(parentResourceID *v2.ResourceId) ResourceOption {
 
 func WithDescription(description string) ResourceOption {
 	return func(r *v2.Resource) error {
-		r.Description = description
+		r.SetDescription(description)
 
 		return nil
 	}
@@ -55,7 +60,7 @@ func WithUserTrait(opts ...UserTraitOption) ResourceOption {
 		var err error
 		ut := &v2.UserTrait{}
 
-		annos := annotations.Annotations(r.Annotations)
+		annos := annotations.Annotations(r.GetAnnotations())
 
 		picked, err := annos.Pick(ut)
 		if err != nil {
@@ -78,7 +83,7 @@ func WithUserTrait(opts ...UserTraitOption) ResourceOption {
 		}
 
 		annos.Update(ut)
-		r.Annotations = annos
+		r.SetAnnotations(annos)
 		return nil
 	}
 }
@@ -87,7 +92,7 @@ func WithGroupTrait(opts ...GroupTraitOption) ResourceOption {
 	return func(r *v2.Resource) error {
 		ut := &v2.GroupTrait{}
 
-		annos := annotations.Annotations(r.Annotations)
+		annos := annotations.Annotations(r.GetAnnotations())
 		_, err := annos.Pick(ut)
 		if err != nil {
 			return err
@@ -101,7 +106,7 @@ func WithGroupTrait(opts ...GroupTraitOption) ResourceOption {
 		}
 
 		annos.Update(ut)
-		r.Annotations = annos
+		r.SetAnnotations(annos)
 		return nil
 	}
 }
@@ -110,7 +115,7 @@ func WithRoleTrait(opts ...RoleTraitOption) ResourceOption {
 	return func(r *v2.Resource) error {
 		rt := &v2.RoleTrait{}
 
-		annos := annotations.Annotations(r.Annotations)
+		annos := annotations.Annotations(r.GetAnnotations())
 		_, err := annos.Pick(rt)
 		if err != nil {
 			return err
@@ -124,7 +129,40 @@ func WithRoleTrait(opts ...RoleTraitOption) ResourceOption {
 		}
 
 		annos.Update(rt)
-		r.Annotations = annos
+		r.SetAnnotations(annos)
+
+		return nil
+	}
+}
+
+func WithScopeBindingTrait(opts ...ScopeBindingTraitOption) ResourceOption {
+	return func(r *v2.Resource) error {
+		rt := &v2.ScopeBindingTrait{}
+
+		annos := annotations.Annotations(r.GetAnnotations())
+		_, err := annos.Pick(rt)
+		if err != nil {
+			return err
+		}
+
+		for _, o := range opts {
+			err := o(rt)
+			if err != nil {
+				return err
+			}
+		}
+
+		roleId := rt.GetRoleId()
+		scopeResourceId := rt.GetScopeResourceId()
+		if roleId == nil {
+			return status.Errorf(codes.InvalidArgument, "role ID is required for scope binding trait")
+		}
+		if scopeResourceId == nil {
+			return status.Errorf(codes.InvalidArgument, "scope resource ID is required for scope binding trait")
+		}
+
+		annos.Update(rt)
+		r.SetAnnotations(annos)
 
 		return nil
 	}
@@ -134,7 +172,7 @@ func WithAppTrait(opts ...AppTraitOption) ResourceOption {
 	return func(r *v2.Resource) error {
 		at := &v2.AppTrait{}
 
-		annos := annotations.Annotations(r.Annotations)
+		annos := annotations.Annotations(r.GetAnnotations())
 		_, err := annos.Pick(at)
 		if err != nil {
 			return err
@@ -148,7 +186,7 @@ func WithAppTrait(opts ...AppTraitOption) ResourceOption {
 		}
 
 		annos.Update(at)
-		r.Annotations = annos
+		r.SetAnnotations(annos)
 
 		return nil
 	}
@@ -158,7 +196,7 @@ func WithSecretTrait(opts ...SecretTraitOption) ResourceOption {
 	return func(r *v2.Resource) error {
 		rt := &v2.SecretTrait{}
 
-		annos := annotations.Annotations(r.Annotations)
+		annos := annotations.Annotations(r.GetAnnotations())
 		_, err := annos.Pick(rt)
 		if err != nil {
 			return err
@@ -172,7 +210,7 @@ func WithSecretTrait(opts ...SecretTraitOption) ResourceOption {
 		}
 
 		annos.Update(rt)
-		r.Annotations = annos
+		r.SetAnnotations(annos)
 
 		return nil
 	}
@@ -203,12 +241,12 @@ func NewResourceType(name string, requiredTraits []v2.ResourceType_Trait, msgs .
 		annos.Append(msg)
 	}
 
-	return &v2.ResourceType{
+	return v2.ResourceType_builder{
 		Id:          id,
 		DisplayName: name,
 		Traits:      requiredTraits,
 		Annotations: annos,
-	}
+	}.Build()
 }
 
 // NewResourceID returns a new resource ID given a resource type parent ID, and arbitrary object ID.
@@ -218,10 +256,10 @@ func NewResourceID(resourceType *v2.ResourceType, objectID interface{}) (*v2.Res
 		return nil, err
 	}
 
-	return &v2.ResourceId{
-		ResourceType: resourceType.Id,
+	return v2.ResourceId_builder{
+		ResourceType: resourceType.GetId(),
 		Resource:     id,
-	}, nil
+	}.Build(), nil
 }
 
 // NewResource returns a new resource instance with no traits.
@@ -231,10 +269,10 @@ func NewResource(name string, resourceType *v2.ResourceType, objectID interface{
 		return nil, err
 	}
 
-	resource := &v2.Resource{
+	resource := v2.Resource_builder{
 		Id:          rID,
 		DisplayName: name,
-	}
+	}.Build()
 
 	for _, resourceOption := range resourceOptions {
 		err = resourceOption(resource)
@@ -302,6 +340,24 @@ func NewRoleResource(
 	return ret, nil
 }
 
+// NewScopeBindingResource returns a new resource instance with a configured scope binding trait.
+func NewScopeBindingResource(
+	name string,
+	resourceType *v2.ResourceType,
+	objectID any,
+	scopeBindingOpts []ScopeBindingTraitOption,
+	opts ...ResourceOption,
+) (*v2.Resource, error) {
+	opts = append(opts, WithScopeBindingTrait(scopeBindingOpts...))
+
+	ret, err := NewResource(name, resourceType, objectID, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return ret, nil
+}
+
 // NewAppResource returns a new resource instance with a configured app trait.
 // The trait is configured with the provided helpURL and profile.
 func NewAppResource(
@@ -336,4 +392,15 @@ func NewSecretResource(
 	}
 
 	return ret, nil
+}
+
+type SyncOpAttrs struct {
+	Session   sessions.SessionStore
+	SyncID    string
+	PageToken pagination.Token
+}
+
+type SyncOpResults struct {
+	NextPageToken string
+	Annotations   annotations.Annotations
 }

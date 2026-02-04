@@ -34,9 +34,9 @@ func (m *localDiffer) ShouldDebug() bool {
 func (m *localDiffer) Next(ctx context.Context) (*v1.Task, time.Duration, error) {
 	var task *v1.Task
 	m.o.Do(func() {
-		task = &v1.Task{
-			TaskType: &v1.Task_CreateSyncDiff{},
-		}
+		task = v1.Task_builder{
+			CreateSyncDiff: &v1.Task_CreateSyncDiffTask{},
+		}.Build()
 	})
 	return task, 0, nil
 }
@@ -64,7 +64,7 @@ func (m *localDiffer) Process(ctx context.Context, task *v1.Task, cc types.Conne
 		return err
 	}
 
-	if err := file.Close(); err != nil {
+	if err := file.Close(ctx); err != nil {
 		return err
 	}
 

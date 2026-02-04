@@ -10,6 +10,7 @@ type Configuration struct {
 	IsDirectory               bool
 	SupportsExternalResources bool
 	RequiresExternalConnector bool
+	FieldGroups               []SchemaFieldGroup
 }
 
 type configOption func(Configuration) Configuration
@@ -88,4 +89,30 @@ func NewConfiguration(fields []SchemaField, opts ...configOption) Configuration 
 	}
 
 	return configuration
+}
+
+func (c *Configuration) FieldGroupFields(group string) map[string]SchemaField {
+	var fieldGroupMap map[string]SchemaField
+
+	for _, fg := range c.FieldGroups {
+		if fg.Name == group {
+			fieldGroupMap = fg.FieldMap()
+			break
+		}
+	}
+
+	if fieldGroupMap == nil {
+		for _, fg := range c.FieldGroups {
+			if fg.Default {
+				fieldGroupMap = fg.FieldMap()
+				break
+			}
+		}
+	}
+
+	if fieldGroupMap == nil && len(c.FieldGroups) >= 1 {
+		fieldGroupMap = c.FieldGroups[0].FieldMap()
+	}
+
+	return fieldGroupMap
 }

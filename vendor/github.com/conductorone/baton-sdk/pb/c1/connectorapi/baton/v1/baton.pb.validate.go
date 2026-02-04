@@ -3418,6 +3418,40 @@ func (m *Task_SyncFullTask) validate(all bool) error {
 
 	// no validation rules for SkipEntitlementsAndGrants
 
+	for idx, item := range m.GetTargetedSyncResources() {
+		_, _ = idx, item
+
+		if all {
+			switch v := interface{}(item).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, Task_SyncFullTaskValidationError{
+						field:  fmt.Sprintf("TargetedSyncResources[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, Task_SyncFullTaskValidationError{
+						field:  fmt.Sprintf("TargetedSyncResources[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(item).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return Task_SyncFullTaskValidationError{
+					field:  fmt.Sprintf("TargetedSyncResources[%v]", idx),
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	}
+
 	if len(errors) > 0 {
 		return Task_SyncFullTaskMultiError(errors)
 	}
@@ -4157,6 +4191,21 @@ func (m *Task_CreateAccountTask) validate(all bool) error {
 					cause:  err,
 				}
 			}
+		}
+
+	}
+
+	if m.GetResourceTypeId() != "" {
+
+		if l := len(m.GetResourceTypeId()); l < 1 || l > 1024 {
+			err := Task_CreateAccountTaskValidationError{
+				field:  "ResourceTypeId",
+				reason: "value length must be between 1 and 1024 bytes, inclusive",
+			}
+			if !all {
+				return err
+			}
+			errors = append(errors, err)
 		}
 
 	}
@@ -5522,6 +5571,8 @@ func (m *Task_ActionListSchemasTask) validate(all bool) error {
 
 	}
 
+	// no validation rules for ResourceTypeId
+
 	if len(errors) > 0 {
 		return Task_ActionListSchemasTaskMultiError(errors)
 	}
@@ -5826,6 +5877,8 @@ func (m *Task_ActionInvokeTask) validate(all bool) error {
 		}
 
 	}
+
+	// no validation rules for ResourceTypeId
 
 	if len(errors) > 0 {
 		return Task_ActionInvokeTaskMultiError(errors)

@@ -8,7 +8,9 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	v1 "github.com/conductorone/baton-sdk/pb/c1/connectorapi/baton/v1"
+	"github.com/conductorone/baton-sdk/pkg/session"
 	sdkSync "github.com/conductorone/baton-sdk/pkg/sync"
 	"github.com/conductorone/baton-sdk/pkg/tasks"
 	"github.com/conductorone/baton-sdk/pkg/types"
@@ -20,8 +22,10 @@ type localSyncer struct {
 	tmpDir                              string
 	externalResourceC1Z                 string
 	externalResourceEntitlementIdFilter string
-	targetedSyncResourceIDs             []string
+	targetedSyncResources               []*v2.Resource
 	skipEntitlementsAndGrants           bool
+	skipGrants                          bool
+	syncResourceTypeIDs                 []string
 }
 
 type Option func(*localSyncer)
@@ -44,15 +48,27 @@ func WithExternalResourceEntitlementIdFilter(entitlementId string) Option {
 	}
 }
 
-func WithTargetedSyncResourceIDs(resourceIDs []string) Option {
+func WithTargetedSyncResources(resources []*v2.Resource) Option {
 	return func(m *localSyncer) {
-		m.targetedSyncResourceIDs = resourceIDs
+		m.targetedSyncResources = resources
+	}
+}
+
+func WithSyncResourceTypeIDs(resourceTypeIDs []string) Option {
+	return func(m *localSyncer) {
+		m.syncResourceTypeIDs = resourceTypeIDs
 	}
 }
 
 func WithSkipEntitlementsAndGrants(skip bool) Option {
 	return func(m *localSyncer) {
 		m.skipEntitlementsAndGrants = skip
+	}
+}
+
+func WithSkipGrants(skip bool) Option {
+	return func(m *localSyncer) {
+		m.skipGrants = skip
 	}
 }
 
@@ -67,9 +83,9 @@ func (m *localSyncer) ShouldDebug() bool {
 func (m *localSyncer) Next(ctx context.Context) (*v1.Task, time.Duration, error) {
 	var task *v1.Task
 	m.o.Do(func() {
-		task = &v1.Task{
-			TaskType: &v1.Task_SyncFull{},
-		}
+		task = v1.Task_builder{
+			SyncFull: &v1.Task_SyncFullTask{},
+		}.Build()
 	})
 	return task, 0, nil
 }
@@ -78,13 +94,20 @@ func (m *localSyncer) Process(ctx context.Context, task *v1.Task, cc types.Conne
 	ctx, span := tracer.Start(ctx, "localSyncer.Process", trace.WithNewRoot())
 	defer span.End()
 
+	var setSessionStore session.SetSessionStore
+	if ssetSessionStore, ok := cc.(session.SetSessionStore); ok {
+		setSessionStore = ssetSessionStore
+	}
 	syncer, err := sdkSync.NewSyncer(ctx, cc,
 		sdkSync.WithC1ZPath(m.dbPath),
 		sdkSync.WithTmpDir(m.tmpDir),
 		sdkSync.WithExternalResourceC1ZPath(m.externalResourceC1Z),
 		sdkSync.WithExternalResourceEntitlementIdFilter(m.externalResourceEntitlementIdFilter),
-		sdkSync.WithTargetedSyncResourceIDs(m.targetedSyncResourceIDs),
+		sdkSync.WithTargetedSyncResources(m.targetedSyncResources),
 		sdkSync.WithSkipEntitlementsAndGrants(m.skipEntitlementsAndGrants),
+		sdkSync.WithSkipGrants(m.skipGrants),
+		sdkSync.WithSessionStore(setSessionStore),
+		sdkSync.WithSyncResourceTypes(m.syncResourceTypeIDs),
 	)
 	if err != nil {
 		return err
