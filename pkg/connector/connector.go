@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -26,7 +25,6 @@ import (
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
-	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -304,14 +302,7 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 }
 
 func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
-	l := ctxzap.Extract(ctx)
-	keyBytes, err := os.ReadFile(ghc.AppPrivatekeyPath)
-	if err != nil {
-		l.Error("error reading app private key file", zap.Error(err), zap.String("appPrivateKeyPath", ghc.AppPrivatekeyPath))
-		return nil, fmt.Errorf("failed to read app private key file: %w", err)
-	}
-
-	jwttoken, err := getJWTToken(ghc.AppId, string(keyBytes))
+	jwttoken, err := getJWTToken(ghc.AppId, string(ghc.AppPrivatekeyPath))
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +343,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 				},
 				&appJWTTokenRefresher{
 					appID:      ghc.AppId,
-					privateKey: string(keyBytes),
+					privateKey: string(ghc.AppPrivatekeyPath),
 				},
 			),
 		},

@@ -11,7 +11,7 @@ type Github struct {
 	SyncSecrets bool `mapstructure:"sync-secrets"`
 	OmitArchivedRepositories bool `mapstructure:"omit-archived-repositories"`
 	AppId string `mapstructure:"app-id"`
-	AppPrivatekeyPath string `mapstructure:"app-privatekey-path"`
+	AppPrivatekeyPath []byte `mapstructure:"app-privatekey-path"`
 	Org string `mapstructure:"org"`
 }
 

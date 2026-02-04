@@ -16,6 +16,7 @@ var (
 		field.WithDisplayName("Personal access token"),
 		field.WithDescription("The GitHub access token used to connect to the GitHub API."),
 		field.WithIsSecret(true),
+		field.WithRequired(true),
 	)
 	orgsField = field.StringSliceField(
 		"orgs",
@@ -36,13 +37,18 @@ var (
 		"app-id",
 		field.WithDisplayName("GitHub App ID"),
 		field.WithDescription("The GitHub App to connect to."),
+		field.WithRequired(true),
 	)
 
-	appPrivateKeyPath = field.StringField(
+	appPrivateKeyPath = field.FileUploadField(
 		"app-privatekey-path",
+		[]string{".pem"},
 		field.WithDisplayName("GitHub App private key (.pem)"),
 		field.WithDescription("Path to private key that is used to connect to the GitHub App"),
+		field.WithIsSecret(true),
+		field.WithRequired(true),
 	)
+
 	syncSecrets = field.BoolField(
 		"sync-secrets",
 		field.WithDisplayName("Sync secrets"),
@@ -60,13 +66,10 @@ var (
 		field.WithRequired(true),
 	)
 	fieldRelationships = []field.SchemaFieldRelationship{
-		field.FieldsMutuallyExclusive(
-			accessTokenField,
-			appPrivateKeyPath,
-		),
 		field.FieldsRequiredTogether(
 			appPrivateKeyPath,
 			appIDField,
+			orgField,
 		),
 	}
 )
