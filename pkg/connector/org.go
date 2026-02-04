@@ -210,7 +210,7 @@ func (o *orgResourceType) Grants(
 		})
 	case orgRoleAdmin, orgRoleMember:
 
-		orgName, err := o.orgCache.GetOrgName(ctx, resource.Id)
+		orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, resource.Id)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -282,7 +282,7 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 	adminRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleAdmin)
 	memberRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleMember)
 
-	orgName, err := o.orgCache.GetOrgName(ctx, en.Resource.Id)
+	orgName, err := o.orgCache.GetOrgNameFromRemoteServer(ctx, en.Resource.Id.GetResource())
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +374,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
 	}
 
-	orgName, err := o.orgCache.GetOrgName(ctx, en.Resource.Id)
+	orgName, err := o.orgCache.GetOrgNameFromRemoteServer(ctx, en.Resource.Id.GetResource())
 	if err != nil {
 		return nil, err
 	}

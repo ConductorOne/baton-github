@@ -41,7 +41,21 @@ func (o *orgNameCache) GetOrgName(ctx context.Context, ss sessions.SessionStore,
 		return orgName, nil
 	}
 
-	oID, err := strconv.ParseInt(orgID.Resource, 10, 64)
+	login, err := o.GetOrgNameFromRemoteServer(ctx, orgID.Resource)
+	if err != nil {
+		return "", err
+	}
+
+	err = session.SetJSON(ctx, ss, orgID.Resource, login)
+	if err != nil {
+		return "", err
+	}
+
+	return login, nil
+}
+
+func (o *orgNameCache) GetOrgNameFromRemoteServer(ctx context.Context, rID string) (string, error) {
+	oID, err := strconv.ParseInt(rID, 10, 64)
 	if err != nil {
 		return "", err
 	}
@@ -50,12 +64,6 @@ func (o *orgNameCache) GetOrgName(ctx context.Context, ss sessions.SessionStore,
 	if err != nil {
 		return "", err
 	}
-
-	err = session.SetJSON(ctx, ss, orgID.Resource, org.GetLogin())
-	if err != nil {
-		return "", err
-	}
-
 	return org.GetLogin(), nil
 }
 
