@@ -145,7 +145,6 @@ func (c *fullSyncTaskHandler) HandleTask(ctx context.Context) error {
 	c1zPath := assetFile.Name()
 	err = assetFile.Close()
 	if err != nil {
-		l.Error("failed to close asset file", zap.Error(err))
 		return c.helpers.FinishTask(ctx, nil, nil, err)
 	}
 
@@ -184,9 +183,8 @@ func (c *fullSyncTaskHandler) HandleTask(ctx context.Context) error {
 		return c.helpers.FinishTask(ctx, nil, nil, err)
 	}
 
-	err = uploadDebugLogs(ctx, c.helpers, c.task.GetDebug())
+	err = uploadDebugLogs(ctx, c.helpers)
 	if err != nil {
-		l.Error("failed to upload debug Task logs", zap.Error(err))
 		return c.helpers.FinishTask(ctx, nil, nil, err)
 	}
 
@@ -213,9 +211,7 @@ func newFullSyncTaskHandler(
 	}
 }
 
-// Check if Debug logs should be uploaded to C1 and if so do so,
-// otherwise silently return success.
-func uploadDebugLogs(ctx context.Context, helper fullSyncHelpers, deleteDebugLogs bool) error {
+func uploadDebugLogs(ctx context.Context, helper fullSyncHelpers) error {
 	ctx, span := tracer.Start(ctx, "uploadDebugLogs")
 	defer span.End()
 
@@ -252,27 +248,19 @@ func uploadDebugLogs(ctx context.Context, helper fullSyncHelpers, deleteDebugLog
 
 	debugfile, err := os.Open(debugPath)
 	if err != nil {
-		l.Error("failed to open debug log file path", zap.Error(err))
 		return err
 	}
-	if deleteDebugLogs {
-		// We only delete the debug log when asked to,
-		// as Manager-required log files are not automatically rotated.
-		defer func() {
-			err := os.Remove(debugPath)
-			if err != nil {
-				l.Error("failed to delete file with debug logs", zap.Error(err), zap.String("file", debugPath))
-			} else {
-				l.Info("deleted debug path")
-			}
-		}()
-	}
+	defer func() {
+		err := os.Remove(debugPath)
+		if err != nil {
+			l.Error("failed to delete file with debug logs", zap.Error(err), zap.String("file", debugPath))
+		}
+	}()
 	defer debugfile.Close()
 
 	l.Info("uploading debug logs", zap.String("file", debugPath))
 	err = helper.Upload(ctx, debugfile)
 	if err != nil {
-		l.Error("failed to upload debug logs", zap.Error(err))
 		return err
 	}
 
