@@ -254,7 +254,6 @@ func newGitHubClient(ctx context.Context, instanceURL string, ts oauth2.TokenSou
 }
 
 func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.ConnectorOpts) (connectorbuilder.ConnectorBuilderV2, []connectorbuilder.Opt, error) {
-	// TODO(Ben.Su) Update to use field groups rather than schema relationships.
 	if err := field.Validate(cfg.Config, ghc); err != nil {
 		return nil, nil, err
 	}
