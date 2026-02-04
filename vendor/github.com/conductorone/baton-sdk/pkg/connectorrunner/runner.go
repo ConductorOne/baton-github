@@ -40,20 +40,12 @@ const (
 )
 
 type connectorRunner struct {
-<<<<<<< HEAD
 	cw             types.ClientWrapper
 	oneShot        bool
 	tasks          tasks.Manager
 	debugFile      *os.File
 	debugFileMutex sync.Mutex
 	healthServer   *healthcheck.Server
-=======
-	cw           types.ClientWrapper
-	oneShot      bool
-	tasks        tasks.Manager
-	debugFile    *os.File
-	healthServer *healthcheck.Server
->>>>>>> ce33c6cc (baton-github: upgrade baton-sdk to v0.7.12)
 }
 
 var ErrSigTerm = errors.New("context cancelled by process shutdown")
