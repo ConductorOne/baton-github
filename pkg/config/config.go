@@ -65,13 +65,6 @@ var (
 		field.WithDescription("Organization of your github app"),
 		field.WithRequired(true),
 	)
-	fieldRelationships = []field.SchemaFieldRelationship{
-		field.FieldsRequiredTogether(
-			appPrivateKeyPath,
-			appIDField,
-			orgField,
-		),
-	}
 )
 
 //go:generate go run ./gen
@@ -87,7 +80,6 @@ var Config = field.NewConfiguration(
 		appPrivateKeyPath,
 		orgField,
 	},
-	field.WithConstraints(fieldRelationships...),
 	field.WithConnectorDisplayName("GitHub v2"),
 	field.WithHelpUrl("/docs/baton/github-v2"),
 	field.WithIconUrl("/static/app-icons/github.svg"),
