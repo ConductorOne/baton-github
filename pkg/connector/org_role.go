@@ -290,7 +290,7 @@ func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource,
 		return nil, fmt.Errorf("invalid role ID: %w", err)
 	}
 
-	orgName, err := o.orgCache.GetOrgName(ctx, entitlement.Resource.ParentResourceId)
+	orgName, err := o.orgCache.GetOrgNameFromRemoteServer(ctx, entitlement.Resource.ParentResourceId.GetResource())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get org name: %w", err)
 	}
@@ -385,7 +385,7 @@ func (o *orgRoleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (anno
 		return nil, fmt.Errorf("invalid role ID: %w", err)
 	}
 
-	orgName, err := o.orgCache.GetOrgName(ctx, entitlement.Resource.ParentResourceId)
+	orgName, err := o.orgCache.GetOrgNameFromRemoteServer(ctx, entitlement.Resource.ParentResourceId.GetResource())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get org name: %w", err)
 	}

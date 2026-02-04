@@ -88,7 +88,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 
 	var rv []*v2.Resource
 
-	orgName, err := o.orgCache.GetOrgName(ctx, parentID)
+	orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, parentID)
 	if err != nil {
 		return nil, nil, err
 	}
