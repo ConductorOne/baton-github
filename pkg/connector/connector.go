@@ -317,20 +317,17 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		return nil, err
 	}
 
-	if len(ghc.Orgs) != 1 {
-		return nil, fmt.Errorf("github-connector: only one org should be specified")
-	}
-
 	appClient, err := newGitHubClient(ctx,
 		ghc.InstanceUrl,
 		oauth2.StaticTokenSource(
 			&oauth2.Token{AccessToken: jwttoken},
 		),
 	)
+
 	if err != nil {
 		return nil, err
 	}
-	installation, err := findInstallation(ctx, appClient, ghc.Orgs[0])
+	installation, err := findInstallation(ctx, appClient, ghc.Org)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +373,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		appClient:                appClient,
 		customClient:             customclient.New(ghClient),
 		instanceURL:              ghc.InstanceUrl,
-		orgs:                     ghc.Orgs,
+		orgs:                     []string{ghc.Org},
 		enterprises:              ghc.Enterprises,
 		graphqlClient:            graphqlClient,
 		orgCache:                 newOrgNameCache(ghClient),

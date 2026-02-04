@@ -12,6 +12,7 @@ type Github struct {
 	OmitArchivedRepositories bool `mapstructure:"omit-archived-repositories"`
 	AppId string `mapstructure:"app-id"`
 	AppPrivatekeyPath string `mapstructure:"app-privatekey-path"`
+	Org string `mapstructure:"org"`
 }
 
 func (c *Github) findFieldByTag(tagValue string) (any, bool) {

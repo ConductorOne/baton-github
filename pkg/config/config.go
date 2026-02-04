@@ -5,8 +5,8 @@ import (
 )
 
 const (
-	GithubAppGroup                 = "github_app_group"
-	GithubPersonalAccessTokenGroup = "github_personal_access_token_group"
+	GithubAppGroup                 = "github-app-group"
+	GithubPersonalAccessTokenGroup = "personal-access-token-group"
 )
 
 // TODO (mb): Make sure we don't need field.WithRequired(true) for required fields.
@@ -53,6 +53,12 @@ var (
 		field.WithDisplayName("Omit syncing archived repositories"),
 		field.WithDescription("Whether to skip syncing archived repositories or not"),
 	)
+	orgField = field.StringField(
+		"org",
+		field.WithDisplayName("Github App Organization"),
+		field.WithDescription("Organization of your github app"),
+		field.WithRequired(true),
+	)
 	fieldRelationships = []field.SchemaFieldRelationship{
 		field.FieldsMutuallyExclusive(
 			accessTokenField,
@@ -76,6 +82,7 @@ var Config = field.NewConfiguration(
 		omitArchivedRepositories,
 		appIDField,
 		appPrivateKeyPath,
+		orgField,
 	},
 	field.WithConstraints(fieldRelationships...),
 	field.WithConnectorDisplayName("GitHub v2"),
@@ -87,14 +94,14 @@ var Config = field.NewConfiguration(
 			DisplayName: "Personal access token",
 			HelpText:    "Use a personal access token for authentication.",
 			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories},
-			Default:     false,
+			Default:     true,
 		},
 		{
 			Name:        GithubAppGroup,
 			DisplayName: "GitHub app",
 			HelpText:    "Use a github app for authentication",
-			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgsField, syncSecrets, omitArchivedRepositories},
-			Default:     true,
+			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgField, syncSecrets, omitArchivedRepositories},
+			Default:     false,
 		},
 	}),
 )
