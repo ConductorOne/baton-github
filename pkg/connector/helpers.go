@@ -2,11 +2,13 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -17,6 +19,7 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -184,6 +187,38 @@ func extractRateLimitData(response *github.Response) (*v2.RateLimitDescription, 
 	}, nil
 }
 
+// rateLimitDescriptionFromRate creates a RateLimitDescription from a github.Rate struct.
+// This is used when go-github returns a RateLimitError with rate info but a synthetic response.
+func rateLimitDescriptionFromRate(rate github.Rate) *v2.RateLimitDescription {
+	return &v2.RateLimitDescription{
+		Status:    v2.RateLimitDescription_STATUS_OVERLIMIT,
+		Limit:     int64(rate.Limit),
+		Remaining: int64(rate.Remaining),
+		ResetAt:   timestamppb.New(rate.Reset.Time),
+	}
+}
+
+// rateLimitDescriptionFromRetryAfter creates a RateLimitDescription from a retry-after duration.
+// This is used for AbuseRateLimitError which provides a RetryAfter duration.
+func rateLimitDescriptionFromRetryAfter(retryAfter *time.Duration) *v2.RateLimitDescription {
+	desc := &v2.RateLimitDescription{
+		Status: v2.RateLimitDescription_STATUS_OVERLIMIT,
+	}
+	if retryAfter != nil {
+		desc.ResetAt = timestamppb.New(time.Now().Add(*retryAfter))
+	}
+	return desc
+}
+
+// wrapErrorWithRateLimitDetails creates a gRPC error with rate limit details attached.
+func wrapErrorWithRateLimitDetails(code codes.Code, msg string, rlDesc *v2.RateLimitDescription, err error) error {
+	st := status.New(code, msg)
+	if rlDesc != nil {
+		st, _ = st.WithDetails(rlDesc)
+	}
+	return errors.Join(st.Err(), err)
+}
+
 type listUsersQuery struct {
 	Organization struct {
 		SamlIdentityProvider struct {
@@ -252,6 +287,15 @@ func isPermissionError(resp *github.Response) bool {
 	return resp.StatusCode == http.StatusForbidden
 }
 
+func isTemporarilyUnavailable(resp *github.Response) bool {
+	if resp == nil {
+		return false
+	}
+	return resp.StatusCode == http.StatusServiceUnavailable ||
+		resp.StatusCode == http.StatusBadGateway ||
+		resp.StatusCode == http.StatusGatewayTimeout
+}
+
 // wrapGitHubError wraps GitHub API errors with appropriate gRPC status codes based on the HTTP response.
 // It handles rate limiting, authentication errors, permission errors, and generic errors.
 // The contextMsg parameter should describe the operation that failed (e.g., "failed to list teams").
@@ -260,9 +304,31 @@ func wrapGitHubError(err error, resp *github.Response, contextMsg string) error 
 		return nil
 	}
 
+	// Check for go-github rate limit error types FIRST.
+	// These may have synthetic responses with empty headers when the client
+	// blocks requests without making an actual HTTP call.
+	var rateLimitErr *github.RateLimitError
+	if errors.As(err, &rateLimitErr) {
+		rlDesc := rateLimitDescriptionFromRate(rateLimitErr.Rate)
+		return wrapErrorWithRateLimitDetails(codes.Unavailable, "rate limit exceeded", rlDesc, err)
+	}
+
+	var abuseRateLimitErr *github.AbuseRateLimitError
+	if errors.As(err, &abuseRateLimitErr) {
+		rlDesc := rateLimitDescriptionFromRetryAfter(abuseRateLimitErr.RetryAfter)
+		return wrapErrorWithRateLimitDetails(codes.Unavailable, "secondary rate limit exceeded", rlDesc, err)
+	}
+
+	// Check response-based rate limiting (real 429 or 403 with header)
 	if isRatelimited(resp) {
 		return uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
 	}
+
+	// Check for temporary server errors (503, 502, 504)
+	if isTemporarilyUnavailable(resp) {
+		return uhttp.WrapErrors(codes.Unavailable, "service temporarily unavailable", err)
+	}
+
 	if isAuthError(resp) {
 		return uhttp.WrapErrors(codes.Unauthenticated, contextMsg, err)
 	}
