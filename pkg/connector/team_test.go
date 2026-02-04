@@ -227,7 +227,7 @@ func TestTeamActions(t *testing.T) {
 
 	t.Run("should fail with missing required org field", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
-		mgh.Seed()
+		_, _, _, _, _, _ = mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
@@ -247,7 +247,7 @@ func TestTeamActions(t *testing.T) {
 
 	t.Run("should fail with invalid privacy value", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
-		mgh.Seed()
+		_, _, _, _, _, _ = mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)

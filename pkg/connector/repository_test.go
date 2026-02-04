@@ -127,7 +127,7 @@ func TestRepositoryActions(t *testing.T) {
 
 	t.Run("should create a public repository", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
-		mgh.Seed()
+		_, _, _, _, _, _ = mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
@@ -152,7 +152,7 @@ func TestRepositoryActions(t *testing.T) {
 
 	t.Run("should fail when templates are used but add_readme is false", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
-		mgh.Seed()
+		_, _, _, _, _, _ = mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
@@ -179,7 +179,7 @@ func TestRepositoryActions(t *testing.T) {
 
 	t.Run("should fail with missing required name field", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
-		mgh.Seed()
+		_, _, _, _, _, _ = mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
@@ -202,7 +202,7 @@ func TestRepositoryActions(t *testing.T) {
 
 	t.Run("should fail with invalid visibility value", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
-		mgh.Seed()
+		_, _, _, _, _, _ = mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
@@ -226,7 +226,7 @@ func TestRepositoryActions(t *testing.T) {
 
 	t.Run("should create internal repository (enterprise feature)", func(t *testing.T) {
 		mgh := mocks.NewMockGitHub()
-		mgh.Seed()
+		_, _, _, _, _, _ = mgh.Seed()
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
