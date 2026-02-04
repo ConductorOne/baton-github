@@ -4,6 +4,11 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/field"
 )
 
+const (
+	GithubAppGroup                 = "github_app_group"
+	GithubPersonalAccessTokenGroup = "github_personal_access_token_group"
+)
+
 // TODO (mb): Make sure we don't need field.WithRequired(true) for required fields.
 var (
 	accessTokenField = field.StringField(
@@ -76,4 +81,20 @@ var Config = field.NewConfiguration(
 	field.WithConnectorDisplayName("GitHub v2"),
 	field.WithHelpUrl("/docs/baton/github-v2"),
 	field.WithIconUrl("/static/app-icons/github.svg"),
+	field.WithFieldGroups([]field.SchemaFieldGroup{
+		{
+			Name:        GithubPersonalAccessTokenGroup,
+			DisplayName: "Personal access token",
+			HelpText:    "Use a personal access token for authentication.",
+			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories},
+			Default:     false,
+		},
+		{
+			Name:        GithubAppGroup,
+			DisplayName: "GitHub app",
+			HelpText:    "Use a github app for authentication",
+			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgsField, syncSecrets, omitArchivedRepositories},
+			Default:     true,
+		},
+	}),
 )
