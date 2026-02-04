@@ -55,7 +55,10 @@ func TestOrgRole(t *testing.T) {
 				pToken.Token = token
 			}
 
-			nextGrants, results, err := client.Grants(ctx, roleResource, resourceSdk.SyncOpAttrs{PageToken: pToken})
+			nextGrants, results, err := client.Grants(ctx, roleResource, resourceSdk.SyncOpAttrs{
+				PageToken: pToken,
+				Session:   &noOpSessionStore{},
+			})
 			grants = append(grants, nextGrants...)
 
 			require.Nil(t, err)
@@ -95,7 +98,10 @@ func TestOrgRole(t *testing.T) {
 		organization, _ := organizationResource(ctx, githubOrganization, nil, true)
 
 		// Test List with permission error
-		resources, results, err := client.List(ctx, organization.Id, resourceSdk.SyncOpAttrs{PageToken: pagination.Token{}})
+		resources, results, err := client.List(ctx, organization.Id, resourceSdk.SyncOpAttrs{
+			PageToken: pagination.Token{},
+			Session:   &noOpSessionStore{},
+		})
 		require.Nil(t, err)
 		require.Empty(t, resources)
 		require.Empty(t, results.NextPageToken)
@@ -108,7 +114,10 @@ func TestOrgRole(t *testing.T) {
 			Description: orgRole.Description,
 		}, organization)
 
-		grants, grantsResults, err := client.Grants(ctx, role, resourceSdk.SyncOpAttrs{PageToken: pagination.Token{}})
+		grants, grantsResults, err := client.Grants(ctx, role, resourceSdk.SyncOpAttrs{
+			PageToken: pagination.Token{},
+			Session:   &noOpSessionStore{},
+		})
 		require.Nil(t, err)
 		require.Empty(t, grants)
 		// The token should contain the initial state for users

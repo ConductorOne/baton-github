@@ -50,7 +50,10 @@ func TestRepository(t *testing.T) {
 				pToken.Token = token
 			}
 
-			nextGrants, results, err := client.Grants(ctx, repository, resourceSdk.SyncOpAttrs{PageToken: pToken})
+			nextGrants, results, err := client.Grants(ctx, repository, resourceSdk.SyncOpAttrs{
+				PageToken: pToken,
+				Session:   &noOpSessionStore{},
+			})
 			grants = append(grants, nextGrants...)
 
 			require.Nil(t, err)
