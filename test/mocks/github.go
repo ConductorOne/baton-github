@@ -753,6 +753,10 @@ func (mgh MockGitHub) Server() *http.Client {
 		}: mgh.getOrgRoleByID,
 		PutOrgsRolesUsersByOrgByRoleIdByUsername:    mgh.addOrgRoleUser,
 		DeleteOrgsRolesUsersByOrgByRoleIdByUsername: mgh.removeOrgRoleUser,
+		// Team and repository creation
+		PostOrgsTeamsByOrg: mgh.createTeam,
+		PostOrgsReposByOrg: mgh.createRepository,
+		GetOrgsByName:      mgh.getOrganizationBySlug,
 	}
 
 	options := make([]mock.MockBackendOption, 0)
@@ -781,4 +785,178 @@ func (mgh *MockGitHub) AddMembership(teamID int64, userID int64) {
 		mgh.teamMemberships[teamID] = mapset.NewSet[int64]()
 	}
 	mgh.teamMemberships[teamID].Add(userID)
+}
+
+// AddUser adds a user to the mock server for testing purposes.
+func (mgh *MockGitHub) AddUser(user github.User) {
+	mgh.users[*user.ID] = user
+}
+
+// AddRepository adds a repository to the mock server for testing purposes.
+func (mgh *MockGitHub) AddRepository(repo github.Repository) {
+	mgh.repositories[*repo.ID] = repo
+}
+
+// AddOrganization adds an organization to the mock server for testing purposes.
+func (mgh *MockGitHub) AddOrganization(org github.Organization) {
+	mgh.organizations[*org.ID] = org
+}
+
+// nextTeamID tracks the next team ID to assign for created teams.
+var nextTeamID int64 = 1000
+
+// nextRepoID tracks the next repo ID to assign for created repos.
+var nextRepoID int64 = 1000
+
+// createTeam creates a new team in the mock server.
+func (mgh *MockGitHub) createTeam(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	orgSlug, ok := variables["org"]
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	// Find org by slug
+	var foundOrg *github.Organization
+	for _, org := range mgh.organizations {
+		if org.GetLogin() == orgSlug {
+			foundOrg = &org
+			break
+		}
+	}
+	if foundOrg == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	teamName := variables["name"]
+	if teamName == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	// Get privacy setting
+	privacy := variables["privacy"]
+	if privacy == "" {
+		privacy = "secret" // Default for non-nested teams
+	}
+
+	// Check if parent team is specified
+	parentTeamIDStr := variables["parent_team_id"]
+	var parentTeam *github.Team
+	if parentTeamIDStr != "" {
+		parentTeamID, err := strconv.ParseInt(parentTeamIDStr, 10, 64)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		pt, ok := mgh.teams[parentTeamID]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		parentTeam = &pt
+		// Nested teams must be closed
+		privacy = "closed"
+	}
+
+	teamID := nextTeamID
+	nextTeamID++
+
+	newTeam := github.Team{
+		ID:           github.Ptr(teamID),
+		Name:         github.Ptr(teamName),
+		Slug:         github.Ptr(strings.ToLower(strings.ReplaceAll(teamName, " ", "-"))),
+		Organization: foundOrg,
+		Privacy:      github.Ptr(privacy),
+	}
+	if parentTeam != nil {
+		newTeam.Parent = parentTeam
+	}
+
+	mgh.teams[teamID] = newTeam
+	mgh.teamMemberships[teamID] = mapset.NewSet[int64]()
+
+	_, _ = w.Write(mock.MustMarshal(newTeam))
+}
+
+// createRepository creates a new repository in the mock server.
+func (mgh *MockGitHub) createRepository(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	orgSlug, ok := variables["org"]
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	// Find org by slug
+	var foundOrg *github.Organization
+	for _, org := range mgh.organizations {
+		if org.GetLogin() == orgSlug {
+			foundOrg = &org
+			break
+		}
+	}
+	if foundOrg == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	repoName := variables["name"]
+	if repoName == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	visibility := variables["visibility"]
+	if visibility == "" {
+		visibility = "private"
+	}
+
+	description := variables["description"]
+
+	repoID := nextRepoID
+	nextRepoID++
+
+	fullName := fmt.Sprintf("%s/%s", foundOrg.GetLogin(), repoName)
+	newRepo := github.Repository{
+		ID:           github.Ptr(repoID),
+		Name:         github.Ptr(repoName),
+		FullName:     github.Ptr(fullName),
+		Description:  github.Ptr(description),
+		Organization: foundOrg,
+		Visibility:   github.Ptr(visibility),
+		Private:      github.Ptr(visibility == "private"),
+	}
+
+	mgh.repositories[repoID] = newRepo
+	mgh.repositoryMemberships[repoID] = mapset.NewSet[int64]()
+
+	_, _ = w.Write(mock.MustMarshal(newRepo))
+}
+
+// getOrganizationBySlug gets an organization by its slug/login.
+func (mgh *MockGitHub) getOrganizationBySlug(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	orgSlug, ok := variables["org"]
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	// Find org by slug
+	for _, org := range mgh.organizations {
+		if org.GetLogin() == orgSlug {
+			_, _ = w.Write(mock.MustMarshal(org))
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNotFound)
 }
