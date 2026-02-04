@@ -59,7 +59,7 @@ func (i *invitationResourceType) List(ctx context.Context, parentID *v2.Resource
 		return nil, nil, err
 	}
 
-	orgName, err := i.orgCache.GetOrgName(ctx, parentID)
+	orgName, err := i.orgCache.GetOrgName(ctx, opts.Session, parentID)
 	if err != nil {
 		return nil, nil, err
 	}

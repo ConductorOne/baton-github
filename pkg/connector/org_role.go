@@ -76,7 +76,7 @@ func (o *orgRoleResourceType) List(
 		return nil, &resourceSdk.SyncOpResults{}, nil
 	}
 
-	orgName, err := o.orgCache.GetOrgName(ctx, parentID)
+	orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, parentID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -139,7 +139,7 @@ func (o *orgRoleResourceType) Grants(
 		return nil, nil, err
 	}
 
-	orgName, err := o.orgCache.GetOrgName(ctx, resource.ParentResourceId)
+	orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, resource.ParentResourceId)
 	if err != nil {
 		return nil, nil, err
 	}

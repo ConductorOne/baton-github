@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/session"
+	"github.com/conductorone/baton-sdk/pkg/types/sessions"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/shurcooL/githubv4"
@@ -27,23 +28,16 @@ func titleCase(s string) string {
 }
 
 type orgNameCache struct {
-	sync.RWMutex
-	c        *github.Client
-	orgNames map[string]string
+	c *github.Client
 }
 
-func (o *orgNameCache) GetOrgName(ctx context.Context, orgID *v2.ResourceId) (string, error) {
-	o.RLock()
-	if orgName, ok := o.orgNames[orgID.Resource]; ok {
-		o.RUnlock()
-		return orgName, nil
+func (o *orgNameCache) GetOrgName(ctx context.Context, ss sessions.SessionStore, orgID *v2.ResourceId) (string, error) {
+	orgName, found, err := session.GetJSON[string](ctx, ss, orgID.Resource)
+	if err != nil {
+		return "", err
 	}
-	o.RUnlock()
 
-	o.Lock()
-	defer o.Unlock()
-
-	if orgName, ok := o.orgNames[orgID.Resource]; ok {
+	if found {
 		return orgName, nil
 	}
 
@@ -57,15 +51,17 @@ func (o *orgNameCache) GetOrgName(ctx context.Context, orgID *v2.ResourceId) (st
 		return "", err
 	}
 
-	o.orgNames[orgID.Resource] = org.GetLogin()
+	err = session.SetJSON(ctx, ss, orgID.Resource, org.GetLogin())
+	if err != nil {
+		return "", err
+	}
 
 	return org.GetLogin(), nil
 }
 
 func newOrgNameCache(c *github.Client) *orgNameCache {
 	return &orgNameCache{
-		c:        c,
-		orgNames: make(map[string]string),
+		c: c,
 	}
 }
 

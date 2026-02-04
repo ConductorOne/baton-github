@@ -79,7 +79,7 @@ func (o *apiTokenResourceType) List(
 		return nil, nil, err
 	}
 
-	orgName, err := o.orgCache.GetOrgName(ctx, parentID)
+	orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, parentID)
 	if err != nil {
 		return nil, nil, err
 	}
