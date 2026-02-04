@@ -264,15 +264,15 @@ func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.Conne
 		cb    *GitHub
 		err   error
 	)
-	if group == cfg.GithubPersonalAccessTokenGroup {
-		cb, err = newWithGithubPAT(ctx, ghc)
+	if group == cfg.GithubAppGroup {
+		cb, err = newWithGithubApp(ctx, ghc)
 		if err != nil {
 			return nil, nil, err
 		}
 		return cb, nil, nil
 	}
 
-	cb, err = newWithGithubApp(ctx, ghc)
+	cb, err = newWithGithubPAT(ctx, ghc)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -429,21 +429,6 @@ func loadPrivateKeyFromString(p string) (*rsa.PrivateKey, error) {
 
 	// PKCS1 format
 	return x509.ParsePKCS1PrivateKey(block.Bytes)
-}
-
-// getClientToken returns
-// 1. fine-grained personal access tokens if any.
-// 2. JWT token if using github app.
-func getClientToken(ghc *cfg.Github, privateKey string) (string, string, error) {
-	if ghc.Token != "" {
-		return "", ghc.Token, nil
-	}
-
-	token, err := getJWTToken(ghc.AppId, privateKey)
-	if err != nil {
-		return "", "", err
-	}
-	return token, "", nil
 }
 
 func getJWTToken(appID string, privateKey string) (string, error) {
