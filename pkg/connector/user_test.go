@@ -56,7 +56,10 @@ func TestUsersList(t *testing.T) {
 			users, results, err := client.List(
 				ctx,
 				organization.Id,
-				resourceSdk.SyncOpAttrs{PageToken: pagination.Token{}},
+				resourceSdk.SyncOpAttrs{
+					PageToken: pagination.Token{},
+					Session:   &noOpSessionStore{},
+				},
 			)
 			require.Nil(t, err)
 			test.AssertHasRatelimitAnnotations(t, results.Annotations)

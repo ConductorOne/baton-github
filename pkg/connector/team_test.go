@@ -40,7 +40,10 @@ func TestTeam(t *testing.T) {
 		require.Nil(t, err)
 		require.Empty(t, grantAnnotations)
 
-		_, results, err := client.Grants(ctx, team, resourceSdk.SyncOpAttrs{PageToken: pagination.Token{}})
+		_, results, err := client.Grants(ctx, team, resourceSdk.SyncOpAttrs{
+			PageToken: pagination.Token{},
+			Session:   &noOpSessionStore{},
+		})
 		require.Nil(t, err)
 		test.AssertHasRatelimitAnnotations(t, results.Annotations)
 		require.Equal(t, "{\"states\":[{\"type\":\"member\"}],\"current_state\":{\"type\":\"maintainer\"}}", results.NextPageToken)

@@ -38,7 +38,10 @@ func TestOrganization(t *testing.T) {
 		require.Nil(t, err)
 		require.Empty(t, grantAnnotations)
 
-		_, results, err := client.Grants(ctx, organization, resourceSdk.SyncOpAttrs{PageToken: pagination.Token{}})
+		_, results, err := client.Grants(ctx, organization, resourceSdk.SyncOpAttrs{
+			PageToken: pagination.Token{},
+			Session:   &noOpSessionStore{},
+		})
 		require.Nil(t, err)
 		test.AssertHasRatelimitAnnotations(t, results.Annotations)
 		require.Equal(t, "{\"states\":[{\"type\":\"admin\"}],\"current_state\":{\"type\":\"member\"}}", results.NextPageToken)
