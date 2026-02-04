@@ -383,6 +383,90 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	return gh, nil
 }
 
+// New returns the GitHub connector configured to sync against the instance URL.
+func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
+	jwttoken, patToken, err := getClientToken(ghc, appKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		appClient *github.Client
+		ts        = oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: patToken},
+		)
+	)
+	if jwttoken != "" {
+		if len(ghc.Orgs) != 1 {
+			return nil, fmt.Errorf("github-connector: only one org should be specified")
+		}
+
+		appClient, err = newGitHubClient(ctx,
+			ghc.InstanceUrl,
+			oauth2.StaticTokenSource(
+				&oauth2.Token{AccessToken: jwttoken},
+			),
+		)
+		if err != nil {
+			return nil, err
+		}
+		installation, err := findInstallation(ctx, appClient, ghc.Orgs[0])
+		if err != nil {
+			return nil, err
+		}
+
+		token, err := getInstallationToken(ctx, appClient, installation.GetID())
+		if err != nil {
+			return nil, err
+		}
+
+		ts = oauth2.ReuseTokenSource(
+			&oauth2.Token{
+				AccessToken: token.GetToken(),
+				Expiry:      token.GetExpiresAt().Time,
+			},
+			&appTokenRefresher{
+				ctx:            ctx,
+				instanceURL:    ghc.InstanceUrl,
+				installationID: installation.GetID(),
+				jwtTokenSource: oauth2.ReuseTokenSource(
+					&oauth2.Token{
+						AccessToken: jwttoken,
+						Expiry:      time.Now().Add(jwtExpiryTime),
+					},
+					&appJWTTokenRefresher{
+						appID:      ghc.AppId,
+						privateKey: appKey,
+					},
+				),
+			},
+		)
+	}
+
+	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
+	if err != nil {
+		return nil, err
+	}
+	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ts)
+	if err != nil {
+		return nil, err
+	}
+
+	gh := &GitHub{
+		client:                   ghClient,
+		appClient:                appClient,
+		customClient:             customclient.New(ghClient),
+		instanceURL:              ghc.InstanceUrl,
+		orgs:                     ghc.Orgs,
+		enterprises:              ghc.Enterprises,
+		graphqlClient:            graphqlClient,
+		orgCache:                 newOrgNameCache(ghClient),
+		syncSecrets:              ghc.SyncSecrets,
+		omitArchivedRepositories: ghc.OmitArchivedRepositories,
+	}
+	return gh, nil
+}
+
 func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
