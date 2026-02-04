@@ -260,85 +260,107 @@ func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.Conne
 	}
 
 	var (
-		l          = ctxzap.Extract(ctx)
-		privateKey string
+		group = cliOpts.SelectedAuthMethod
+		cb    *GitHub
+		err   error
 	)
-	if ghc.AppPrivatekeyPath != "" {
-		keyBytes, err := os.ReadFile(ghc.AppPrivatekeyPath)
+	if group == cfg.GithubPersonalAccessTokenGroup {
+		cb, err = newWithGithubPAT(ctx, ghc)
 		if err != nil {
-			l.Error("error reading app private key file", zap.Error(err), zap.String("appPrivateKeyPath", ghc.AppPrivatekeyPath))
-			return nil, nil, fmt.Errorf("failed to read app private key file: %w", err)
+			return nil, nil, err
 		}
-		privateKey = string(keyBytes)
+		return cb, nil, nil
 	}
 
-	cb, err := New(ctx, ghc, privateKey)
+	cb, err = newWithGithubApp(ctx, ghc)
 	if err != nil {
-		l.Error("error creating connector", zap.Error(err))
 		return nil, nil, err
 	}
 	return cb, nil, nil
 }
 
-// New returns the GitHub connector configured to sync against the instance URL.
-func New(ctx context.Context, ghc *cfg.Github, appKey string) (*GitHub, error) {
-	jwttoken, patToken, err := getClientToken(ghc, appKey)
+func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: ghc.Token},
+	)
+	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
+	if err != nil {
+		return nil, err
+	}
+	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ts)
+	if err != nil {
+		return nil, err
+	}
+	return &GitHub{
+		client:                   ghClient,
+		customClient:             customclient.New(ghClient),
+		instanceURL:              ghc.InstanceUrl,
+		orgs:                     ghc.Orgs,
+		enterprises:              ghc.Enterprises,
+		graphqlClient:            graphqlClient,
+		orgCache:                 newOrgNameCache(ghClient),
+		syncSecrets:              ghc.SyncSecrets,
+		omitArchivedRepositories: ghc.OmitArchivedRepositories,
+	}, nil
+}
+
+func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
+	l := ctxzap.Extract(ctx)
+	keyBytes, err := os.ReadFile(ghc.AppPrivatekeyPath)
+	if err != nil {
+		l.Error("error reading app private key file", zap.Error(err), zap.String("appPrivateKeyPath", ghc.AppPrivatekeyPath))
+		return nil, fmt.Errorf("failed to read app private key file: %w", err)
+	}
+
+	jwttoken, err := getJWTToken(ghc.AppId, string(keyBytes))
 	if err != nil {
 		return nil, err
 	}
 
-	var (
-		appClient *github.Client
-		ts        = oauth2.StaticTokenSource(
-			&oauth2.Token{AccessToken: patToken},
-		)
-	)
-	if jwttoken != "" {
-		if len(ghc.Orgs) != 1 {
-			return nil, fmt.Errorf("github-connector: only one org should be specified")
-		}
-
-		appClient, err = newGitHubClient(ctx,
-			ghc.InstanceUrl,
-			oauth2.StaticTokenSource(
-				&oauth2.Token{AccessToken: jwttoken},
-			),
-		)
-		if err != nil {
-			return nil, err
-		}
-		installation, err := findInstallation(ctx, appClient, ghc.Orgs[0])
-		if err != nil {
-			return nil, err
-		}
-
-		token, err := getInstallationToken(ctx, appClient, installation.GetID())
-		if err != nil {
-			return nil, err
-		}
-
-		ts = oauth2.ReuseTokenSource(
-			&oauth2.Token{
-				AccessToken: token.GetToken(),
-				Expiry:      token.GetExpiresAt().Time,
-			},
-			&appTokenRefresher{
-				ctx:            ctx,
-				instanceURL:    ghc.InstanceUrl,
-				installationID: installation.GetID(),
-				jwtTokenSource: oauth2.ReuseTokenSource(
-					&oauth2.Token{
-						AccessToken: jwttoken,
-						Expiry:      time.Now().Add(jwtExpiryTime),
-					},
-					&appJWTTokenRefresher{
-						appID:      ghc.AppId,
-						privateKey: appKey,
-					},
-				),
-			},
-		)
+	if len(ghc.Orgs) != 1 {
+		return nil, fmt.Errorf("github-connector: only one org should be specified")
 	}
+
+	appClient, err := newGitHubClient(ctx,
+		ghc.InstanceUrl,
+		oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: jwttoken},
+		),
+	)
+	if err != nil {
+		return nil, err
+	}
+	installation, err := findInstallation(ctx, appClient, ghc.Orgs[0])
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := getInstallationToken(ctx, appClient, installation.GetID())
+	if err != nil {
+		return nil, err
+	}
+
+	ts := oauth2.ReuseTokenSource(
+		&oauth2.Token{
+			AccessToken: token.GetToken(),
+			Expiry:      token.GetExpiresAt().Time,
+		},
+		&appTokenRefresher{
+			ctx:            ctx,
+			instanceURL:    ghc.InstanceUrl,
+			installationID: installation.GetID(),
+			jwtTokenSource: oauth2.ReuseTokenSource(
+				&oauth2.Token{
+					AccessToken: jwttoken,
+					Expiry:      time.Now().Add(jwtExpiryTime),
+				},
+				&appJWTTokenRefresher{
+					appID:      ghc.AppId,
+					privateKey: string(keyBytes),
+				},
+			),
+		},
+	)
 
 	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
 	if err != nil {
