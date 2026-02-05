@@ -322,6 +322,8 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		return nil, err
 	}
 
+	fmt.Printf("new jwtToken: %s, new access token: %s\n", jwttoken, *token.Token)
+
 	jwtts := oauth2.ReuseTokenSource(
 		&oauth2.Token{
 			AccessToken: jwttoken,
@@ -476,6 +478,8 @@ func (r *appJWTTokenRefresher) Token() (*oauth2.Token, error) {
 		return nil, err
 	}
 
+	fmt.Printf("refresh jwttoken: %s\n", token)
+
 	return &oauth2.Token{
 		AccessToken: token,
 		Expiry:      time.Now().Add(jwtExpiryTime),
@@ -502,6 +506,8 @@ func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	fmt.Printf("refresh access token: %s\n", *token.Token)
 	return &oauth2.Token{
 		AccessToken: token.GetToken(),
 		Expiry:      token.GetExpiresAt().Time,
