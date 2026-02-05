@@ -19,7 +19,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/cli"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
-	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/google/go-github/v69/github"
@@ -252,10 +251,6 @@ func newGitHubClient(ctx context.Context, instanceURL string, ts oauth2.TokenSou
 }
 
 func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.ConnectorOpts) (connectorbuilder.ConnectorBuilderV2, []connectorbuilder.Opt, error) {
-	if err := field.Validate(cfg.Config, ghc); err != nil {
-		return nil, nil, err
-	}
-
 	var (
 		group = cliOpts.SelectedAuthMethod
 		cb    *GitHub
