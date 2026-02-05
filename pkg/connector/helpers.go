@@ -199,7 +199,7 @@ func rateLimitDescriptionFromRate(rate github.Rate) *v2.RateLimitDescription {
 		Limit:     int64(rate.Limit),
 		Remaining: int64(rate.Remaining),
 	}
-	if !rate.Reset.Time.IsZero() {
+	if !rate.Reset.IsZero() {
 		desc.ResetAt = timestamppb.New(rate.Reset.Time)
 	}
 	return desc
