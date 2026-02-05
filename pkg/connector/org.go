@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -189,7 +188,6 @@ func (o *orgResourceType) Grants(
 	resource *v2.Resource,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
-	time.Sleep(70 * time.Minute)
 	bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
 	if err != nil {
 		return nil, nil, err

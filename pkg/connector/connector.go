@@ -322,6 +322,16 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		return nil, err
 	}
 
+	jwtts := oauth2.ReuseTokenSource(
+		&oauth2.Token{
+			AccessToken: jwttoken,
+			Expiry:      time.Now().Add(jwtExpiryTime),
+		},
+		&appJWTTokenRefresher{
+			appID:      ghc.AppId,
+			privateKey: string(ghc.AppPrivatekeyPath),
+		},
+	)
 	ts := oauth2.ReuseTokenSource(
 		&oauth2.Token{
 			AccessToken: token.GetToken(),
@@ -331,26 +341,17 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 			ctx:            ctx,
 			instanceURL:    ghc.InstanceUrl,
 			installationID: installation.GetID(),
-			jwtTokenSource: oauth2.ReuseTokenSource(
-				&oauth2.Token{
-					AccessToken: jwttoken,
-					Expiry:      time.Now().Add(jwtExpiryTime),
-				},
-				&appJWTTokenRefresher{
-					appID:      ghc.AppId,
-					privateKey: string(ghc.AppPrivatekeyPath),
-				},
-			),
+			jwtTokenSource: jwtts,
 		},
 	)
 	// override the appClient with the reuseTokenSource.
 	appClient, err = newGitHubClient(ctx,
-			ghc.InstanceUrl,
-			ts,
-		)
-		if err != nil {
-			return nil, err
-		}
+		ghc.InstanceUrl,
+		jwtts,
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
 	if err != nil {
