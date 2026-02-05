@@ -343,6 +343,14 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 			),
 		},
 	)
+	// override the appClient with the reuseTokenSource.
+	appClient, err = newGitHubClient(ctx,
+			ghc.InstanceUrl,
+			ts,
+		)
+		if err != nil {
+			return nil, err
+		}
 
 	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
 	if err != nil {
