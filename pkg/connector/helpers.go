@@ -194,12 +194,15 @@ func extractRateLimitData(response *github.Response) (*v2.RateLimitDescription, 
 // rateLimitDescriptionFromRate creates a RateLimitDescription from a github.Rate struct.
 // This is used when go-github returns a RateLimitError with rate info but a synthetic response.
 func rateLimitDescriptionFromRate(rate github.Rate) *v2.RateLimitDescription {
-	return &v2.RateLimitDescription{
+	desc := &v2.RateLimitDescription{
 		Status:    v2.RateLimitDescription_STATUS_OVERLIMIT,
 		Limit:     int64(rate.Limit),
 		Remaining: int64(rate.Remaining),
-		ResetAt:   timestamppb.New(rate.Reset.Time),
 	}
+	if !rate.Reset.Time.IsZero() {
+		desc.ResetAt = timestamppb.New(rate.Reset.Time)
+	}
+	return desc
 }
 
 // rateLimitDescriptionFromRetryAfter creates a RateLimitDescription from a retry-after duration.
