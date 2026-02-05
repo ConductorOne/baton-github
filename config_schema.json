@@ -84,8 +84,13 @@
       "name": "token",
       "displayName": "Personal access token",
       "description": "The GitHub access token used to connect to the GitHub API.",
+      "isRequired": true,
       "isSecret": true,
-      "stringField": {}
+      "stringField": {
+        "rules": {
+          "isRequired": true
+        }
+      }
     },
     {
       "name": "orgs",
@@ -121,32 +126,67 @@
       "name": "app-id",
       "displayName": "GitHub App ID",
       "description": "The GitHub App to connect to.",
-      "stringField": {}
+      "isRequired": true,
+      "stringField": {
+        "rules": {
+          "isRequired": true
+        }
+      }
     },
     {
       "name": "app-privatekey-path",
       "displayName": "GitHub App private key (.pem)",
       "description": "Path to private key that is used to connect to the GitHub App",
-      "stringField": {}
-    }
-  ],
-  "constraints": [
-    {
-      "kind": "CONSTRAINT_KIND_MUTUALLY_EXCLUSIVE",
-      "fieldNames": [
-        "token",
-        "app-privatekey-path"
-      ]
+      "isRequired": true,
+      "isSecret": true,
+      "stringField": {
+        "rules": {
+          "isRequired": true
+        },
+        "type": "STRING_FIELD_TYPE_FILE_UPLOAD",
+        "allowedExtensions": [
+          ".pem"
+        ]
+      }
     },
     {
-      "kind": "CONSTRAINT_KIND_REQUIRED_TOGETHER",
-      "fieldNames": [
-        "app-privatekey-path",
-        "app-id"
-      ]
+      "name": "org",
+      "displayName": "Github App Organization",
+      "description": "Organization of your github app",
+      "isRequired": true,
+      "stringField": {
+        "rules": {
+          "isRequired": true
+        }
+      }
     }
   ],
   "displayName": "GitHub v2",
   "helpUrl": "/docs/baton/github-v2",
-  "iconUrl": "/static/app-icons/github.svg"
+  "iconUrl": "/static/app-icons/github.svg",
+  "fieldGroups": [
+    {
+      "name": "personal-access-token-group",
+      "displayName": "Personal access token",
+      "helpText": "Use a personal access token for authentication.",
+      "fields": [
+        "token",
+        "orgs",
+        "omit-archived-repositories"
+      ],
+      "default": true
+    },
+    {
+      "name": "github-app-group",
+      "displayName": "GitHub app",
+      "helpText": "Use a github app for authentication",
+      "fields": [
+        "app-id",
+        "app-privatekey-path",
+        "org",
+        "sync-secrets",
+        "omit-archived-repositories"
+      ]
+    }
+  ]
 }
