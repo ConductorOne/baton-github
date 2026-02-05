@@ -66,52 +66,52 @@ func (o *teamResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return o.resourceType
 }
 
-func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, opts rType.SyncOpAttrs) ([]*v2.Resource, *rType.SyncOpResults, error) {
 	if parentID == nil {
-		return nil, "", nil, nil
+		return nil, &rType.SyncOpResults{}, nil
 	}
 
-	bag, page, err := parsePageToken(pt.Token, &v2.ResourceId{ResourceType: resourceTypeTeam.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeTeam.Id})
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	opts := &github.ListOptions{
+	listOpts := &github.ListOptions{
 		Page:    page,
 		PerPage: maxPageSize,
 	}
 
 	orgID, err := parseResourceToGitHub(parentID)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	var rv []*v2.Resource
 
-	orgName, err := o.orgCache.GetOrgName(ctx, parentID)
+	orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, parentID)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	teams, resp, err := o.client.Teams.ListTeams(ctx, orgName, opts)
+	teams, resp, err := o.client.Teams.ListTeams(ctx, orgName, listOpts)
 	if err != nil {
-		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list teams")
+		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list teams")
 	}
 
 	nextPage, reqAnnos, err := parseResp(resp)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	for _, team := range teams {
 		fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
 		if err != nil {
-			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to get team details")
+			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get team details")
 		}
 
 		tr, err := teamResource(fullTeam, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		rv = append(rv, tr)
@@ -119,13 +119,16 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 
 	pageToken, err := bag.NextToken(nextPage)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	return rv, pageToken, reqAnnos, nil
+	return rv, &rType.SyncOpResults{
+		NextPageToken: pageToken,
+		Annotations:   reqAnnos,
+	}, nil
 }
 
-func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ rType.SyncOpAttrs) ([]*v2.Entitlement, *rType.SyncOpResults, error) {
 	rv := make([]*v2.Entitlement, 0, len(teamAccessLevels))
 	for _, level := range teamAccessLevels {
 		rv = append(
@@ -145,33 +148,33 @@ func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource
 		)
 	}
 
-	return rv, "", nil, nil
+	return rv, &rType.SyncOpResults{}, nil
 }
 
-func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pToken *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	bag, page, err := parsePageToken(pToken.Token, resource.Id)
+func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, opts rType.SyncOpAttrs) ([]*v2.Grant, *rType.SyncOpResults, error) {
+	bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	teamTrait, err := rType.GetGroupTrait(resource)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	orgID, ok := rType.GetProfileInt64Value(teamTrait.Profile, "orgID")
 	if !ok {
-		return nil, "", nil, fmt.Errorf("error fetching orgID from team profile")
+		return nil, nil, fmt.Errorf("error fetching orgID from team profile")
 	}
 
 	org, resp, err := o.client.Organizations.GetByID(ctx, orgID)
 	if err != nil {
-		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to get organization")
+		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get organization")
 	}
 
 	githubID, err := parseResourceToGitHub(resource.Id)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	var (
@@ -189,7 +192,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 			ResourceTypeID: teamRoleMaintainer,
 		})
 	case teamRoleMember, teamRoleMaintainer:
-		opts := github.TeamListTeamMembersOptions{
+		listOpts := github.TeamListTeamMembersOptions{
 			ListOptions: github.ListOptions{
 				Page:    page,
 				PerPage: maxPageSize,
@@ -197,29 +200,29 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 			Role: rId,
 		}
 
-		users, resp, err := o.client.Teams.ListTeamMembersByID(ctx, org.GetID(), githubID, &opts)
+		users, resp, err := o.client.Teams.ListTeamMembersByID(ctx, org.GetID(), githubID, &listOpts)
 		if err != nil {
 			if isNotFoundError(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", org.GetID()))
+				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", org.GetID()))
 			}
-			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list team members")
+			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list team members")
 		}
 
 		var nextPage string
 		nextPage, reqAnnos, err = parseResp(resp)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
+			return nil, nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
 		}
 
 		err = bag.Next(nextPage)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		for _, user := range users {
 			ur, err := userResource(ctx, user, user.GetEmail(), nil)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
 			rv = append(rv, grant.NewGrant(resource, rId, ur.Id,
 				grant.WithAnnotation(&v2.V1Identifier{
@@ -235,9 +238,12 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, pT
 
 	pageToken, err = bag.Marshal()
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
-	return rv, pageToken, reqAnnos, nil
+	return rv, &rType.SyncOpResults{
+		NextPageToken: pageToken,
+		Annotations:   reqAnnos,
+	}, nil
 }
 
 func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {

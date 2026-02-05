@@ -12,7 +12,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
-	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -60,12 +60,12 @@ func organizationResource(
 		annotations = append(annotations, &v2.ChildResourceType{ResourceTypeId: resourceTypeApiToken.Id})
 	}
 
-	return resource.NewResource(
+	return resourceSdk.NewResource(
 		org.GetLogin(),
 		resourceTypeOrg,
 		org.GetID(),
-		resource.WithParentResourceID(parentResourceID),
-		resource.WithAnnotation(
+		resourceSdk.WithParentResourceID(parentResourceID),
+		resourceSdk.WithAnnotation(
 			annotations...,
 		),
 	)
@@ -78,41 +78,44 @@ func (o *orgResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 func (o *orgResourceType) List(
 	ctx context.Context,
 	parentResourceID *v2.ResourceId,
-	pToken *pagination.Token,
-) ([]*v2.Resource, string, annotations.Annotations, error) {
+	opts resourceSdk.SyncOpAttrs,
+) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
 	if o.appClient != nil {
 		orgResource, pageToken, anno, err := o.listOrganizationsFromAppInstallations(ctx, parentResourceID)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
-		return []*v2.Resource{orgResource}, pageToken, anno, nil
+		return []*v2.Resource{orgResource}, &resourceSdk.SyncOpResults{
+			NextPageToken: pageToken,
+			Annotations:   anno,
+		}, nil
 	}
 
 	l := ctxzap.Extract(ctx)
 
-	bag, page, err := parsePageToken(pToken.Token, &v2.ResourceId{ResourceType: resourceTypeOrg.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeOrg.Id})
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	opts := &github.ListOptions{
+	listOpts := &github.ListOptions{
 		Page:    page,
 		PerPage: maxPageSize,
 	}
 
-	orgs, resp, err := o.client.Organizations.List(ctx, "", opts)
+	orgs, resp, err := o.client.Organizations.List(ctx, "", listOpts)
 	if err != nil {
-		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to fetch organizations")
+		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to fetch organizations")
 	}
 
 	nextPage, reqAnnos, err := parseResp(resp)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	pageToken, err := bag.NextToken(nextPage)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	var ret []*v2.Resource
@@ -126,7 +129,7 @@ func (o *orgResourceType) List(
 				l.Warn("insufficient access to list org membership, skipping org", zap.String("org", org.GetLogin()))
 				continue
 			}
-			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to get org membership")
+			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get org membership")
 		}
 
 		// Only sync orgs that we are an admin for
@@ -136,20 +139,23 @@ func (o *orgResourceType) List(
 
 		orgResource, err := organizationResource(ctx, org, parentResourceID, o.syncSecrets)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		ret = append(ret, orgResource)
 	}
 
-	return ret, pageToken, reqAnnos, nil
+	return ret, &resourceSdk.SyncOpResults{
+		NextPageToken: pageToken,
+		Annotations:   reqAnnos,
+	}, nil
 }
 
 func (o *orgResourceType) Entitlements(
 	_ context.Context,
 	resource *v2.Resource,
-	_ *pagination.Token,
-) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+	_ resourceSdk.SyncOpAttrs,
+) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
 	rv := make([]*v2.Entitlement, 0, len(orgAccessLevels))
 	rv = append(rv, entitlement.NewAssignmentEntitlement(resource, orgRoleMember,
 		entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCase(orgRoleMember))),
@@ -168,7 +174,7 @@ func (o *orgResourceType) Entitlements(
 		entitlement.WithGrantableTo(resourceTypeUser),
 	))
 
-	return rv, "", nil, nil
+	return rv, &resourceSdk.SyncOpResults{}, nil
 }
 
 func (o *orgResourceType) orgRoleGrant(roleName string, org *v2.Resource, principalID *v2.ResourceId, userID int64) *v2.Grant {
@@ -180,11 +186,11 @@ func (o *orgResourceType) orgRoleGrant(roleName string, org *v2.Resource, princi
 func (o *orgResourceType) Grants(
 	ctx context.Context,
 	resource *v2.Resource,
-	pToken *pagination.Token,
-) ([]*v2.Grant, string, annotations.Annotations, error) {
-	bag, page, err := parsePageToken(pToken.Token, resource.Id)
+	opts resourceSdk.SyncOpAttrs,
+) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
+	bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	var (
@@ -204,40 +210,40 @@ func (o *orgResourceType) Grants(
 		})
 	case orgRoleAdmin, orgRoleMember:
 
-		orgName, err := o.orgCache.GetOrgName(ctx, resource.Id)
+		orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, resource.Id)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
-		opts := github.ListMembersOptions{
+		listOpts := github.ListMembersOptions{
 			Role: rId,
 			ListOptions: github.ListOptions{
 				Page:    page,
 				PerPage: maxPageSize,
 			},
 		}
-		users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &opts)
+		users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &listOpts)
 		if err != nil {
 			if isNotFoundError(resp) {
-				return nil, "", nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
+				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
 			}
-			return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list org members")
+			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list org members")
 		}
 
 		var nextPage string
 		nextPage, reqAnnos, err = parseResp(resp)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
+			return nil, nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
 		}
 
 		err = bag.Next(nextPage)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		for _, user := range users {
 			ur, err := userResource(ctx, user, user.GetEmail(), nil)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
 
 			if rId == orgRoleAdmin {
@@ -253,9 +259,12 @@ func (o *orgResourceType) Grants(
 
 	pageToken, err = bag.Marshal()
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
-	return rv, pageToken, reqAnnos, nil
+	return rv, &resourceSdk.SyncOpResults{
+		NextPageToken: pageToken,
+		Annotations:   reqAnnos,
+	}, nil
 }
 
 func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en *v2.Entitlement) (annotations.Annotations, error) {
@@ -273,7 +282,7 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 	adminRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleAdmin)
 	memberRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleMember)
 
-	orgName, err := o.orgCache.GetOrgName(ctx, en.Resource.Id)
+	orgName, err := o.orgCache.GetOrgNameFromRemoteServer(ctx, en.Resource.Id.GetResource())
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +374,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
 	}
 
-	orgName, err := o.orgCache.GetOrgName(ctx, en.Resource.Id)
+	orgName, err := o.orgCache.GetOrgNameFromRemoteServer(ctx, en.Resource.Id.GetResource())
 	if err != nil {
 		return nil, err
 	}

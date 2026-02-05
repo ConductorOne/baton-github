@@ -8,8 +8,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
-	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 )
 
@@ -19,18 +18,18 @@ func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, erro
 		login = invitation.GetEmail()
 	}
 
-	ret, err := resource.NewUserResource(
+	ret, err := resourceSdk.NewUserResource(
 		login,
 		resourceTypeInvitation,
 		invitation.GetID(),
-		[]resource.UserTraitOption{
-			resource.WithEmail(invitation.GetEmail(), true),
-			resource.WithUserProfile(map[string]interface{}{
+		[]resourceSdk.UserTraitOption{
+			resourceSdk.WithEmail(invitation.GetEmail(), true),
+			resourceSdk.WithUserProfile(map[string]interface{}{
 				"login":   login,
 				"inviter": invitation.GetInviter().GetLogin(),
 			}),
-			resource.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED),
-			resource.WithUserLogin(login),
+			resourceSdk.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED),
+			resourceSdk.WithUserLogin(login),
 		},
 	)
 	if err != nil {
@@ -45,71 +44,72 @@ type invitationResourceType struct {
 	orgs     []string
 }
 
-var _ connectorbuilder.AccountManager = &invitationResourceType{}
-
 func (i *invitationResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return resourceTypeInvitation
 }
 
-func (i *invitationResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (i *invitationResourceType) List(ctx context.Context, parentID *v2.ResourceId, opts resourceSdk.SyncOpAttrs) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
 	var annotations annotations.Annotations
 	if parentID == nil {
-		return nil, "", nil, nil
+		return nil, &resourceSdk.SyncOpResults{}, nil
 	}
 
-	bag, page, err := parsePageToken(pt.Token, &v2.ResourceId{ResourceType: resourceTypeInvitation.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeInvitation.Id})
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	orgName, err := i.orgCache.GetOrgName(ctx, parentID)
+	orgName, err := i.orgCache.GetOrgName(ctx, opts.Session, parentID)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 	invitations, resp, err := i.client.Organizations.ListPendingOrgInvitations(ctx, orgName, &github.ListOptions{
 		Page:    page,
-		PerPage: pt.Size,
+		PerPage: opts.PageToken.Size,
 	})
 	if err != nil {
 		if isNotFoundError(resp) {
-			return nil, "", nil, nil
+			return nil, &resourceSdk.SyncOpResults{}, nil
 		}
-		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list pending org invitations")
+		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list pending org invitations")
 	}
 
 	restApiRateLimit, err := extractRateLimitData(resp)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	nextPage, _, err := parseResp(resp)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	pageToken, err := bag.NextToken(nextPage)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	invitationResources := make([]*v2.Resource, 0, len(invitations))
 	for _, invitation := range invitations {
 		ir, err := invitationToUserResource(invitation)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		invitationResources = append(invitationResources, ir)
 	}
 	annotations.WithRateLimiting(restApiRateLimit)
-	return invitationResources, pageToken, annotations, nil
+	return invitationResources, &resourceSdk.SyncOpResults{
+		NextPageToken: pageToken,
+		Annotations:   annotations,
+	}, nil
 }
 
-func (i *invitationResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (i *invitationResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ resourceSdk.SyncOpAttrs) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
+	return nil, &resourceSdk.SyncOpResults{}, nil
 }
 
-func (i *invitationResourceType) Grants(ctx context.Context, resource *v2.Resource, pToken *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (i *invitationResourceType) Grants(ctx context.Context, resource *v2.Resource, opts resourceSdk.SyncOpAttrs) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
+	return nil, &resourceSdk.SyncOpResults{}, nil
 }
 
 func (i *invitationResourceType) CreateAccountCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {

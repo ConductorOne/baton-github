@@ -7,6 +7,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	entitlement2 "github.com/conductorone/baton-sdk/pkg/types/entitlement"
+	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
 
@@ -49,16 +50,19 @@ func TestRepository(t *testing.T) {
 				pToken.Token = token
 			}
 
-			nextGrants, nextToken, grantsAnnotations, err := client.Grants(ctx, repository, &pToken)
+			nextGrants, results, err := client.Grants(ctx, repository, resourceSdk.SyncOpAttrs{
+				PageToken: pToken,
+				Session:   &noOpSessionStore{},
+			})
 			grants = append(grants, nextGrants...)
 
 			require.Nil(t, err)
-			test.AssertHasRatelimitAnnotations(t, grantsAnnotations)
-			if nextToken == "" {
+			test.AssertHasRatelimitAnnotations(t, results.Annotations)
+			if results.NextPageToken == "" {
 				break
 			}
 
-			err = bag.Unmarshal(nextToken)
+			err = bag.Unmarshal(results.NextPageToken)
 			if err != nil {
 				t.Error(err)
 			}

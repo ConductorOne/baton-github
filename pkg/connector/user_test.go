@@ -8,6 +8,7 @@ import (
 	"github.com/conductorone/baton-github/test"
 	"github.com/conductorone/baton-github/test/mocks"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
 )
@@ -52,14 +53,17 @@ func TestUsersList(t *testing.T) {
 				[]string{organization.DisplayName},
 			)
 
-			users, nextToken, annotations, err := client.List(
+			users, results, err := client.List(
 				ctx,
 				organization.Id,
-				&pagination.Token{},
+				resourceSdk.SyncOpAttrs{
+					PageToken: pagination.Token{},
+					Session:   &noOpSessionStore{},
+				},
 			)
 			require.Nil(t, err)
-			test.AssertHasRatelimitAnnotations(t, annotations)
-			require.Equal(t, "", nextToken)
+			test.AssertHasRatelimitAnnotations(t, results.Annotations)
+			require.Equal(t, "", results.NextPageToken)
 			require.Len(t, users, 1)
 			require.Equal(t, *githubUser.Login, users[0].Id.Resource)
 		})

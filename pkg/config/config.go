@@ -4,6 +4,11 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/field"
 )
 
+const (
+	GithubAppGroup                 = "github-app-group"
+	GithubPersonalAccessTokenGroup = "personal-access-token-group"
+)
+
 // TODO (mb): Make sure we don't need field.WithRequired(true) for required fields.
 var (
 	accessTokenField = field.StringField(
@@ -11,6 +16,7 @@ var (
 		field.WithDisplayName("Personal access token"),
 		field.WithDescription("The GitHub access token used to connect to the GitHub API."),
 		field.WithIsSecret(true),
+		field.WithRequired(true),
 	)
 	orgsField = field.StringSliceField(
 		"orgs",
@@ -31,13 +37,18 @@ var (
 		"app-id",
 		field.WithDisplayName("GitHub App ID"),
 		field.WithDescription("The GitHub App to connect to."),
+		field.WithRequired(true),
 	)
 
-	appPrivateKeyPath = field.StringField(
+	appPrivateKeyPath = field.FileUploadField(
 		"app-privatekey-path",
+		[]string{".pem"},
 		field.WithDisplayName("GitHub App private key (.pem)"),
 		field.WithDescription("Path to private key that is used to connect to the GitHub App"),
+		field.WithIsSecret(true),
+		field.WithRequired(true),
 	)
+
 	syncSecrets = field.BoolField(
 		"sync-secrets",
 		field.WithDisplayName("Sync secrets"),
@@ -48,16 +59,12 @@ var (
 		field.WithDisplayName("Omit syncing archived repositories"),
 		field.WithDescription("Whether to skip syncing archived repositories or not"),
 	)
-	fieldRelationships = []field.SchemaFieldRelationship{
-		field.FieldsMutuallyExclusive(
-			accessTokenField,
-			appPrivateKeyPath,
-		),
-		field.FieldsRequiredTogether(
-			appPrivateKeyPath,
-			appIDField,
-		),
-	}
+	orgField = field.StringField(
+		"org",
+		field.WithDisplayName("Github App Organization"),
+		field.WithDescription("Organization of your github app"),
+		field.WithRequired(true),
+	)
 )
 
 //go:generate go run ./gen
@@ -71,9 +78,25 @@ var Config = field.NewConfiguration(
 		omitArchivedRepositories,
 		appIDField,
 		appPrivateKeyPath,
+		orgField,
 	},
-	field.WithConstraints(fieldRelationships...),
 	field.WithConnectorDisplayName("GitHub v2"),
 	field.WithHelpUrl("/docs/baton/github-v2"),
 	field.WithIconUrl("/static/app-icons/github.svg"),
+	field.WithFieldGroups([]field.SchemaFieldGroup{
+		{
+			Name:        GithubPersonalAccessTokenGroup,
+			DisplayName: "Personal access token",
+			HelpText:    "Use a personal access token for authentication.",
+			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories},
+			Default:     true,
+		},
+		{
+			Name:        GithubAppGroup,
+			DisplayName: "GitHub app",
+			HelpText:    "Use a github app for authentication",
+			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgField, syncSecrets, omitArchivedRepositories},
+			Default:     false,
+		},
+	}),
 )

@@ -10,7 +10,6 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
@@ -101,54 +100,54 @@ func (o *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return o.resourceType
 }
 
-func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
 	l := ctxzap.Extract(ctx)
 	var annotations annotations.Annotations
 	if parentID == nil {
-		return nil, "", nil, nil
+		return nil, &resource.SyncOpResults{}, nil
 	}
 
-	bag, page, err := parsePageToken(pt.Token, &v2.ResourceId{ResourceType: resourceTypeUser.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeUser.Id})
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	orgName, err := o.orgCache.GetOrgName(ctx, parentID)
+	orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, parentID)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	hasSamlBool, err := o.hasSAML(ctx, orgName)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 	var restApiRateLimit *v2.RateLimitDescription
 
-	opts := github.ListMembersOptions{
+	listOpts := github.ListMembersOptions{
 		ListOptions: github.ListOptions{
 			Page:    page,
 			PerPage: maxPageSize,
 		},
 	}
 
-	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &opts)
+	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &listOpts)
 	if err != nil {
-		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list organization members")
+		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list organization members")
 	}
 
 	restApiRateLimit, err = extractRateLimitData(resp)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	nextPage, _, err := parseResp(resp)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	pageToken, err := bag.NextToken(nextPage)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	q := listUsersQuery{}
@@ -157,11 +156,11 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		u, res, err := o.client.Users.GetByID(ctx, user.GetID())
 		if err != nil {
 			if isRatelimited(res) {
-				return nil, "", nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
+				return nil, nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
 			}
 			// This undocumented API can return 404 for some users. If this fails it means we won't get some of their details like email
 			if res == nil || res.StatusCode != http.StatusNotFound {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
 			l.Error("error fetching user by id", zap.Error(err), zap.Int64("user_id", user.GetID()))
 			u = user
@@ -186,7 +185,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 					o.hasSAMLEnabled = &samlDisabled
 					hasSamlBool = false
 				} else {
-					return nil, "", nil, err
+					return nil, nil, err
 				}
 			}
 			if err == nil && len(q.Organization.SamlIdentityProvider.ExternalIdentities.Edges) == 1 {
@@ -214,7 +213,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		}
 		ur, err := userResource(ctx, u, userEmail, extraEmails)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		rv = append(rv, ur)
@@ -229,7 +228,10 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, pt
 		annotations.WithRateLimiting(graphqlRateLimit)
 	}
 
-	return rv, pageToken, annotations, nil
+	return rv, &resource.SyncOpResults{
+		NextPageToken: pageToken,
+		Annotations:   annotations,
+	}, nil
 }
 
 func isEmail(email string) bool {
@@ -237,12 +239,12 @@ func isEmail(email string) bool {
 	return err == nil
 }
 
-func (o *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (o *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Entitlement, *resource.SyncOpResults, error) {
+	return nil, &resource.SyncOpResults{}, nil
 }
 
-func (o *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (o *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
+	return nil, &resource.SyncOpResults{}, nil
 }
 
 func (o *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {
