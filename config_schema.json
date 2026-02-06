@@ -111,18 +111,6 @@
       "stringField": {}
     },
     {
-      "name": "sync-secrets",
-      "displayName": "Sync secrets",
-      "description": "Whether to sync secrets or not",
-      "boolField": {}
-    },
-    {
-      "name": "omit-archived-repositories",
-      "displayName": "Omit syncing archived repositories",
-      "description": "Whether to skip syncing archived repositories or not",
-      "boolField": {}
-    },
-    {
       "name": "app-id",
       "displayName": "GitHub App ID",
       "description": "The GitHub App to connect to.",
@@ -159,6 +147,18 @@
           "isRequired": true
         }
       }
+    },
+    {
+      "name": "sync-secrets",
+      "displayName": "Sync secrets",
+      "description": "Whether to sync secrets or not",
+      "boolField": {}
+    },
+    {
+      "name": "omit-archived-repositories",
+      "displayName": "Omit syncing archived repositories",
+      "description": "Whether to skip syncing archived repositories or not",
+      "boolField": {}
     }
   ],
   "displayName": "GitHub v2",
