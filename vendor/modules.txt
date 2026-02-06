@@ -162,7 +162,7 @@ github.com/cenkalti/backoff/v5
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/conductorone/baton-sdk v0.7.18-0.20260206222834-953418a38a84
+# github.com/conductorone/baton-sdk v0.7.18-0.20260206224654-a5f3b7c9feef
 ## explicit; go 1.25.2
 github.com/conductorone/baton-sdk/internal/connector
 github.com/conductorone/baton-sdk/pb/c1/c1z/v1
