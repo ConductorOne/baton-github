@@ -458,6 +458,15 @@ func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Cont
 		DisplayName: "Create Repository",
 		Description: "Create a new repository in a GitHub organization",
 		ActionType:  []v2.ActionType{v2.ActionType_ACTION_TYPE_RESOURCE_CREATE},
+		Constraints: []*config.Constraint{
+			{
+				Kind:                config.ConstraintKind_CONSTRAINT_KIND_DEPENDENT_ON,
+				FieldNames:          []string{"license_template", "gitignore_template"},
+				SecondaryFieldNames: []string{"add_readme"},
+				Name:                "README is required when license or gitignore template is selected",
+				HelpText:            "The README.md file is required when a license or gitignore template is selected",
+			},
+		},
 		Arguments: []*config.Field{
 			{
 				Name:        "name",

@@ -389,11 +389,21 @@ func (o *teamResourceType) registerCreateTeamAction(ctx context.Context, registr
 		DisplayName: "Create Team",
 		Description: "Create a new team in a GitHub organization",
 		ActionType:  []v2.ActionType{v2.ActionType_ACTION_TYPE_RESOURCE_CREATE},
+		Constraints: []*config.Constraint{
+			{
+				Kind:                config.ConstraintKind_CONSTRAINT_KIND_ALLOWED_OPTIONS,
+				FieldNames:          []string{"privacy"},
+				SecondaryFieldNames: []string{"parent"},
+				AllowedOptionValues: []string{"closed"},
+				Name:                "Privacy must be closed if parent is set",
+				HelpText:            "Privacy must be closed if parent is set",
+			},
+		},
 		Arguments: []*config.Field{
 			{
 				Name:        "name",
 				DisplayName: "Team name",
-				Description: "You’ll use this name to mention this team in conversations.",
+				Description: "You'll use this name to mention this team in conversations.",
 				Field:       &config.Field_StringField{},
 				IsRequired:  true,
 			},
