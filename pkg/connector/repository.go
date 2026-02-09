@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	config "github.com/conductorone/baton-sdk/pb/c1/config/v1"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/actions"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
@@ -18,6 +20,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // outside collaborators are given one of these roles too.
@@ -438,4 +441,274 @@ func skipGrantsForResourceType(bag *pagination.Bag) (string, error) {
 		return "", err
 	}
 	return pageToken, nil
+}
+
+// ResourceActions registers the resource actions for the repository resource type.
+// This implements the ResourceActionProvider interface.
+func (o *repositoryResourceType) ResourceActions(ctx context.Context, registry actions.ActionRegistry) error {
+	if err := o.registerCreateRepositoryAction(ctx, registry); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (o *repositoryResourceType) registerCreateRepositoryAction(ctx context.Context, registry actions.ActionRegistry) error {
+	return registry.Register(ctx, &v2.BatonActionSchema{
+		Name:        "create",
+		DisplayName: "Create Repository",
+		Description: "Create a new repository in a GitHub organization",
+		ActionType:  []v2.ActionType{v2.ActionType_ACTION_TYPE_RESOURCE_CREATE},
+		Constraints: []*config.Constraint{
+			{
+				Kind:                config.ConstraintKind_CONSTRAINT_KIND_DEPENDENT_ON,
+				FieldNames:          []string{"license_template", "gitignore_template"},
+				SecondaryFieldNames: []string{"add_readme"},
+				Name:                "README is required when license or gitignore template is selected",
+				HelpText:            "The README.md file is required when a license or gitignore template is selected",
+			},
+		},
+		Arguments: []*config.Field{
+			{
+				Name:        "name",
+				DisplayName: "Repository name",
+				Description: "The name of the repository to create",
+				Field:       &config.Field_StringField{},
+				IsRequired:  true,
+			},
+			{
+				Name:        "description",
+				DisplayName: "Description",
+				Description: "A description of the repository",
+				Field:       &config.Field_StringField{},
+			},
+			{
+				Name:        "org",
+				DisplayName: "Organization",
+				Description: "The organization to create the repository in",
+				Field: &config.Field_ResourceIdField{
+					ResourceIdField: &config.ResourceIdField{
+						Rules: &config.ResourceIDRules{
+							AllowedResourceTypeIds: []string{resourceTypeOrg.Id},
+						},
+					},
+				},
+				IsRequired: true,
+			},
+			{
+				Name:        "visibility",
+				DisplayName: "Visibility",
+				Description: "The visibility level of the repository",
+				Field: &config.Field_StringField{
+					StringField: &config.StringField{
+						Options: []*config.StringFieldOption{
+							{Value: "public", DisplayName: "Public", Name: "Anyone on the internet can view this repository"},
+							{Value: "private", DisplayName: "Private", Name: "You can choose who can see this repository"},
+							{Value: "internal", DisplayName: "Internal", Name: "Members of the enterprise can view this repository (enterprise only)"},
+						},
+						DefaultValue: "private",
+					},
+				},
+			},
+			{
+				Name:        "add_readme",
+				DisplayName: "Add README.md",
+				Description: "Add a README.md file to the repository",
+				Field: &config.Field_BoolField{
+					BoolField: &config.BoolField{
+						DefaultValue: true,
+					},
+				},
+			},
+			{
+				Name:        "gitignore_template",
+				DisplayName: "Gitignore Template",
+				Description: "Gitignore template to apply",
+				Field: &config.Field_StringField{
+					StringField: &config.StringField{
+						Options: []*config.StringFieldOption{
+							{Value: "", DisplayName: "No .gitignore template"},
+							{Value: "Go", DisplayName: "Go"},
+							{Value: "Python", DisplayName: "Python"},
+							{Value: "Node", DisplayName: "Node"},
+							{Value: "Java", DisplayName: "Java"},
+							{Value: "Ruby", DisplayName: "Ruby"},
+							{Value: "Rust", DisplayName: "Rust"},
+							{Value: "C++", DisplayName: "C++"},
+							{Value: "C", DisplayName: "C"},
+							{Value: "Swift", DisplayName: "Swift"},
+							{Value: "Kotlin", DisplayName: "Kotlin"},
+							{Value: "Scala", DisplayName: "Scala"},
+							{Value: "Terraform", DisplayName: "Terraform"},
+						},
+					},
+				},
+			},
+			{
+				Name:        "license_template",
+				DisplayName: "License Template",
+				Description: "License template to apply",
+				Field: &config.Field_StringField{
+					StringField: &config.StringField{
+						Options: []*config.StringFieldOption{
+							{Value: "", DisplayName: "No license"},
+							{Value: "mit", DisplayName: "MIT License"},
+							{Value: "apache-2.0", DisplayName: "Apache License 2.0"},
+							{Value: "gpl-3.0", DisplayName: "GNU GPLv3"},
+							{Value: "gpl-2.0", DisplayName: "GNU GPLv2"},
+							{Value: "lgpl-3.0", DisplayName: "GNU LGPLv3"},
+							{Value: "bsd-3-clause", DisplayName: "BSD 3-Clause"},
+							{Value: "bsd-2-clause", DisplayName: "BSD 2-Clause"},
+							{Value: "mpl-2.0", DisplayName: "Mozilla Public License 2.0"},
+							{Value: "unlicense", DisplayName: "The Unlicense"},
+							{Value: "agpl-3.0", DisplayName: "GNU AGPLv3"},
+						},
+					},
+				},
+			},
+		},
+		ReturnTypes: []*config.Field{
+			{Name: "success", Field: &config.Field_BoolField{}},
+			{Name: "resource", Field: &config.Field_ResourceField{}},
+			{Name: "entitlements", DisplayName: "Entitlements", Field: &config.Field_EntitlementSliceField{
+				EntitlementSliceField: &config.EntitlementSliceField{},
+			}},
+			{Name: "grants", DisplayName: "Grants", Field: &config.Field_GrantSliceField{
+				GrantSliceField: &config.GrantSliceField{},
+			}},
+		},
+	}, o.handleCreateRepositoryAction)
+}
+
+func (o *repositoryResourceType) handleCreateRepositoryAction(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	// Extract required arguments using SDK helpers
+	name, err := actions.RequireStringArg(args, "name")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	parentResourceID, err := actions.RequireResourceIDArg(args, "org")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Get the organization name from the parent resource ID
+	orgName, err := o.orgCache.GetOrgName(ctx, parentResourceID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get organization name: %w", err)
+	}
+
+	l.Info("github-connector: creating repository via action",
+		zap.String("repo_name", name),
+		zap.String("org_name", orgName),
+	)
+
+	// Build the Repository request
+	newRepo := &github.Repository{
+		Name: github.Ptr(name),
+	}
+
+	// Extract optional fields using SDK helpers
+	if description, ok := actions.GetStringArg(args, "description"); ok && description != "" {
+		newRepo.Description = github.Ptr(description)
+	}
+
+	if visibility, ok := actions.GetStringArg(args, "visibility"); ok && visibility != "" {
+		if visibility == "public" || visibility == "private" || visibility == "internal" {
+			newRepo.Visibility = github.Ptr(visibility)
+		} else {
+			return nil, nil, fmt.Errorf("invalid visibility: %q (must be \"public\", \"private\", or \"internal\")", visibility)
+		}
+	}
+
+	// Extract template options first to validate AutoInit requirements
+	gitignoreTemplate, hasGitignore := actions.GetStringArg(args, "gitignore_template")
+	licenseTemplate, hasLicense := actions.GetStringArg(args, "license_template")
+	hasTemplates := (hasGitignore && gitignoreTemplate != "") || (hasLicense && licenseTemplate != "")
+
+	// add_readme maps to AutoInit in GitHub API
+	// GitHub requires AutoInit=true when using gitignore_template or license_template
+	if addReadme, ok := actions.GetBoolArg(args, "add_readme"); ok {
+		if !addReadme && hasTemplates {
+			return nil, nil, fmt.Errorf("add_readme must be true when gitignore_template or license_template is provided (GitHub requires auto_init=true for templates)")
+		}
+		newRepo.AutoInit = github.Ptr(addReadme)
+	} else if hasTemplates {
+		// If templates are provided but add_readme wasn't explicitly set, enable AutoInit
+		newRepo.AutoInit = github.Ptr(true)
+	}
+
+	if hasGitignore && gitignoreTemplate != "" {
+		newRepo.GitignoreTemplate = github.Ptr(gitignoreTemplate)
+	}
+
+	if hasLicense && licenseTemplate != "" {
+		newRepo.LicenseTemplate = github.Ptr(licenseTemplate)
+	}
+
+	// Create the repository via GitHub API
+	createdRepo, resp, err := o.client.Repositories.Create(ctx, orgName, newRepo)
+	if err != nil {
+		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("failed to create repository %s in org %s", name, orgName))
+	}
+
+	// Extract rate limit data for annotations
+	var annos annotations.Annotations
+	if rateLimitData, err := extractRateLimitData(resp); err == nil {
+		annos.WithRateLimiting(rateLimitData)
+	}
+
+	l.Info("github-connector: repository created successfully via action",
+		zap.String("repo_name", createdRepo.GetName()),
+		zap.Int64("repo_id", createdRepo.GetID()),
+		zap.String("repo_full_name", createdRepo.GetFullName()),
+	)
+
+	// Create the resource representation of the newly created repository
+	repoResource, err := repositoryResource(ctx, createdRepo, parentResourceID)
+	if err != nil {
+		return nil, annos, fmt.Errorf("failed to create resource representation: %w", err)
+	}
+
+	// Generate entitlements for the newly created repository (reuse existing method)
+	entitlements, _, _, err := o.Entitlements(ctx, repoResource, nil)
+	if err != nil {
+		return nil, annos, fmt.Errorf("failed to generate entitlements: %w", err)
+	}
+
+	// Fetch grants for the newly created repository by reusing the existing Grants method
+	var grants []*v2.Grant
+	pageToken := ""
+	for {
+		pToken := &pagination.Token{Token: pageToken}
+		pageGrants, nextToken, _, err := o.Grants(ctx, repoResource, pToken)
+		if err != nil {
+			l.Warn("github-connector: failed to fetch grants for repository", zap.Error(err))
+			break
+		}
+		grants = append(grants, pageGrants...)
+		if nextToken == "" {
+			break
+		}
+		pageToken = nextToken
+	}
+
+	// Build return values using SDK helpers
+	resourceRv, err := actions.NewResourceReturnField("resource", repoResource)
+	if err != nil {
+		return nil, annos, err
+	}
+
+	entitlementsRv, err := actions.NewEntitlementListReturnField("entitlements", entitlements)
+	if err != nil {
+		return nil, annos, err
+	}
+
+	grantsRv, err := actions.NewGrantListReturnField("grants", grants)
+	if err != nil {
+		return nil, annos, err
+	}
+
+	return actions.NewReturnValues(true, resourceRv, entitlementsRv, grantsRv), annos, nil
 }

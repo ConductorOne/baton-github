@@ -67,3 +67,21 @@ var DeleteOrgsRolesUsersByOrgByRoleIdByUsername = mock.EndpointPattern{
 	Pattern: "/orgs/{org}/organization-roles/users/{username}/{role_id}",
 	Method:  "DELETE",
 }
+
+// Team creation endpoint.
+var PostOrgsTeamsByOrg = mock.EndpointPattern{
+	Pattern: "/orgs/{org}/teams",
+	Method:  "POST",
+}
+
+// Repository creation endpoint.
+var PostOrgsReposByOrg = mock.EndpointPattern{
+	Pattern: "/orgs/{org}/repos",
+	Method:  "POST",
+}
+
+// Get organization by slug/login (not numeric ID).
+var GetOrgsByName = mock.EndpointPattern{
+	Pattern: "/orgs/{org}",
+	Method:  "GET",
+}
