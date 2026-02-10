@@ -409,7 +409,7 @@ github.com/pquerna/xjwt
 # github.com/pquerna/xjwt/xkeyset v0.0.0-20241217022915-10fc997b2a9f
 ## explicit; go 1.23
 github.com/pquerna/xjwt/xkeyset
-# github.com/quasilyte/go-ruleguard/dsl v0.3.22
+# github.com/quasilyte/go-ruleguard/dsl v0.3.23
 ## explicit; go 1.15
 github.com/quasilyte/go-ruleguard/dsl
 github.com/quasilyte/go-ruleguard/dsl/types
