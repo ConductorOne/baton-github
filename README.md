@@ -1,6 +1,6 @@
 ![Baton Logo](./docs/images/baton-logo.png)
 
-# `baton-github` [![Go Reference](https://pkg.go.dev/badge/github.com/conductorone/baton-github.svg)](https://pkg.go.dev/github.com/conductorone/baton-github) ![main ci](https://github.com/conductorone/baton-github/actions/workflows/main.yaml/badge.svg)
+# `baton-github` [![Go Reference](https://pkg.go.dev/badge/github.com/conductorone/baton-github.svg)](https://pkg.go.dev/github.com/conductorone/baton-github) ![ci](https://github.com/conductorone/baton-github/actions/workflows/ci.yaml/badge.svg) ![verify](https://github.com/conductorone/baton-github/actions/workflows/verify.yaml/badge.svg)
 
 `baton-github` is a connector for GitHub built using the [Baton SDK](https://github.com/conductorone/baton-sdk). It communicates with the GitHub API to sync data about which teams and users have access to various repositories within an organization.
 
@@ -46,7 +46,7 @@ baton resources
 By default, `baton-github` will sync information from any organizations that the provided credential has Administrator permissions on. You can specify exactly which organizations you would like to sync using the `--orgs` flag.
 
 # Sync Secrets
-in order to sync secrets, you must use a token created using a github app installed into your organization, more info here:  
+in order to sync secrets, you must use a token created using a github app installed into your organization, more info here:
 - [docs](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app)
 - [rest api](https://docs.github.com/rest/orgs/personal-access-tokens#list-fine-grained-personal-access-tokens-with-access-to-organization-resources)
 
