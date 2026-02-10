@@ -10,7 +10,7 @@ require (
 	github.com/google/go-github/v69 v69.2.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/migueleliasweb/go-github-mock v1.1.0
-	github.com/quasilyte/go-ruleguard/dsl v0.3.22
+	github.com/quasilyte/go-ruleguard/dsl v0.3.23
 	github.com/shurcooL/githubv4 v0.0.0-20240727222349-48295856cce7
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.1
