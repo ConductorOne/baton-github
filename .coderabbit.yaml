@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+reviews:
+  request_changes_workflow: true
+  path_filters:
+    - "!vendor/**"
+  path_instructions:
+    - path: "**/*.go"
+      instructions: |
+        ## Secret Configuration Rule (Blocking)
+
+        All configuration fields that handle sensitive data MUST include `field.WithIsSecret(true)`.
+        This prevents plaintext exposure of credentials and secrets.
+
+        Flag as a blocking issue any `field.StringField` (or similar field definition) where:
+        1. The field name suggests sensitive data (e.g., contains "key", "secret", "token",
+           "password", "credential", "private", "auth"), AND
+        2. The field options do NOT include `field.WithIsSecret(true)`
+
+        Common secret field patterns that MUST have `field.WithIsSecret(true)`:
+        - API keys: "api-key", "api_key", "apikey"
+        - Passwords: "password", "passwd"
+        - Secrets: "secret", "client-secret", "client_secret", "app-secret"
+        - Tokens: "token", "access-token", "auth-token", "refresh-token"
+        - Private keys: "private-key", "private_key", "pem"
+        - Credentials: "credential", "credentials"
+
+        CORRECT example:
+        ```go
+        APIKeyField = field.StringField(
+            "api-key",
+            field.WithDescription("API key for authentication"),
+            field.WithRequired(true),
+            field.WithIsSecret(true),
+        )
+        ```
+
+        INCORRECT example (MUST request changes):
+        ```go
+        APIKeyField = field.StringField(
+            "api-key",
+            field.WithDescription("API key for authentication"),
+            field.WithRequired(true),
+            // MISSING: field.WithIsSecret(true) - secrets will be exposed in plaintext
+        )
+        ```
+
+        Failure to mark secrets with `field.WithIsSecret(true)` has caused production incidents
+        where private keys and credentials were exposed in plaintext.
