@@ -8,15 +8,15 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
+	// "github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
-	"github.com/conductorone/baton-sdk/pkg/types/grant"
+	// "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rType "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/conductorone/baton-sdk/pkg/uhttp"
+	// "github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
+	// "google.golang.org/grpc/codes"
 )
 
 const (
@@ -152,97 +152,97 @@ func (o *teamResourceType) Entitlements(_ context.Context, resource *v2.Resource
 }
 
 func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, opts rType.SyncOpAttrs) ([]*v2.Grant, *rType.SyncOpResults, error) {
-	bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
-	if err != nil {
-		return nil, nil, err
-	}
+	// bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	teamTrait, err := rType.GetGroupTrait(resource)
-	if err != nil {
-		return nil, nil, err
-	}
+	// teamTrait, err := rType.GetGroupTrait(resource)
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	orgID, ok := rType.GetProfileInt64Value(teamTrait.Profile, "orgID")
-	if !ok {
-		return nil, nil, fmt.Errorf("error fetching orgID from team profile")
-	}
+	// orgID, ok := rType.GetProfileInt64Value(teamTrait.Profile, "orgID")
+	// if !ok {
+	// 	return nil, nil, fmt.Errorf("error fetching orgID from team profile")
+	// }
 
-	org, resp, err := o.client.Organizations.GetByID(ctx, orgID)
-	if err != nil {
-		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get organization")
-	}
+	// org, resp, err := o.client.Organizations.GetByID(ctx, orgID)
+	// if err != nil {
+	// 	return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get organization")
+	// }
 
-	githubID, err := parseResourceToGitHub(resource.Id)
-	if err != nil {
-		return nil, nil, err
-	}
+	// githubID, err := parseResourceToGitHub(resource.Id)
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	var (
-		reqAnnos  annotations.Annotations
-		pageToken string
-		rv        = []*v2.Grant{}
-	)
-	switch rId := bag.ResourceTypeID(); rId {
-	case resourceTypeTeam.Id:
-		bag.Pop()
-		bag.Push(pagination.PageState{
-			ResourceTypeID: teamRoleMember,
-		})
-		bag.Push(pagination.PageState{
-			ResourceTypeID: teamRoleMaintainer,
-		})
-	case teamRoleMember, teamRoleMaintainer:
-		listOpts := github.TeamListTeamMembersOptions{
-			ListOptions: github.ListOptions{
-				Page:    page,
-				PerPage: maxPageSize,
-			},
-			Role: rId,
-		}
+	// var (
+	// 	reqAnnos  annotations.Annotations
+	// 	pageToken string
+	// 	rv        = []*v2.Grant{}
+	// )
+	// switch rId := bag.ResourceTypeID(); rId {
+	// case resourceTypeTeam.Id:
+	// 	bag.Pop()
+	// 	bag.Push(pagination.PageState{
+	// 		ResourceTypeID: teamRoleMember,
+	// 	})
+	// 	bag.Push(pagination.PageState{
+	// 		ResourceTypeID: teamRoleMaintainer,
+	// 	})
+	// case teamRoleMember, teamRoleMaintainer:
+	// 	listOpts := github.TeamListTeamMembersOptions{
+	// 		ListOptions: github.ListOptions{
+	// 			Page:    page,
+	// 			PerPage: maxPageSize,
+	// 		},
+	// 		Role: rId,
+	// 	}
 
-		users, resp, err := o.client.Teams.ListTeamMembersByID(ctx, org.GetID(), githubID, &listOpts)
-		if err != nil {
-			if isNotFoundError(resp) {
-				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", org.GetID()))
-			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list team members")
-		}
+	// 	users, resp, err := o.client.Teams.ListTeamMembersByID(ctx, org.GetID(), githubID, &listOpts)
+	// 	if err != nil {
+	// 		if isNotFoundError(resp) {
+	// 			return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", org.GetID()))
+	// 		}
+	// 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list team members")
+	// 	}
 
-		var nextPage string
-		nextPage, reqAnnos, err = parseResp(resp)
-		if err != nil {
-			return nil, nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
-		}
+	// 	var nextPage string
+	// 	nextPage, reqAnnos, err = parseResp(resp)
+	// 	if err != nil {
+	// 		return nil, nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
+	// 	}
 
-		err = bag.Next(nextPage)
-		if err != nil {
-			return nil, nil, err
-		}
+	// 	err = bag.Next(nextPage)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
 
-		for _, user := range users {
-			ur, err := userResource(ctx, user, user.GetEmail(), nil)
-			if err != nil {
-				return nil, nil, err
-			}
-			rv = append(rv, grant.NewGrant(resource, rId, ur.Id,
-				grant.WithAnnotation(&v2.V1Identifier{
-					Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), rId),
-				}),
-			))
-		}
-	default:
-		ctxzap.Extract(ctx).Warn("Unknown GitHub Role Name",
-			zap.String("role_name", rId),
-		)
-	}
+	// 	for _, user := range users {
+	// 		ur, err := userResource(ctx, user, user.GetEmail(), nil)
+	// 		if err != nil {
+	// 			return nil, nil, err
+	// 		}
+	// 		rv = append(rv, grant.NewGrant(resource, rId, ur.Id,
+	// 			grant.WithAnnotation(&v2.V1Identifier{
+	// 				Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), rId),
+	// 			}),
+	// 		))
+	// 	}
+	// default:
+	// 	ctxzap.Extract(ctx).Warn("Unknown GitHub Role Name",
+	// 		zap.String("role_name", rId),
+	// 	)
+	// }
 
-	pageToken, err = bag.Marshal()
-	if err != nil {
-		return nil, nil, err
-	}
-	return rv, &rType.SyncOpResults{
-		NextPageToken: pageToken,
-		Annotations:   reqAnnos,
+	// pageToken, err = bag.Marshal()
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
+	return []*v2.Grant{}, &rType.SyncOpResults{
+		NextPageToken: "",
+		Annotations:   nil,
 	}, nil
 }
 

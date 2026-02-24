@@ -3,7 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
-	"net/http"
+	// "net/http"
 	"strconv"
 	"strings"
 
@@ -11,13 +11,13 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
-	"github.com/conductorone/baton-sdk/pkg/types/grant"
+	// "github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/conductorone/baton-sdk/pkg/uhttp"
+	// "github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
+	// "google.golang.org/grpc/codes"
 )
 
 // outside collaborators are given one of these roles too.
@@ -143,155 +143,155 @@ func (o *repositoryResourceType) Grants(
 	resource *v2.Resource,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
-	l := ctxzap.Extract(ctx)
-	bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
-	if err != nil {
-		return nil, nil, err
-	}
+	// l := ctxzap.Extract(ctx)
+	// bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, resource.ParentResourceId)
-	if err != nil {
-		return nil, nil, err
-	}
+	// orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, resource.ParentResourceId)
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	var rv []*v2.Grant
-	var reqAnnos annotations.Annotations
+	// var rv []*v2.Grant
+	// var reqAnnos annotations.Annotations
 
-	switch bag.ResourceTypeID() {
-	case resourceTypeRepository.Id:
-		bag.Pop()
-		bag.Push(pagination.PageState{
-			ResourceTypeID: resourceTypeUser.Id,
-		})
-		bag.Push(pagination.PageState{
-			ResourceTypeID: resourceTypeTeam.Id,
-		})
+	// switch bag.ResourceTypeID() {
+	// case resourceTypeRepository.Id:
+	// 	bag.Pop()
+	// 	bag.Push(pagination.PageState{
+	// 		ResourceTypeID: resourceTypeUser.Id,
+	// 	})
+	// 	bag.Push(pagination.PageState{
+	// 		ResourceTypeID: resourceTypeTeam.Id,
+	// 	})
 
-	case resourceTypeUser.Id:
-		listOpts := &github.ListCollaboratorsOptions{
-			Affiliation: "all",
-			ListOptions: github.ListOptions{
-				Page:    page,
-				PerPage: maxPageSize,
-			},
-		}
-		users, resp, err := o.client.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, listOpts)
-		if err != nil {
-			if resp != nil && resp.StatusCode == http.StatusForbidden {
-				l.Warn("insufficient access to list collaborators", zap.String("repository", resource.DisplayName))
-				pageToken, err := skipGrantsForResourceType(bag)
-				if err != nil {
-					return nil, nil, err
-				}
-				return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
-			}
-			if isNotFoundError(resp) {
-				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
-			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list collaborators")
-		}
+	// case resourceTypeUser.Id:
+	// 	listOpts := &github.ListCollaboratorsOptions{
+	// 		Affiliation: "all",
+	// 		ListOptions: github.ListOptions{
+	// 			Page:    page,
+	// 			PerPage: maxPageSize,
+	// 		},
+	// 	}
+	// 	users, resp, err := o.client.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, listOpts)
+	// 	if err != nil {
+	// 		if resp != nil && resp.StatusCode == http.StatusForbidden {
+	// 			l.Warn("insufficient access to list collaborators", zap.String("repository", resource.DisplayName))
+	// 			pageToken, err := skipGrantsForResourceType(bag)
+	// 			if err != nil {
+	// 				return nil, nil, err
+	// 			}
+	// 			return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
+	// 		}
+	// 		if isNotFoundError(resp) {
+	// 			return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
+	// 		}
+	// 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list collaborators")
+	// 	}
 
-		nextPage, respAnnos, err := parseResp(resp)
-		if err != nil {
-			return nil, nil, err
-		}
-		reqAnnos = respAnnos
+	// 	nextPage, respAnnos, err := parseResp(resp)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
+	// 	reqAnnos = respAnnos
 
-		err = bag.Next(nextPage)
-		if err != nil {
-			return nil, nil, err
-		}
+	// 	err = bag.Next(nextPage)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
 
-		for _, user := range users {
-			for permission, hasPermission := range user.Permissions {
-				if !hasPermission {
-					continue
-				}
+	// 	for _, user := range users {
+	// 		for permission, hasPermission := range user.Permissions {
+	// 			if !hasPermission {
+	// 				continue
+	// 			}
 
-				ur, err := userResource(ctx, user, user.GetEmail(), nil)
-				if err != nil {
-					return nil, nil, err
-				}
+	// 			ur, err := userResource(ctx, user, user.GetEmail(), nil)
+	// 			if err != nil {
+	// 				return nil, nil, err
+	// 			}
 
-				grant := grant.NewGrant(resource, permission, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
-					Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), permission),
-				}))
-				grant.Principal = ur
-				rv = append(rv, grant)
-			}
-		}
+	// 			grant := grant.NewGrant(resource, permission, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
+	// 				Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), permission),
+	// 			}))
+	// 			grant.Principal = ur
+	// 			rv = append(rv, grant)
+	// 		}
+	// 	}
 
-	case resourceTypeTeam.Id:
-		listOpts := &github.ListOptions{
-			Page:    page,
-			PerPage: maxPageSize,
-		}
-		teams, resp, err := o.client.Repositories.ListTeams(ctx, orgName, resource.DisplayName, listOpts)
-		if err != nil {
-			if resp != nil && resp.StatusCode == http.StatusForbidden {
-				l.Warn("insufficient access to list teams", zap.String("repository", resource.DisplayName))
-				pageToken, err := skipGrantsForResourceType(bag)
-				if err != nil {
-					return nil, nil, err
-				}
-				return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
-			}
+	// case resourceTypeTeam.Id:
+	// 	listOpts := &github.ListOptions{
+	// 		Page:    page,
+	// 		PerPage: maxPageSize,
+	// 	}
+	// 	teams, resp, err := o.client.Repositories.ListTeams(ctx, orgName, resource.DisplayName, listOpts)
+	// 	if err != nil {
+	// 		if resp != nil && resp.StatusCode == http.StatusForbidden {
+	// 			l.Warn("insufficient access to list teams", zap.String("repository", resource.DisplayName))
+	// 			pageToken, err := skipGrantsForResourceType(bag)
+	// 			if err != nil {
+	// 				return nil, nil, err
+	// 			}
+	// 			return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
+	// 		}
 
-			if isNotFoundError(resp) {
-				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
-			}
+	// 		if isNotFoundError(resp) {
+	// 			return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
+	// 		}
 
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list repository teams")
-		}
+	// 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list repository teams")
+	// 	}
 
-		nextPage, respAnnos, err := parseResp(resp)
-		if err != nil {
-			return nil, nil, err
-		}
-		reqAnnos = respAnnos
+	// 	nextPage, respAnnos, err := parseResp(resp)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
+	// 	reqAnnos = respAnnos
 
-		err = bag.Next(nextPage)
-		if err != nil {
-			return nil, nil, err
-		}
+	// 	err = bag.Next(nextPage)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
 
-		for _, team := range teams {
-			for permission, hasPermission := range team.Permissions {
-				if !hasPermission {
-					continue
-				}
+	// 	for _, team := range teams {
+	// 		for permission, hasPermission := range team.Permissions {
+	// 			if !hasPermission {
+	// 				continue
+	// 			}
 
-				tr, err := teamResource(team, resource.ParentResourceId)
-				if err != nil {
-					return nil, nil, err
-				}
+	// 			tr, err := teamResource(team, resource.ParentResourceId)
+	// 			if err != nil {
+	// 				return nil, nil, err
+	// 			}
 
-				rv = append(rv, grant.NewGrant(resource, permission, tr.Id, grant.WithAnnotation(
-					&v2.V1Identifier{
-						Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, team.GetID(), permission),
-					},
-					&v2.GrantExpandable{
-						EntitlementIds: []string{
-							entitlement.NewEntitlementID(tr, teamRoleMaintainer),
-							entitlement.NewEntitlementID(tr, teamRoleMember),
-						},
-						Shallow: true,
-					},
-				)))
-			}
-		}
-	default:
-		return nil, nil, fmt.Errorf("unexpected resource type while fetching grants for repo")
-	}
+	// 			rv = append(rv, grant.NewGrant(resource, permission, tr.Id, grant.WithAnnotation(
+	// 				&v2.V1Identifier{
+	// 					Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, team.GetID(), permission),
+	// 				},
+	// 				&v2.GrantExpandable{
+	// 					EntitlementIds: []string{
+	// 						entitlement.NewEntitlementID(tr, teamRoleMaintainer),
+	// 						entitlement.NewEntitlementID(tr, teamRoleMember),
+	// 					},
+	// 					Shallow: true,
+	// 				},
+	// 			)))
+	// 		}
+	// 	}
+	// default:
+	// 	return nil, nil, fmt.Errorf("unexpected resource type while fetching grants for repo")
+	// }
 
-	pageToken, err := bag.Marshal()
-	if err != nil {
-		return nil, nil, err
-	}
+	// pageToken, err := bag.Marshal()
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	return rv, &resourceSdk.SyncOpResults{
-		NextPageToken: pageToken,
-		Annotations:   reqAnnos,
+	return []*v2.Grant{}, &resourceSdk.SyncOpResults{
+		NextPageToken: "",
+		Annotations:   nil,
 	}, nil
 }
 

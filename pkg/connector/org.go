@@ -9,15 +9,15 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
+	// "github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/conductorone/baton-sdk/pkg/uhttp"
+	// "github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
+	// "google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -188,82 +188,82 @@ func (o *orgResourceType) Grants(
 	resource *v2.Resource,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
-	bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
-	if err != nil {
-		return nil, nil, err
-	}
+	// bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	var (
-		reqAnnos  annotations.Annotations
-		pageToken string
-		rv        = []*v2.Grant{}
-	)
+	// var (
+	// 	reqAnnos  annotations.Annotations
+	// 	pageToken string
+	// 	rv        = []*v2.Grant{}
+	// )
 
-	switch rId := bag.ResourceTypeID(); rId {
-	case resourceTypeOrg.Id:
-		bag.Pop()
-		bag.Push(pagination.PageState{
-			ResourceTypeID: orgRoleAdmin,
-		})
-		bag.Push(pagination.PageState{
-			ResourceTypeID: orgRoleMember,
-		})
-	case orgRoleAdmin, orgRoleMember:
+	// switch rId := bag.ResourceTypeID(); rId {
+	// case resourceTypeOrg.Id:
+	// 	bag.Pop()
+	// 	bag.Push(pagination.PageState{
+	// 		ResourceTypeID: orgRoleAdmin,
+	// 	})
+	// 	bag.Push(pagination.PageState{
+	// 		ResourceTypeID: orgRoleMember,
+	// 	})
+	// case orgRoleAdmin, orgRoleMember:
 
-		orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, resource.Id)
-		if err != nil {
-			return nil, nil, err
-		}
-		listOpts := github.ListMembersOptions{
-			Role: rId,
-			ListOptions: github.ListOptions{
-				Page:    page,
-				PerPage: maxPageSize,
-			},
-		}
-		users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &listOpts)
-		if err != nil {
-			if isNotFoundError(resp) {
-				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
-			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list org members")
-		}
+	// 	orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, resource.Id)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
+	// 	listOpts := github.ListMembersOptions{
+	// 		Role: rId,
+	// 		ListOptions: github.ListOptions{
+	// 			Page:    page,
+	// 			PerPage: maxPageSize,
+	// 		},
+	// 	}
+	// 	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &listOpts)
+	// 	if err != nil {
+	// 		if isNotFoundError(resp) {
+	// 			return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
+	// 		}
+	// 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list org members")
+	// 	}
 
-		var nextPage string
-		nextPage, reqAnnos, err = parseResp(resp)
-		if err != nil {
-			return nil, nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
-		}
+	// 	var nextPage string
+	// 	nextPage, reqAnnos, err = parseResp(resp)
+	// 	if err != nil {
+	// 		return nil, nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
+	// 	}
 
-		err = bag.Next(nextPage)
-		if err != nil {
-			return nil, nil, err
-		}
+	// 	err = bag.Next(nextPage)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
 
-		for _, user := range users {
-			ur, err := userResource(ctx, user, user.GetEmail(), nil)
-			if err != nil {
-				return nil, nil, err
-			}
+	// 	for _, user := range users {
+	// 		ur, err := userResource(ctx, user, user.GetEmail(), nil)
+	// 		if err != nil {
+	// 			return nil, nil, err
+	// 		}
 
-			if rId == orgRoleAdmin {
-				rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, ur.Id, user.GetID()))
-			}
-			rv = append(rv, o.orgRoleGrant(rId, resource, ur.Id, user.GetID()))
-		}
-	default:
-		ctxzap.Extract(ctx).Warn("Unknown GitHub Role Name",
-			zap.String("role_name", rId),
-		)
-	}
+	// 		if rId == orgRoleAdmin {
+	// 			rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, ur.Id, user.GetID()))
+	// 		}
+	// 		rv = append(rv, o.orgRoleGrant(rId, resource, ur.Id, user.GetID()))
+	// 	}
+	// default:
+	// 	ctxzap.Extract(ctx).Warn("Unknown GitHub Role Name",
+	// 		zap.String("role_name", rId),
+	// 	)
+	// }
 
-	pageToken, err = bag.Marshal()
-	if err != nil {
-		return nil, nil, err
-	}
-	return rv, &resourceSdk.SyncOpResults{
-		NextPageToken: pageToken,
-		Annotations:   reqAnnos,
+	// pageToken, err = bag.Marshal()
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
+	return []*v2.Grant{}, &resourceSdk.SyncOpResults{
+		NextPageToken: "",
+		Annotations:   nil,
 	}, nil
 }
 

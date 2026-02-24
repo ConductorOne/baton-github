@@ -9,9 +9,9 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
+	// "github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
-	"github.com/conductorone/baton-sdk/pkg/types/grant"
+	// "github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -130,146 +130,146 @@ func (o *orgRoleResourceType) Grants(
 	resource *v2.Resource,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
-	if resource == nil {
-		return nil, &resourceSdk.SyncOpResults{}, nil
-	}
+	// if resource == nil {
+	// 	return nil, &resourceSdk.SyncOpResults{}, nil
+	// }
 
-	bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
-	if err != nil {
-		return nil, nil, err
-	}
+	// bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, resource.ParentResourceId)
-	if err != nil {
-		return nil, nil, err
-	}
+	// orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, resource.ParentResourceId)
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	var rv []*v2.Grant
-	var reqAnnos annotations.Annotations
+	// var rv []*v2.Grant
+	// var reqAnnos annotations.Annotations
 
-	roleID, err := strconv.ParseInt(resource.Id.Resource, 10, 64)
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid role ID: %w", err)
-	}
+	// roleID, err := strconv.ParseInt(resource.Id.Resource, 10, 64)
+	// if err != nil {
+	// 	return nil, nil, fmt.Errorf("invalid role ID: %w", err)
+	// }
 
-	switch bag.ResourceTypeID() {
-	case resourceTypeOrgRole.Id:
-		bag.Pop()
-		bag.Push(pagination.PageState{
-			ResourceTypeID: resourceTypeUser.Id,
-		})
-		bag.Push(pagination.PageState{
-			ResourceTypeID: resourceTypeTeam.Id,
-		})
-	case resourceTypeUser.Id:
-		listOpts := &github.ListOptions{
-			Page:    page,
-			PerPage: maxPageSize,
-		}
-		users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, listOpts)
-		if err != nil {
-			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
-				pageToken, err := bag.NextToken("")
-				if err != nil {
-					return nil, nil, err
-				}
-				return rv, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
-			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list users assigned to org role")
-		}
-		nextPage, respAnnos, err := parseResp(resp)
-		if err != nil {
-			return nil, nil, err
-		}
-		reqAnnos = respAnnos
+	// switch bag.ResourceTypeID() {
+	// case resourceTypeOrgRole.Id:
+	// 	bag.Pop()
+	// 	bag.Push(pagination.PageState{
+	// 		ResourceTypeID: resourceTypeUser.Id,
+	// 	})
+	// 	bag.Push(pagination.PageState{
+	// 		ResourceTypeID: resourceTypeTeam.Id,
+	// 	})
+	// case resourceTypeUser.Id:
+	// 	listOpts := &github.ListOptions{
+	// 		Page:    page,
+	// 		PerPage: maxPageSize,
+	// 	}
+	// 	users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, listOpts)
+	// 	if err != nil {
+	// 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+	// 			pageToken, err := bag.NextToken("")
+	// 			if err != nil {
+	// 				return nil, nil, err
+	// 			}
+	// 			return rv, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
+	// 		}
+	// 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list users assigned to org role")
+	// 	}
+	// 	nextPage, respAnnos, err := parseResp(resp)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
+	// 	reqAnnos = respAnnos
 
-		err = bag.Next(nextPage)
-		if err != nil {
-			return nil, nil, err
-		}
+	// 	err = bag.Next(nextPage)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
 
-		// Create regular grants for direct user assignments.
-		for _, user := range users {
-			userResource, err := userResource(ctx, user, user.GetEmail(), nil)
-			if err != nil {
-				return nil, nil, err
-			}
+	// 	// Create regular grants for direct user assignments.
+	// 	for _, user := range users {
+	// 		userResource, err := userResource(ctx, user, user.GetEmail(), nil)
+	// 		if err != nil {
+	// 			return nil, nil, err
+	// 		}
 
-			grant := grant.NewGrant(
-				resource,
-				"assigned",
-				userResource.Id,
-				grant.WithAnnotation(&v2.V1Identifier{
-					Id: fmt.Sprintf("org-role:%s:%d:%d", resource.Id.Resource, user.GetID(), roleID),
-				}),
-			)
-			grant.Principal = userResource
-			rv = append(rv, grant)
-		}
-	case resourceTypeTeam.Id:
-		listOpts := &github.ListOptions{
-			Page:    page,
-			PerPage: maxPageSize,
-		}
-		teams, resp, err := o.client.Organizations.ListTeamsAssignedToOrgRole(ctx, orgName, roleID, listOpts)
-		if err != nil {
-			// Handle permission errors without erroring out. Some customers may not want to give us permissions to get org roles and members.
-			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
-				// Return empty list with no error to indicate we skipped this resource
-				pageToken, err := bag.NextToken("")
-				if err != nil {
-					return nil, nil, err
-				}
-				return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
-			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list teams assigned to org role")
-		}
+	// 		grant := grant.NewGrant(
+	// 			resource,
+	// 			"assigned",
+	// 			userResource.Id,
+	// 			grant.WithAnnotation(&v2.V1Identifier{
+	// 				Id: fmt.Sprintf("org-role:%s:%d:%d", resource.Id.Resource, user.GetID(), roleID),
+	// 			}),
+	// 		)
+	// 		grant.Principal = userResource
+	// 		rv = append(rv, grant)
+	// 	}
+	// case resourceTypeTeam.Id:
+	// 	listOpts := &github.ListOptions{
+	// 		Page:    page,
+	// 		PerPage: maxPageSize,
+	// 	}
+	// 	teams, resp, err := o.client.Organizations.ListTeamsAssignedToOrgRole(ctx, orgName, roleID, listOpts)
+	// 	if err != nil {
+	// 		// Handle permission errors without erroring out. Some customers may not want to give us permissions to get org roles and members.
+	// 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+	// 			// Return empty list with no error to indicate we skipped this resource
+	// 			pageToken, err := bag.NextToken("")
+	// 			if err != nil {
+	// 				return nil, nil, err
+	// 			}
+	// 			return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
+	// 		}
+	// 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list teams assigned to org role")
+	// 	}
 
-		nextPage, respAnnos, err := parseResp(resp)
-		if err != nil {
-			return nil, nil, err
-		}
-		reqAnnos = respAnnos
+	// 	nextPage, respAnnos, err := parseResp(resp)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
+	// 	reqAnnos = respAnnos
 
-		err = bag.Next(nextPage)
-		if err != nil {
-			return nil, nil, err
-		}
+	// 	err = bag.Next(nextPage)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
 
-		// Create expandable grants for teams. To show inherited roles, we need to show the teams that have the role.
-		for _, team := range teams {
-			teamResource, err := teamResource(team, resource.ParentResourceId)
-			if err != nil {
-				return nil, nil, err
-			}
-			rv = append(rv, grant.NewGrant(
-				resource,
-				"assigned",
-				teamResource.Id,
-				grant.WithAnnotation(&v2.V1Identifier{
-					Id: fmt.Sprintf("org-role-grant:%s:%d:%s", resource.Id.Resource, team.GetID(), "assigned"),
-				},
-					&v2.GrantExpandable{
-						EntitlementIds: []string{
-							entitlement.NewEntitlementID(teamResource, teamRoleMaintainer),
-							entitlement.NewEntitlementID(teamResource, teamRoleMember),
-						},
-						Shallow: true,
-					},
-				),
-			))
-		}
-	default:
-		return nil, nil, fmt.Errorf("unexpected resource type while fetching grants for org role")
-	}
-	pageToken, err := bag.Marshal()
-	if err != nil {
-		return nil, nil, err
-	}
+	// 	// Create expandable grants for teams. To show inherited roles, we need to show the teams that have the role.
+	// 	for _, team := range teams {
+	// 		teamResource, err := teamResource(team, resource.ParentResourceId)
+	// 		if err != nil {
+	// 			return nil, nil, err
+	// 		}
+	// 		rv = append(rv, grant.NewGrant(
+	// 			resource,
+	// 			"assigned",
+	// 			teamResource.Id,
+	// 			grant.WithAnnotation(&v2.V1Identifier{
+	// 				Id: fmt.Sprintf("org-role-grant:%s:%d:%s", resource.Id.Resource, team.GetID(), "assigned"),
+	// 			},
+	// 				&v2.GrantExpandable{
+	// 					EntitlementIds: []string{
+	// 						entitlement.NewEntitlementID(teamResource, teamRoleMaintainer),
+	// 						entitlement.NewEntitlementID(teamResource, teamRoleMember),
+	// 					},
+	// 					Shallow: true,
+	// 				},
+	// 			),
+	// 		))
+	// 	}
+	// default:
+	// 	return nil, nil, fmt.Errorf("unexpected resource type while fetching grants for org role")
+	// }
+	// pageToken, err := bag.Marshal()
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	return rv, &resourceSdk.SyncOpResults{
-		NextPageToken: pageToken,
-		Annotations:   reqAnnos,
+	return []*v2.Grant{}, &resourceSdk.SyncOpResults{
+		NextPageToken: "",
+		Annotations:   nil,
 	}, nil
 }
 

@@ -9,7 +9,7 @@ import (
 	"github.com/conductorone/baton-github/pkg/customclient"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
-	"github.com/conductorone/baton-sdk/pkg/types/grant"
+	// "github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
@@ -130,31 +130,31 @@ func (o *enterpriseRoleResourceType) Grants(
 	resource *v2.Resource,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
-	cache, err := o.getRoleUsersCache(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("baton-github: error getting user roles cache: %w", err)
-	}
+	// cache, err := o.getRoleUsersCache(ctx)
+	// if err != nil {
+	// 	return nil, nil, fmt.Errorf("baton-github: error getting user roles cache: %w", err)
+	// }
 
-	ret := []*v2.Grant{}
-	for _, userLogin := range cache[resource.Id.Resource] {
-		user, resp, err := o.client.Users.Get(ctx, userLogin)
-		if err != nil {
-			return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("baton-github: failed to get user %s", userLogin))
-		}
+	// ret := []*v2.Grant{}
+	// for _, userLogin := range cache[resource.Id.Resource] {
+	// 	user, resp, err := o.client.Users.Get(ctx, userLogin)
+	// 	if err != nil {
+	// 		return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("baton-github: failed to get user %s", userLogin))
+	// 	}
 
-		principalId, err := resourceSdk.NewResourceID(resourceTypeUser, *user.ID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("baton-github: error creating resource ID for user %s: %w", userLogin, err)
-		}
+	// 	principalId, err := resourceSdk.NewResourceID(resourceTypeUser, *user.ID)
+	// 	if err != nil {
+	// 		return nil, nil, fmt.Errorf("baton-github: error creating resource ID for user %s: %w", userLogin, err)
+	// 	}
 
-		ret = append(ret, grant.NewGrant(
-			resource,
-			"assigned",
-			principalId,
-		))
-	}
+	// 	ret = append(ret, grant.NewGrant(
+	// 		resource,
+	// 		"assigned",
+	// 		principalId,
+	// 	))
+	// }
 
-	return ret, &resourceSdk.SyncOpResults{}, nil
+	return []*v2.Grant{}, &resourceSdk.SyncOpResults{}, nil
 }
 
 func enterpriseRoleBuilder(client *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {
