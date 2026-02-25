@@ -22,6 +22,7 @@ Skills for building and reviewing ConductorOne Baton connectors.
 | `build-pagination.md` | Token strategies, pagination.Bag, termination conditions |
 | `build-provisioning.md` | Grant/Revoke implementation, idempotency, AccountManager |
 | `build-config.md` | Configuration schema, CLI flags, environment variables |
+| `build-connector-docs.md` | Writing connector documentation (MDX format, capabilities, credentials, setup tabs) |
 
 ### Patterns (Best Practices)
 
@@ -71,6 +72,9 @@ Skills for building and reviewing ConductorOne Baton connectors.
 **"What should I avoid?"**
 - `ref-antipatterns.md` - Common mistakes
 - `ref-unused-features.md` - Don't waste effort on dead code
+
+**"How do I write/update connector docs?"**
+- `build-connector-docs.md` - MDX template, capabilities tables, credential sections, setup tabs
 
 ### User is reviewing connector code
 
