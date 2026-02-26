@@ -216,6 +216,124 @@ func (g *groupBuilder) Grants(ctx context.Context, resource *v2.Resource,
 
 ---
 
+## Nested Bag Pagination (Bag-within-Bag)
+
+When an outer function uses a Bag to dispatch to inner functions that manage their own Bag, the inner bag's serialized state becomes the `Token` field in the outer bag's `PageState`. This creates a two-layer pagination pattern that is easy to get wrong.
+
+### How It Works
+
+```go
+// OUTER: dispatches between resource types
+func (o *myType) Grants(ctx context.Context, resource *v2.Resource,
+    attrs resource2.SyncOpAttrs) ([]*v2.Grant, *resource2.SyncOpResults, error) {
+
+    bag := &pagination.Bag{}
+    bag.Unmarshal(token.Token)
+    if bag.Current() == nil {
+        bag.Push(pagination.PageState{ResourceTypeID: "users"})
+        bag.Push(pagination.PageState{ResourceTypeID: "groups"})
+    }
+
+    page := bag.PageToken() // This is the INNER bag's serialized state
+
+    switch bag.ResourceTypeID() {
+    case "users":
+        rv, nextPage, annos, err = o.userGrants(ctx, resource, attrs, page)
+    case "groups":
+        rv, nextPage, annos, err = o.groupGrants(ctx, resource, attrs, page)
+    }
+
+    // nextPage is the inner bag's Marshal() output.
+    // When nextPage == "", bag.Next("") pops current type, advances to next.
+    // When nextPage != "", bag.Next(nextPage) keeps current type with updated token.
+    bag.Next(nextPage)
+
+    pageToken, _ := bag.Marshal()
+    return rv, &resource2.SyncOpResults{NextPageToken: pageToken}, nil
+}
+```
+
+### The Ghost State Bug
+
+`pagination.Bag.Marshal()` returns `""` (empty) only when `currentState` is nil. A `PageState` with all zero-value fields (`{Token: "", ResourceID: ""}`) is **non-nil** and serializes to `{"states":[],"current_state":{}}`.
+
+This non-empty string causes the outer bag to think there's still work to do, keeping the current resource type alive instead of advancing to the next one. The inner function then re-initializes from scratch, re-fetching from the beginning — an infinite loop.
+
+```
+Inner bag state: {Token: "", ResourceID: ""}  (all empty, but non-nil)
+Inner Marshal():  {"states":[],"current_state":{}}  (non-empty string!)
+Outer bag sees:   non-empty token → keep "users" type active
+Next call:        inner Unmarshal → Current() != nil → skip init
+                  ResourceID == "" → fetch API page with Token == "" → page 1 again
+                  INFINITE LOOP
+```
+
+### How Ghost States Appear: Stale State in Stack
+
+When you push per-item states on top of a page state, the page state gets buried in the stack. After all items are popped, the page state resurfaces:
+
+```go
+// WRONG — page state survives in the stack after all items are popped
+for _, user := range users {
+    if needsExtraProcessing(user) {
+        bag.Push(pagination.PageState{  // Pushes ON TOP of the page state
+            ResourceID: user.ID,
+        })
+    }
+}
+
+// This Pop removes the last pushed user, NOT the page state!
+bag.Pop()
+if nextPage != "" {
+    bag.Push(pagination.PageState{Token: nextPage})
+}
+```
+
+After all users are individually popped in later calls, the original page state `{Token: "", ResourceID: ""}` becomes current again → ghost state → infinite loop.
+
+### Correct Pattern: Pop Page State Before Pushing Items
+
+Pop the consumed page state first, then push the next page (if any), then push per-item states on top. This way the consumed state is gone, and items sit above the next page in the stack.
+
+```go
+// CORRECT — Pop consumed state BEFORE pushing anything
+bag.Pop() // Remove the page state we just consumed
+
+if nextPage != "" {
+    bag.Push(pagination.PageState{
+        Token:      nextPage,
+        ResourceID: "", // Next API page, sits at bottom of stack
+    })
+}
+
+// Now push per-item states on top (processed first, LIFO)
+for _, user := range users {
+    if needsExtraProcessing(user) {
+        bag.Push(pagination.PageState{
+            ResourceID: user.ID,
+        })
+    }
+}
+
+nextPageToken, err := bag.Marshal()
+return rv, nextPageToken, annos, nil
+```
+
+This guarantees:
+- The consumed page state is gone before any items are pushed
+- Next page (if any) sits below items, processed after all items are done
+- When all items are popped and no next page exists, the bag is truly empty → `Marshal()` returns `""` → outer bag advances
+
+### Invariant: Never Leave All-Empty PageState in the Bag
+
+Every `PageState` in the bag should have at least one non-empty field. If `Marshal()` can produce a non-empty string when there's no real work left, the outer bag will loop.
+
+- Page states: must have non-empty `Token` (guarded by `if nextPage != ""`)
+- Item states: must have non-empty `ResourceID` (from the item being processed)
+- Initial states (`{Token: "", ResourceID: ""}`) must be popped before returning
+
+---
+
 ## Page Size Selection
 
 | API Limit | Recommendation |
