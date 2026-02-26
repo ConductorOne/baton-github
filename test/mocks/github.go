@@ -1,3 +1,4 @@
+//nolint:gosec // We don't care about XSS in mock data for tests.
 package mocks
 
 import (
@@ -454,9 +455,7 @@ func (mgh MockGitHub) getRepositoryCollaborator(
 		mgh.repositoryMemberships,
 		"repository_id",
 	)
-	_, _ = w.Write(
-		mock.MustMarshal(user),
-	)
+	_, _ = w.Write(mock.MustMarshal(user))
 }
 
 func (mgh MockGitHub) addMembership(
