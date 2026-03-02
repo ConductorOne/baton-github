@@ -55,6 +55,9 @@ if resp.NextPage == "" {
 return resources, resp.NextPage, nil, nil
 ```
 
+**Testing:**
+- [ ] Verified pagination works by temporarily setting `page_size=1` during development (catches off-by-one and early-termination bugs that full-page tests miss)
+
 ---
 
 ## HTTP Safety Check
@@ -156,6 +159,7 @@ Look for:
 - [ ] README shows example usage
 - [ ] Complex logic has comments explaining WHY (not what)
 - [ ] No TODO comments for critical functionality
+- [ ] `docs/connector.mdx` updated if capabilities, auth requirements, or required scopes changed
 
 ---
 

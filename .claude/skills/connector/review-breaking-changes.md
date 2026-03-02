@@ -4,6 +4,20 @@ Breaking change detection rules for connector reviews.
 
 ---
 
+## What Counts as a Breaking Change
+
+- Resource type name change
+- Entitlement slug change
+- Resource ID format change
+- Removed resource type or entitlement
+- Changed parent hierarchy
+- Changed trait type
+- **New API endpoint added to an existing sync path** — even if the code change looks additive, it may require a new scope or permission that existing installations don't have
+- **New required OAuth scope or permission** — existing installations lose functionality until reconfigured
+- Any drastic change in existing feature behavior
+
+---
+
 ## What Breaks Downstream
 
 When a connector changes, these break C1 sync:
@@ -13,6 +27,7 @@ When a connector changes, these break C1 sync:
 | Resource type name change | Existing grants orphaned | Critical |
 | Entitlement slug change | Grant matching fails | Critical |
 | Resource ID format change | Duplicate resources created | Critical |
+| New API endpoint (new scope required) | Existing installs lose data | High |
 | Removed resource type | Grants disappear | High |
 | Changed parent hierarchy | Relationships break | High |
 | Removed entitlement | Grants can't be revoked | High |
@@ -240,12 +255,17 @@ These are NOT breaking:
 
 ---
 
-## Migration Guidance
+## Process for Breaking Changes
 
-If a breaking change is necessary:
+If a breaking change is necessary, all of the following are required before merging:
 
-1. **Document the break** in PR description
-2. **Coordinate with C1 team** for sync timing
-3. **Consider dual-emit** temporarily (old + new IDs)
-4. **Plan grant re-sync** after deployment
-5. **Update any hardcoded references** in C1 config
+1. **Gate behind a config flag** — breaking behavior must be opt-in; never default-on
+2. **Lead approval required** — get explicit sign-off before merging to main
+3. **Document in the PR description** — clearly state what breaks and why
+4. **Coordinate with C1 team** for sync timing
+5. **Update `docs/connector.mdx`** to reflect new scopes, auth requirements, or behavioral changes
+6. **File a DOCS ticket** to track the doc update if not done in the same PR
+7. **Note it in the Jira issue** so it's visible to the full team
+8. **Consider dual-emit** temporarily (old + new IDs) to smooth migration
+9. **Plan grant re-sync** after deployment
+10. **Update any hardcoded references** in C1 config

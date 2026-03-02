@@ -38,6 +38,51 @@ if err != nil {
 
 ---
 
+## Wrapping Errors with uhttp.WrapErrors
+
+Use `uhttp.WrapErrors` when returning errors from HTTP calls that did **not** go through `uhttp.BaseHttpClient` — for example, SDK library errors, raw `http.Client` calls, or errors you infer yourself (e.g., "status 200 but body indicates failure").
+
+**Why it matters:** The SDK inspects the gRPC status code on errors to decide whether to retry, log, or surface the error to the operator. Without wrapping, the SDK treats all errors as opaque and cannot act appropriately.
+
+**Signature:**
+```go
+func WrapErrors(preferredCode codes.Code, statusMsg string, errs ...error) error
+```
+
+- `preferredCode` — a gRPC status code (from `google.golang.org/grpc/codes`), not an HTTP status code
+- `statusMsg` — human-readable message describing the error
+- `errs` — original errors to join into the result
+
+**Common gRPC code mappings:**
+
+| Situation | gRPC code |
+|-----------|-----------|
+| Auth failure (401) | `codes.Unauthenticated` |
+| Permission denied (403) | `codes.PermissionDenied` |
+| Not found (404) | `codes.NotFound` |
+| Rate limited (429) | `codes.ResourceExhausted` |
+| Server error (5xx) | `codes.Internal` |
+
+```go
+// SDK library error — wrap with appropriate gRPC code:
+if err != nil {
+    return nil, uhttp.WrapErrors(codes.Internal, "baton-myservice: failed to list users", err)
+}
+
+// Developer-inferred error from response body or status code:
+if resp.StatusCode == http.StatusForbidden {
+    return nil, uhttp.WrapErrors(
+        codes.PermissionDenied,
+        fmt.Sprintf("baton-myservice: access denied to %s", endpoint),
+        fmt.Errorf("HTTP %d", resp.StatusCode),
+    )
+}
+```
+
+**When NOT to use it:** If you're using `uhttp.BaseHttpClient` for all requests, uhttp handles wrapping automatically. Only wrap manually when bypassing uhttp.
+
+---
+
 ## Retryable vs Fatal Errors
 
 | Error Type | Retryable? | Action |

@@ -88,7 +88,7 @@ Return a JSON array. Empty array if no issues. Only findings with confidence >= 
 - R1: List methods return []*Type (pointer slices)
 - R2: No unused function parameters
 - R3: Clear variable names (groupMember not gm)
-- R4: Errors use %w (not %v), include baton-{service}: prefix, use uhttp.WrapErrors
+- R4: Errors use %w (not %v), include baton-{service}: prefix; use uhttp.WrapErrors(codes.Code, msg, err) for errors from non-uhttp HTTP calls, SDK library errors, or developer-inferred errors so the SDK can inspect the gRPC status code and decide whether to retry
 - R5: Use StaticEntitlements for uniform entitlements
 - R6: Use Skip annotations (SkipEntitlementsAndGrants, etc.) appropriately
 - R7: Missing API permissions = degrade gracefully, don't fail sync
@@ -110,7 +110,7 @@ Return a JSON array. Empty array if no issues. Only findings with confidence >= 
 - H4: No error swallowing (log.Println + continue = silent data loss)
 - H5: No secrets in logs (apiKey, password, token values)
 
-## BREAKING CHANGES (B1-B8) — Check in diffs:
+## BREAKING CHANGES (B1-B9) — Check in diffs:
 - B1: Resource type Id: field changes = CRITICAL (grants orphaned)
 - B2: Entitlement slug changes in NewAssignmentEntitlement/NewPermissionEntitlement = CRITICAL
 - B3: Resource ID derivation changes (user.ID→user.Email) = CRITICAL
@@ -119,6 +119,7 @@ Return a JSON array. Empty array if no issues. Only findings with confidence >= 
 - B6: Trait type changes (NewUserResource→NewAppResource) = MEDIUM
 - B7: New required OAuth scopes = breaking
 - B8: SAFE: display name changes, adding new types, adding trait options, adding pagination
+- B9: New API endpoint added to an existing resource's sync path = breaking (requires scope change or different permissions)
 
 ## TOP BUG DETECTION PATTERNS
 1. Pagination: `return resources, "", nil, nil` without conditional = stops after page 1
