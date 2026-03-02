@@ -24,6 +24,95 @@ log.Printf("Authenticating with API key: %s...", apiKey[:8])  // Truncate
 
 ---
 
+### Client-Side Pagination Loop
+
+This applies to `List()`, `Entitlements()`, and `Grants()` — any SDK method that receives a pagination token.
+
+```go
+// NEVER DO THIS - loop inside a SDK method (List/Entitlements/Grants)
+func (u *userBuilder) List(ctx context.Context, parentID *v2.ResourceId,
+    token *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+
+    var resources []*v2.Resource
+    cursor := ""
+    for {
+        page, nextCursor, err := u.client.ListUsers(ctx, cursor)
+        if err != nil {
+            return nil, "", nil, err
+        }
+        for _, user := range page {
+            r, _ := convertUser(user)
+            resources = append(resources, r)
+        }
+        if nextCursor == "" {
+            break
+        }
+        cursor = nextCursor
+    }
+    return resources, "", nil, nil  // SDK called once; no checkpointing possible
+}
+
+// NEVER DO THIS - loop hidden inside the HTTP client
+func (c *Client) ListUsers(ctx context.Context) ([]User, error) {
+    var all []User
+    cursor := ""
+    for {
+        page, next, err := c.getPage(ctx, "/users", cursor)
+        if err != nil {
+            return nil, err
+        }
+        all = append(all, page...)
+        if next == "" {
+            break
+        }
+        cursor = next
+    }
+    return all, nil  // Caller cannot paginate; entire dataset loaded into memory
+}
+```
+
+**Why it's bad:** The SDK drives the pagination loop — it calls `List()`, `Entitlements()`, and `Grants()` repeatedly with incrementing tokens. If the connector paginates internally (in the SDK method itself or inside the HTTP client), the SDK only ever calls the method once and receives all results at once. This:
+- Breaks checkpointing: if a sync crashes mid-run, it cannot resume from the last page
+- Loads the entire dataset into memory at once (OOM for orgs with 100k+ users)
+- Bypasses any rate limiting or backpressure the SDK applies between pages
+- Causes detached contexts and timeouts: the SDK manages context lifetimes and deadlines per page call; a long-running internal loop outlives the context the SDK intended for a single page, leading to cancelled requests and hard-to-diagnose timeout errors
+
+There are no exceptions. HTTP client methods must always accept a cursor/token parameter and return a single page.
+
+**Do instead:**
+```go
+// HTTP client: always return one page + next token
+func (c *Client) ListUsers(ctx context.Context, cursor string) ([]User, string, error) {
+    resp, err := c.get(ctx, "/users", cursor)
+    if err != nil {
+        return nil, "", err
+    }
+    return resp.Users, resp.NextCursor, nil
+}
+
+// SDK method: handle exactly one page per call, let the SDK loop
+func (u *userBuilder) List(ctx context.Context, parentID *v2.ResourceId,
+    token *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+
+    cursor := extractCursor(token)
+    users, nextCursor, err := u.client.ListUsers(ctx, cursor)
+    if err != nil {
+        return nil, "", nil, err
+    }
+
+    resources := make([]*v2.Resource, 0, len(users))
+    for _, user := range users {
+        r, _ := convertUser(user)
+        resources = append(resources, r)
+    }
+
+    return resources, nextCursor, nil, nil  // SDK calls List() again with nextCursor
+}
+// Same pattern applies identically to Entitlements() and Grants()
+```
+
+---
+
 ### Buffering All Data in Memory
 
 ```go
