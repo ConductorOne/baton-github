@@ -18,3 +18,4 @@ jobs:
       AC_PASSWORD: ${{ secrets.AC_PASSWORD }}
       AC_PROVIDER: ${{ secrets.AC_PROVIDER }}
       DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+      GORELEASER_PRO_KEY: ${{ secrets.GORELEASER_PRO_KEY }}
