@@ -3,7 +3,6 @@ package connector
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"net/mail"
 	"strconv"
 	"strings"
@@ -11,12 +10,10 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -155,15 +152,13 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	for _, user := range users {
 		u, res, err := o.client.Users.GetByID(ctx, user.GetID())
 		if err != nil {
-			if isRatelimited(res) {
-				return nil, nil, uhttp.WrapErrors(codes.Unavailable, "too many requests", err)
-			}
 			// This undocumented API can return 404 for some users. If this fails it means we won't get some of their details like email
-			if res == nil || res.StatusCode != http.StatusNotFound {
-				return nil, nil, err
+			if isNotFoundError(res) {
+				l.Warn("error fetching user by id", zap.Error(err), zap.Int64("user_id", user.GetID()))
+				u = user
+			} else {
+				return nil, nil, wrapGitHubError(err, res, "github-connector: failed to get user by id")
 			}
-			l.Error("error fetching user by id", zap.Error(err), zap.Int64("user_id", user.GetID()))
-			u = user
 		}
 		userEmail := u.GetEmail()
 		var extraEmails []string
