@@ -120,17 +120,20 @@ Return a JSON array. Empty array if no issues. Only findings with confidence >= 
 - B7: New required OAuth scopes = breaking
 - B8: SAFE: display name changes, adding new types, adding trait options, adding pagination
 - B9: New API endpoint added to an existing resource's sync path = breaking (requires scope change or different permissions)
+- If breaking changes found: must be gated behind config flag (opt-in, never default-on), require lead approval, documented in PR description, docs/connector.mdx updated, DOCS ticket filed
 
 ## TOP BUG DETECTION PATTERNS
-1. Pagination: `return resources, "", nil, nil` without conditional = stops after page 1
-2. Pagination: `return resources, "next", nil, nil` hardcoded = infinite loop
-3. HTTP: defer resp.Body.Close() BEFORE if err != nil = panic
-4. HTTP: resp.StatusCode in error path without resp != nil check = panic
-5. Type assertion: .(Type) without , ok := = panic
-6. Error: log.Print(err) without return = silent data loss
-7. Error: fmt.Errorf("...%v", err) should be %w
-8. IDs: .Email as 3rd arg to NewUserResource = unstable ID
-9. ParentResourceId.Resource without nil check = panic
+1. Client-side pagination loop: for loop inside List()/Entitlements()/Grants() or inside the HTTP client that fetches all pages internally = CRITICAL (breaks checkpointing, OOM, bypasses rate limiting, detached contexts). The SDK drives the pagination loop — each SDK method must handle exactly one page per call. HTTP client methods must accept a cursor/token param and return a single page.
+2. Pagination: `return resources, "", nil, nil` without conditional = stops after page 1
+3. Pagination: `return resources, "next", nil, nil` hardcoded = infinite loop
+4. HTTP: defer resp.Body.Close() BEFORE if err != nil = panic
+5. HTTP: resp.StatusCode in error path without resp != nil check = panic
+6. Type assertion: .(Type) without , ok := = panic
+7. Error: log.Print(err) without return = silent data loss
+8. Error: fmt.Errorf("...%v", err) should be %w
+9. IDs: .Email as 3rd arg to NewUserResource = unstable ID
+10. ParentResourceId.Resource without nil check = panic
+11. New API endpoint in existing sync path without checking scope requirements = breaking change
 
 Read the FULL file content (using Read tool) ONLY when the diff suggests a potential issue that requires full-file context (e.g., pagination flow, resource builder structure). For simple pattern issues visible in the diff, the diff alone is sufficient.
 
