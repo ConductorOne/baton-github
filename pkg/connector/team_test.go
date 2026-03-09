@@ -29,7 +29,7 @@ func TestTeam(t *testing.T) {
 
 		organization, _ := organizationResource(ctx, githubOrganization, nil, false)
 		team, _ := teamResource(githubTeam, organization.Id)
-		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)
+		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil, false)
 
 		entitlement := v2.Entitlement{
 			Id:       entitlement2.NewEntitlementID(team, "member"),

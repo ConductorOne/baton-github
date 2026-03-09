@@ -27,7 +27,7 @@ func TestOrganization(t *testing.T) {
 		client := orgBuilder(githubClient, nil, cache, nil, false)
 
 		organization, _ := organizationResource(ctx, githubOrganization, nil, false)
-		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)
+		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil, false)
 
 		entitlement := v2.Entitlement{
 			Id:       entitlement.NewEntitlementID(organization, orgRoleMember),

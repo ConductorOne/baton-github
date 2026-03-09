@@ -67,3 +67,8 @@ var DeleteOrgsRolesUsersByOrgByRoleIdByUsername = mock.EndpointPattern{
 	Pattern: "/orgs/{org}/organization-roles/users/{username}/{role_id}",
 	Method:  "DELETE",
 }
+
+var GetOrgsOutsideCollaboratorsByOrg = mock.EndpointPattern{
+	Pattern: "/orgs/{org}/outside_collaborators",
+	Method:  "GET",
+}

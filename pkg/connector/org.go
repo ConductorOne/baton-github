@@ -241,7 +241,7 @@ func (o *orgResourceType) Grants(
 		}
 
 		for _, user := range users {
-			ur, err := userResource(ctx, user, user.GetEmail(), nil)
+			ur, err := userResource(ctx, user, user.GetEmail(), nil, false)
 			if err != nil {
 				return nil, nil, err
 			}

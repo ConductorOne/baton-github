@@ -1,4 +1,3 @@
-//nolint:gosec // We don't care about XSS in mock data for tests.
 package mocks
 
 import (
@@ -16,27 +15,29 @@ import (
 )
 
 type MockGitHub struct {
-	teamMemberships         map[int64]mapset.Set[int64]
-	repositoryMemberships   map[int64]mapset.Set[int64]
-	organizationMemberships map[int64]mapset.Set[int64]
-	organizations           map[int64]github.Organization
-	repositories            map[int64]github.Repository
-	teams                   map[int64]github.Team
-	users                   map[int64]github.User
-	orgRoles                map[int64]mapset.Set[int64] // Maps role ID to set of user IDs
-	SimulateOrgRolePermErr  bool                        // Simulate permission error for org roles
+	teamMemberships              map[int64]mapset.Set[int64]
+	repositoryMemberships        map[int64]mapset.Set[int64]
+	organizationMemberships      map[int64]mapset.Set[int64]
+	outsideCollaboratorsByOrg    map[int64]mapset.Set[int64]
+	organizations                map[int64]github.Organization
+	repositories                 map[int64]github.Repository
+	teams                        map[int64]github.Team
+	users                        map[int64]github.User
+	orgRoles                     map[int64]mapset.Set[int64] // Maps role ID to set of user IDs
+	SimulateOrgRolePermErr       bool                        // Simulate permission error for org roles
 }
 
 func NewMockGitHub() *MockGitHub {
 	return &MockGitHub{
-		teamMemberships:         map[int64]mapset.Set[int64]{},
-		repositoryMemberships:   map[int64]mapset.Set[int64]{},
-		organizationMemberships: map[int64]mapset.Set[int64]{},
-		organizations:           map[int64]github.Organization{},
-		repositories:            map[int64]github.Repository{},
-		teams:                   map[int64]github.Team{},
-		users:                   map[int64]github.User{},
-		orgRoles:                map[int64]mapset.Set[int64]{},
+		teamMemberships:           map[int64]mapset.Set[int64]{},
+		repositoryMemberships:     map[int64]mapset.Set[int64]{},
+		organizationMemberships:   map[int64]mapset.Set[int64]{},
+		outsideCollaboratorsByOrg: map[int64]mapset.Set[int64]{},
+		organizations:             map[int64]github.Organization{},
+		repositories:              map[int64]github.Repository{},
+		teams:                     map[int64]github.Team{},
+		users:                     map[int64]github.User{},
+		orgRoles:                  map[int64]mapset.Set[int64]{},
 	}
 }
 
@@ -200,6 +201,22 @@ func (mgh MockGitHub) getUser(
 	if id, ok := variables["id"]; ok {
 		writeResource(w, id, mgh.users)
 	}
+}
+
+func (mgh MockGitHub) getOutsideCollaborators(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	orgID, _ := getCrossTableId(w, variables, "org")
+	users := make([]github.User, 0)
+	if memberships, ok := mgh.outsideCollaboratorsByOrg[orgID]; ok {
+		for _, userID := range memberships.ToSlice() {
+			if user, ok := mgh.users[userID]; ok {
+				users = append(users, user)
+			}
+		}
+	}
+	_, _ = w.Write(mock.MustMarshal(users))
 }
 
 func (mgh MockGitHub) addUser(
@@ -752,6 +769,7 @@ func (mgh MockGitHub) Server() *http.Client {
 		}: mgh.getOrgRoleByID,
 		PutOrgsRolesUsersByOrgByRoleIdByUsername:    mgh.addOrgRoleUser,
 		DeleteOrgsRolesUsersByOrgByRoleIdByUsername: mgh.removeOrgRoleUser,
+		GetOrgsOutsideCollaboratorsByOrg:            mgh.getOutsideCollaborators,
 	}
 
 	options := make([]mock.MockBackendOption, 0)
@@ -780,4 +798,17 @@ func (mgh *MockGitHub) AddMembership(teamID int64, userID int64) {
 		mgh.teamMemberships[teamID] = mapset.NewSet[int64]()
 	}
 	mgh.teamMemberships[teamID].Add(userID)
+}
+
+// AddUser adds a user to the mock's user store for testing purposes.
+func (mgh *MockGitHub) AddUser(user github.User) {
+	mgh.users[user.GetID()] = user
+}
+
+// AddOutsideCollaborator adds a user as an outside collaborator to an org for testing purposes.
+func (mgh *MockGitHub) AddOutsideCollaborator(orgID int64, userID int64) {
+	if _, ok := mgh.outsideCollaboratorsByOrg[orgID]; !ok {
+		mgh.outsideCollaboratorsByOrg[orgID] = mapset.NewSet[int64]()
+	}
+	mgh.outsideCollaboratorsByOrg[orgID].Add(userID)
 }
