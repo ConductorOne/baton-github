@@ -102,6 +102,9 @@ linters:
       - linters:
           - godot
         source: (TODO)
+      - path: _test\.go$
+        linters:
+          - goconst
       - path: (.+)\.go$
         text: third_party$
       - path: (.+)\.go$
