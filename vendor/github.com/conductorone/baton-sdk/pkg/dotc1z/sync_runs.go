@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/doug-martin/goqu/v9"
@@ -773,7 +774,7 @@ func (c *C1File) Cleanup(ctx context.Context) error {
 
 	// Clean up old full syncs beyond the limit
 	if len(fullSyncs) > syncLimit {
-		l.Info("Cleaning up old sync data...")
+		l.Info("Cleaning up old sync data...", zap.Int("full_sync_count", len(fullSyncs)), zap.Int("sync_limit", syncLimit))
 		for i := 0; i < len(fullSyncs)-syncLimit; i++ {
 			err = c.DeleteSyncRun(ctx, fullSyncs[i].ID)
 			if err != nil {
@@ -848,6 +849,23 @@ func (c *C1File) Cleanup(ctx context.Context) error {
 				zap.String("sync_type", string(ds.Type)),
 				zap.String("sync_id", ds.ID))
 		}
+	}
+
+	// Check if DB is open in WAL mode.
+	// If it is, truncate the WAL instead of vacuuming.
+	var journalMode string
+	row := c.rawDb.QueryRowContext(ctx, "PRAGMA journal_mode")
+	if err := row.Scan(&journalMode); err != nil {
+		return fmt.Errorf("c1file: error getting journal mode: %w", err)
+	}
+	if strings.ToLower(journalMode) == "wal" {
+		l.Debug("database is open in WAL mode, truncating WAL instead of vacuuming")
+		_, _, _, err := c.truncateWAL(ctx)
+		if err != nil {
+			return fmt.Errorf("c1file: error truncating WAL: %w", err)
+		}
+		l.Debug("WAL truncated")
+		return nil
 	}
 
 	l.Debug("vacuuming database")
