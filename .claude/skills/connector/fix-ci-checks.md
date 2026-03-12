@@ -9,6 +9,32 @@ Fix CI failures on connector PRs. This skill covers the three managed CI workflo
 
 ## Generate Baton Metadata failures
 
+### Committed metadata out of date
+
+**When**: The `Generate Baton Metadata` workflow step `Verify committed metadata is up to date` fails with "committed baton_capabilities.json and/or config_schema.json are out of date."
+
+**Cause**: Your code changes altered the connector's capabilities or config schema, but you didn't regenerate and commit the updated JSON files.
+
+**Fix**:
+
+1. Build the connector and regenerate metadata:
+
+```bash
+CONNECTOR_NAME=$(ls cmd/ | head -1)
+go build -o connector "./cmd/${CONNECTOR_NAME}"
+./connector capabilities > baton_capabilities.json
+./connector config > config_schema.json
+```
+
+2. Commit the updated files:
+
+```bash
+git add baton_capabilities.json config_schema.json
+git commit -m "Regenerate metadata from updated binary"
+```
+
+If the docs freshness check also fails, update `docs/connector.mdx` too — see the next section.
+
 ### Docs not matching metadata
 
 **When**: The `Generate Baton Metadata` workflow step `Verify docs match current metadata` fails with "docs/connector.mdx was not updated."
