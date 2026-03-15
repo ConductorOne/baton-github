@@ -104,12 +104,9 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	}
 
 	for _, team := range teams {
-		fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
-		if err != nil {
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get team details")
-		}
-
-		tr, err := teamResource(fullTeam, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
+		// ListTeams returns full Team objects with all fields needed for resource creation.
+		// The per-team GetTeamByID re-fetch was an N+1 query.
+		tr, err := teamResource(team, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
 		if err != nil {
 			return nil, nil, err
 		}
