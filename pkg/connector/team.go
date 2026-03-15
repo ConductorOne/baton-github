@@ -30,12 +30,17 @@ var teamAccessLevels = []string{
 }
 
 // teamResource creates a new connector resource for a GitHub Team. It is possible that the team has a parent resource.
-func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+// orgID is passed explicitly because ListTeams may not populate the Organization field.
+func teamResource(team *github.Team, parentResourceID *v2.ResourceId, orgID ...int64) (*v2.Resource, error) {
+	teamOrgID := team.GetOrganization().GetID()
+	if teamOrgID == 0 && len(orgID) > 0 {
+		teamOrgID = orgID[0]
+	}
 	profile := map[string]interface{}{
 		"members_count": team.GetMembersCount(),
 		"repos_count":   team.GetReposCount(),
 		// Store the org ID in the profile so that we can reference it when calculating grants
-		"orgID": team.GetOrganization().GetID(),
+		"orgID": teamOrgID,
 	}
 
 	ret, err := rType.NewGroupResource(
@@ -106,7 +111,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	for _, team := range teams {
 		// ListTeams returns full Team objects with all fields needed for resource creation.
 		// The per-team GetTeamByID re-fetch was an N+1 query.
-		tr, err := teamResource(team, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
+		tr, err := teamResource(team, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)}, orgID)
 		if err != nil {
 			return nil, nil, err
 		}
