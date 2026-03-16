@@ -114,6 +114,30 @@ func parsePageToken(i string, resourceID *v2.ResourceId) (*pagination.Bag, int, 
 	return b, page, nil
 }
 
+// isOutsideCollaboratorPhase reports whether the pagination bag is in the
+// outside-collaborator phase (phase 2 of the user List).
+func isOutsideCollaboratorPhase(bag *pagination.Bag) bool {
+	return bag.Current().ResourceTypeID == outsideCollaboratorPhase
+}
+
+// membersNextPageToken advances the pagination bag for the org-members phase.
+// When there are no more member pages (nextPage == ""), it transitions the bag
+// to the outside-collaborator phase so the next List call fetches phase 2.
+// Precondition: parentID must not be nil (callers must guard this before calling).
+func membersNextPageToken(bag *pagination.Bag, nextPage string, parentID *v2.ResourceId) (string, error) {
+	if nextPage == "" {
+		// bag.Current() is always the members-phase state here; Pop removes it
+		// before pushing the outside-collaborator phase.
+		bag.Pop()
+		bag.Push(pagination.PageState{
+			ResourceTypeID: outsideCollaboratorPhase,
+			ResourceID:     parentID.Resource,
+		})
+		return bag.Marshal()
+	}
+	return bag.NextToken(nextPage)
+}
+
 // convertPageToken converts a string token into an int.
 func convertPageToken(token string) (int, error) {
 	if token == "" {

@@ -33,7 +33,7 @@ func TestOrgRole(t *testing.T) {
 			Name:        orgRole.Name,
 			Description: orgRole.Description,
 		}, organization)
-		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)
+		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil, false)
 
 		entitlement := v2.Entitlement{
 			Id:       entitlement2.NewEntitlementID(roleResource, "assigned"),

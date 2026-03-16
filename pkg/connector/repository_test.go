@@ -29,7 +29,7 @@ func TestRepository(t *testing.T) {
 
 		organization, _ := organizationResource(ctx, githubOrganization, nil, false)
 		repository, _ := repositoryResource(ctx, githubRepository, organization.Id)
-		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)
+		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil, false)
 
 		entitlement := v2.Entitlement{
 			Id:       entitlement2.NewEntitlementID(repository, "admin"),

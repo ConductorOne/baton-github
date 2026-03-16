@@ -190,7 +190,7 @@ func (o *orgRoleResourceType) Grants(
 
 		// Create regular grants for direct user assignments.
 		for _, user := range users {
-			userResource, err := userResource(ctx, user, user.GetEmail(), nil)
+			userResource, err := userResource(ctx, user, user.GetEmail(), nil, false)
 			if err != nil {
 				return nil, nil, err
 			}
