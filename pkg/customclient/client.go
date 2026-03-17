@@ -31,6 +31,7 @@ func (c *Client) ListEnterpriseConsumedLicenses(ctx context.Context, enterprise 
 
 	q := req.URL.Query()
 	q.Add("page", fmt.Sprintf("%d", page))
+	q.Add("per_page", "500")
 	req.URL.RawQuery = q.Encode()
 
 	var target EnterpriseConsumedLicense

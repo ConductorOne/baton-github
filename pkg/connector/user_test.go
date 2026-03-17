@@ -51,6 +51,8 @@ func TestUsersList(t *testing.T) {
 				graphQLClient,
 				cache,
 				[]string{organization.DisplayName},
+				nil,
+				nil,
 			)
 
 			users, results, err := client.List(

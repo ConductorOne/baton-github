@@ -110,7 +110,7 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	resourceSyncers := []connectorbuilder.ResourceSyncerV2{
 		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
 		teamBuilder(gh.client, gh.orgCache),
-		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache, gh.orgs),
+		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises),
 		repositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories),
 		orgRoleBuilder(gh.client, gh.orgCache),
 		invitationBuilder(invitationBuilderParams{
@@ -209,7 +209,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 	}
 
 	if len(gh.enterprises) > 0 {
-		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 0)
+		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
 		if err != nil {
 			return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: failed to access enterprise licenses", err)
 		}
