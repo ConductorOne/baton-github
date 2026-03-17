@@ -178,7 +178,7 @@ func (c *Connector) Close() error {
 2. **Entity confusion** - Getting workspace from entitlement instead of principal
 3. **Swapped arguments** - Multiple string params in wrong order (check API docs!)
 4. **Nil pointer panic** - Accessing resp.Body when resp is nil
-5. **Error swallowing** - Logging but not returning errors
+5. **Error swallowing** - Logging but not returning errors (exception: intentional skip-and-continue with Warn log is OK — see `patterns-error-handling.md`)
 6. **Unstable IDs** - Using email instead of stable API ID
 7. **JSON type mismatch** - API returns number, Go expects string (use json.Number)
 8. **Wrong trait type** - Using User for service accounts (use App)

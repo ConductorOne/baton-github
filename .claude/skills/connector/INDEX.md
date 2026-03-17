@@ -31,8 +31,9 @@ Skills for building and reviewing ConductorOne Baton connectors.
 |------|--------|
 | `patterns-entity-sources.md` | Principal vs entitlement data extraction (CRITICAL) |
 | `patterns-http-safety.md` | Nil checks, error handling, response processing |
-| `patterns-error-handling.md` | Error wrapping, prefixes, retryable vs fatal |
+| `patterns-error-handling.md` | Error wrapping, prefixes, retryable vs fatal, log level classification |
 | `patterns-json-safety.md` | JSON type mismatches, flexible ID/bool types |
+| `patterns-span-tracing.md` | Span creation, naming, attributes, error recording |
 
 ### Review (Code Review)
 
