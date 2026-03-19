@@ -223,11 +223,12 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 					}
 				}
 			}
-		} else {
-			// Org-level SAML is not available. Defer to the enterprise SAML
-			// cache as the source of truth — if the user has a SAML identity,
-			// use it. If not, leave email blank rather than using the REST API
-			// public email, which is not a corporate identity.
+		} else if len(o.enterprises) > 0 {
+			// Org-level SAML is not available but enterprise is configured.
+			// Defer to the enterprise SAML cache as the source of truth — if
+			// the user has a SAML identity, use it. If not, leave email blank
+			// rather than using the REST API public email, which is not a
+			// corporate identity.
 			userEmail = o.getEnterpriseSAMLEmail(ctx, opts.Session, u.GetLogin())
 			if userEmail != "" {
 				l.Debug("enriched user email from enterprise consumed licenses",
