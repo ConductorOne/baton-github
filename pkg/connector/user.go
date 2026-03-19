@@ -87,11 +87,10 @@ func userResource(ctx context.Context, user *github.User, userEmail string, extr
 	return ret, nil
 }
 
-// enterpriseEmailInfo holds email data from the enterprise consumed licenses API.
+// enterpriseEmailInfo holds SAML identity data from the enterprise consumed licenses API.
 // Fields are exported for JSON serialization via session.Store.
 type enterpriseEmailInfo struct {
-	SAMLNameID           string   `json:"saml_name_id"`
-	VerifiedDomainEmails []string `json:"verified_domain_emails"`
+	SAMLNameID string `json:"saml_name_id"`
 }
 
 const enterpriseEmailPrefix = "enterprise-email:"
@@ -227,7 +226,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 		} else if userEmail == "" {
 			// Org-level SAML is not available and REST API returned no email.
 			// Try to fill it from the enterprise consumed-licenses cache.
-			if entEmail, _ := o.getEnterpriseEmails(ctx, opts.Session, u.GetLogin()); entEmail != "" {
+			if entEmail := o.getEnterpriseSAMLEmail(ctx, opts.Session, u.GetLogin()); entEmail != "" {
 				l.Debug("enriched user email from enterprise consumed licenses",
 					zap.String("user", u.GetLogin()),
 					zap.String("email", entEmail))
@@ -336,7 +335,7 @@ func userBuilder(
 }
 
 // loadEnterpriseEmailCache fetches enterprise consumed licenses and stores
-// email data in the session store, keyed by lowercase GitHub login.
+// SAML NameID data in the session store, keyed by lowercase GitHub login.
 func (o *userResourceType) loadEnterpriseEmailCache(ctx context.Context, ss sessions.SessionStore) error {
 	l := ctxzap.Extract(ctx)
 
@@ -373,9 +372,7 @@ func (o *userResourceType) loadEnterpriseEmailCache(ctx context.Context, ss sess
 				if user.GitHubComLogin == "" {
 					continue
 				}
-				info := &enterpriseEmailInfo{
-					VerifiedDomainEmails: user.GitHubComVerifiedDomainEmails,
-				}
+				info := &enterpriseEmailInfo{}
 				if user.GitHubComSAMLNameID != nil {
 					info.SAMLNameID = *user.GitHubComSAMLNameID
 				}
@@ -395,37 +392,21 @@ func (o *userResourceType) loadEnterpriseEmailCache(ctx context.Context, ss sess
 	return nil
 }
 
-// getEnterpriseEmails returns the primary email and extra emails for a user
-// from the enterprise consumed licenses data stored in the session store.
-// Returns empty strings if no enterprise email data is available.
-func (o *userResourceType) getEnterpriseEmails(ctx context.Context, ss sessions.SessionStore, login string) (string, []string) {
+// getEnterpriseSAMLEmail looks up the SAML NameID for a user from the
+// enterprise consumed-licenses data stored in the session store.
+// Returns empty string if no SAML email is available.
+func (o *userResourceType) getEnterpriseSAMLEmail(ctx context.Context, ss sessions.SessionStore, login string) string {
 	key := enterpriseEmailPrefix + strings.ToLower(login)
 	info, found, err := session.GetJSON[enterpriseEmailInfo](ctx, ss, key)
 	if err != nil || !found {
-		return "", nil
+		return ""
 	}
 
-	var primaryEmail string
-	var extraEmails []string
-
-	// Prefer SAML NameID as primary email if it's a valid email
 	if info.SAMLNameID != "" && isEmail(info.SAMLNameID) {
-		primaryEmail = info.SAMLNameID
+		return info.SAMLNameID
 	}
 
-	// Add verified domain emails
-	for _, email := range info.VerifiedDomainEmails {
-		if !isEmail(email) {
-			continue
-		}
-		if primaryEmail == "" {
-			primaryEmail = email
-		} else if email != primaryEmail {
-			extraEmails = append(extraEmails, email)
-		}
-	}
-
-	return primaryEmail, extraEmails
+	return ""
 }
 
 func (o *userResourceType) hasSAML(ctx context.Context, orgName string, ss sessions.SessionStore) (bool, error) {
