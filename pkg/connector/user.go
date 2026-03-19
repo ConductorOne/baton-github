@@ -223,14 +223,16 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 					}
 				}
 			}
-		} else if userEmail == "" {
-			// Org-level SAML is not available and REST API returned no email.
-			// Try to fill it from the enterprise consumed-licenses cache.
-			if entEmail := o.getEnterpriseSAMLEmail(ctx, opts.Session, u.GetLogin()); entEmail != "" {
+		} else {
+			// Org-level SAML is not available. Defer to the enterprise SAML
+			// cache as the source of truth — if the user has a SAML identity,
+			// use it. If not, leave email blank rather than using the REST API
+			// public email, which is not a corporate identity.
+			userEmail = o.getEnterpriseSAMLEmail(ctx, opts.Session, u.GetLogin())
+			if userEmail != "" {
 				l.Debug("enriched user email from enterprise consumed licenses",
 					zap.String("user", u.GetLogin()),
-					zap.String("email", entEmail))
-				userEmail = entEmail
+					zap.String("email", userEmail))
 			}
 		}
 		ur, err := userResource(ctx, u, userEmail, extraEmails)
@@ -368,6 +370,7 @@ func (o *userResourceType) loadEnterpriseEmailCache(ctx context.Context, ss sess
 				break
 			}
 
+			batch := make(map[string]*enterpriseEmailInfo, len(consumedLicenses.Users))
 			for _, user := range consumedLicenses.Users {
 				if user.GitHubComLogin == "" {
 					continue
@@ -377,11 +380,13 @@ func (o *userResourceType) loadEnterpriseEmailCache(ctx context.Context, ss sess
 					info.SAMLNameID = *user.GitHubComSAMLNameID
 				}
 				key := enterpriseEmailPrefix + strings.ToLower(user.GitHubComLogin)
-				if setErr := session.SetJSON(ctx, ss, key, info); setErr != nil {
-					return fmt.Errorf("baton-github: failed to store enterprise email for %s: %w", user.GitHubComLogin, setErr)
-				}
-				userCount++
+				batch[key] = info
 			}
+			if err := session.SetManyJSON(ctx, ss, batch); err != nil {
+				_ = session.SetJSON(ctx, ss, enterpriseEmailCacheLoadedKey, true)
+				return fmt.Errorf("baton-github: failed to store enterprise email batch for %s (page %d): %w", enterprise, page, err)
+			}
+			userCount += len(batch)
 			page++
 		}
 	}
