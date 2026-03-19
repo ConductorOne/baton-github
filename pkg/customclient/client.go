@@ -31,6 +31,9 @@ func (c *Client) ListEnterpriseConsumedLicenses(ctx context.Context, enterprise 
 
 	q := req.URL.Query()
 	q.Add("page", fmt.Sprintf("%d", page))
+	// GitHub REST API max per_page is 100, default is 30.
+	// https://docs.github.com/en/enterprise-cloud@latest/rest/enterprise-admin/license#list-enterprise-consumed-licenses
+	q.Add("per_page", "100")
 	req.URL.RawQuery = q.Encode()
 
 	var target EnterpriseConsumedLicense
