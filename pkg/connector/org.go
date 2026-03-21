@@ -105,7 +105,7 @@ func (o *orgResourceType) List(
 
 	orgs, resp, err := o.client.Organizations.List(ctx, "", listOpts)
 	if err != nil {
-		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to fetch organizations")
+		return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, "github-connector: failed to fetch organizations")
 	}
 
 	nextPage, reqAnnos, err := parseResp(resp)
@@ -126,10 +126,13 @@ func (o *orgResourceType) List(
 		membership, resp, err := o.client.Organizations.GetOrgMembership(ctx, "", org.GetLogin())
 		if err != nil {
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
-				l.Warn("insufficient access to list org membership, skipping org", zap.String("org", org.GetLogin()))
+				l.Warn("insufficient access to list org membership, skipping org",
+					zap.String("org", org.GetLogin()),
+					zap.String("github_error", gitHubErrorMessage(err)),
+				)
 				continue
 			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get org membership")
+			return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to get org membership for %s", org.GetLogin()))
 		}
 
 		// Only sync orgs that we are an admin for
@@ -226,7 +229,7 @@ func (o *orgResourceType) Grants(
 			if isNotFoundError(resp) {
 				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
 			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list org members")
+			return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list org members for %s", orgName))
 		}
 
 		var nextPage string

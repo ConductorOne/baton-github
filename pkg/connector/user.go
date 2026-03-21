@@ -143,7 +143,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 
 	users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &listOpts)
 	if err != nil {
-		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list organization members")
+		return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list organization members for %s", orgName))
 	}
 
 	restApiRateLimit, err = extractRateLimitData(resp)
@@ -168,10 +168,14 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 		if err != nil {
 			// This undocumented API can return 404 for some users. If this fails it means we won't get some of their details like email
 			if isNotFoundError(res) {
-				l.Warn("error fetching user by id", zap.Error(err), zap.Int64("user_id", user.GetID()))
+				l.Warn("error fetching user by id",
+					zap.Error(err),
+					zap.Int64("user_id", user.GetID()),
+					zap.String("github_error", gitHubErrorMessage(err)),
+				)
 				u = user
 			} else {
-				return nil, nil, wrapGitHubError(err, res, "github-connector: failed to get user by id")
+				return nil, nil, wrapGitHubErrorWithContext(ctx, err, res, fmt.Sprintf("github-connector: failed to get user by id %d", user.GetID()))
 			}
 		}
 		userEmail := u.GetEmail()

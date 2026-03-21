@@ -16,7 +16,9 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/sessions"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
+	"go.uber.org/zap"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"google.golang.org/grpc/codes"
@@ -303,6 +305,56 @@ func isTemporarilyUnavailable(resp *github.Response) bool {
 		resp.StatusCode == http.StatusGatewayTimeout
 }
 
+// gitHubErrorMessage extracts a human-readable error message from a GitHub API error.
+// The go-github library returns *github.ErrorResponse which contains the HTTP method,
+// URL, and message from the response body. This function extracts those details for logging.
+func gitHubErrorMessage(err error) string {
+	var ghErr *github.ErrorResponse
+	if errors.As(err, &ghErr) {
+		msg := ghErr.Message
+		if ghErr.Response != nil && ghErr.Response.Request != nil {
+			msg = fmt.Sprintf("%s %s: %s", ghErr.Response.Request.Method, ghErr.Response.Request.URL.Path, msg)
+		}
+		if len(ghErr.Errors) > 0 {
+			var errDetails []string
+			for _, e := range ghErr.Errors {
+				detail := e.Message
+				if detail == "" {
+					detail = fmt.Sprintf("resource=%s field=%s code=%s", e.Resource, e.Field, e.Code)
+				}
+				errDetails = append(errDetails, detail)
+			}
+			msg = fmt.Sprintf("%s [%s]", msg, strings.Join(errDetails, "; "))
+		}
+		return msg
+	}
+	return err.Error()
+}
+
+// logGitHubAPIError logs a GitHub API error with structured fields for debugging.
+// This ensures that every error from the GitHub API is captured with enough context
+// to identify which API call failed, what the HTTP status was, and what GitHub returned.
+func logGitHubAPIError(ctx context.Context, err error, resp *github.Response, contextMsg string) {
+	l := ctxzap.Extract(ctx)
+
+	fields := []zap.Field{
+		zap.String("operation", contextMsg),
+		zap.String("github_error", gitHubErrorMessage(err)),
+	}
+
+	if resp != nil {
+		fields = append(fields, zap.Int("http_status", resp.StatusCode))
+		if resp.Request != nil {
+			fields = append(fields,
+				zap.String("http_method", resp.Request.Method),
+				zap.String("url", resp.Request.URL.String()),
+			)
+		}
+	}
+
+	l.Warn("github API error", fields...)
+}
+
 // wrapGitHubError wraps GitHub API errors with appropriate gRPC status codes based on the HTTP response.
 // It handles rate limiting, authentication errors, permission errors, and generic errors.
 // The contextMsg parameter should describe the operation that failed (e.g., "failed to list teams").
@@ -337,10 +389,21 @@ func wrapGitHubError(err error, resp *github.Response, contextMsg string) error 
 	}
 
 	if isAuthError(resp) {
-		return uhttp.WrapErrors(codes.Unauthenticated, contextMsg, err)
+		return uhttp.WrapErrors(codes.Unauthenticated, fmt.Sprintf("%s: %s", contextMsg, gitHubErrorMessage(err)), err)
 	}
 	if isPermissionError(resp) {
-		return uhttp.WrapErrors(codes.PermissionDenied, contextMsg, err)
+		return uhttp.WrapErrors(codes.PermissionDenied, fmt.Sprintf("%s: %s", contextMsg, gitHubErrorMessage(err)), err)
 	}
 	return fmt.Errorf("%s: %w", contextMsg, err)
+}
+
+// wrapGitHubErrorWithContext wraps GitHub API errors like wrapGitHubError but also logs
+// the error with structured context fields. Use this variant when you have a context.Context
+// available and want to ensure the error is logged for observability.
+func wrapGitHubErrorWithContext(ctx context.Context, err error, resp *github.Response, contextMsg string) error {
+	if err == nil {
+		return nil
+	}
+	logGitHubAPIError(ctx, err, resp, contextMsg)
+	return wrapGitHubError(err, resp, contextMsg)
 }

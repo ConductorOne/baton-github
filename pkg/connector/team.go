@@ -95,7 +95,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 
 	teams, resp, err := o.client.Teams.ListTeams(ctx, orgName, listOpts)
 	if err != nil {
-		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list teams")
+		return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list teams for org %s", orgName))
 	}
 
 	nextPage, reqAnnos, err := parseResp(resp)
@@ -106,7 +106,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	for _, team := range teams {
 		fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
 		if err != nil {
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get team details")
+			return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to get team details for team %d in org %d", team.GetID(), orgID))
 		}
 
 		tr, err := teamResource(fullTeam, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
@@ -205,7 +205,7 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, op
 			if isNotFoundError(resp) {
 				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %d not found", org.GetID()))
 			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list team members")
+			return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list team members for team %d in org %s", githubID, org.GetLogin()))
 		}
 
 		var nextPage string

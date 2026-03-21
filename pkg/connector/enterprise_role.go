@@ -139,7 +139,7 @@ func (o *enterpriseRoleResourceType) Grants(
 	for _, userLogin := range cache[resource.Id.Resource] {
 		user, resp, err := o.client.Users.Get(ctx, userLogin)
 		if err != nil {
-			return nil, nil, wrapGitHubError(err, resp, fmt.Sprintf("baton-github: failed to get user %s", userLogin))
+			return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("baton-github: failed to get user %s", userLogin))
 		}
 
 		principalId, err := resourceSdk.NewResourceID(resourceTypeUser, *user.ID)

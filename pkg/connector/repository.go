@@ -91,7 +91,7 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 
 	repos, resp, err := o.client.Repositories.ListByOrg(ctx, orgName, listOpts)
 	if err != nil {
-		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list repositories")
+		return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list repositories for org %s", orgName))
 	}
 
 	nextPage, reqAnnos, err := parseResp(resp)
@@ -178,7 +178,11 @@ func (o *repositoryResourceType) Grants(
 		users, resp, err := o.client.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, listOpts)
 		if err != nil {
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
-				l.Warn("insufficient access to list collaborators", zap.String("repository", resource.DisplayName))
+				l.Warn("insufficient access to list collaborators, skipping",
+					zap.String("org", orgName),
+					zap.String("repository", resource.DisplayName),
+					zap.String("github_error", gitHubErrorMessage(err)),
+				)
 				pageToken, err := skipGrantsForResourceType(bag)
 				if err != nil {
 					return nil, nil, err
@@ -188,7 +192,7 @@ func (o *repositoryResourceType) Grants(
 			if isNotFoundError(resp) {
 				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
 			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list collaborators")
+			return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list collaborators for repo %s/%s", orgName, resource.DisplayName))
 		}
 
 		nextPage, respAnnos, err := parseResp(resp)
@@ -229,7 +233,11 @@ func (o *repositoryResourceType) Grants(
 		teams, resp, err := o.client.Repositories.ListTeams(ctx, orgName, resource.DisplayName, listOpts)
 		if err != nil {
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
-				l.Warn("insufficient access to list teams", zap.String("repository", resource.DisplayName))
+				l.Warn("insufficient access to list teams for repository, skipping",
+					zap.String("org", orgName),
+					zap.String("repository", resource.DisplayName),
+					zap.String("github_error", gitHubErrorMessage(err)),
+				)
 				pageToken, err := skipGrantsForResourceType(bag)
 				if err != nil {
 					return nil, nil, err
@@ -241,7 +249,7 @@ func (o *repositoryResourceType) Grants(
 				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("repo: %s not found", resource.DisplayName))
 			}
 
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list repository teams")
+			return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list teams for repo %s/%s", orgName, resource.DisplayName))
 		}
 
 		nextPage, respAnnos, err := parseResp(resp)

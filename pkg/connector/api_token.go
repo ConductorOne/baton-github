@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -91,7 +92,7 @@ func (o *apiTokenResourceType) List(
 		},
 	})
 	if err != nil {
-		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list fine-grained personal access tokens")
+		return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list fine-grained personal access tokens for %s", orgName))
 	}
 
 	restApiRateLimit, err := extractRateLimitData(resp)

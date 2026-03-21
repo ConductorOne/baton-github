@@ -81,14 +81,19 @@ func (o *orgRoleResourceType) List(
 		return nil, nil, err
 	}
 
+	l := ctxzap.Extract(ctx)
 	roles, resp, err := o.client.Organizations.ListRoles(ctx, orgName)
 	if err != nil {
 		// Handle permission errors gracefully
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
-			// Return empty list with no error to indicate we skipped this resource
+			l.Warn("insufficient access to list organization roles, skipping",
+				zap.String("org", orgName),
+				zap.Int("http_status", resp.StatusCode),
+				zap.String("github_error", gitHubErrorMessage(err)),
+			)
 			return nil, &resourceSdk.SyncOpResults{}, nil
 		}
-		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list organization roles")
+		return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list organization roles for %s", orgName))
 	}
 
 	var ret []*v2.Resource
@@ -130,6 +135,7 @@ func (o *orgRoleResourceType) Grants(
 	resource *v2.Resource,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
+	l := ctxzap.Extract(ctx)
 	if resource == nil {
 		return nil, &resourceSdk.SyncOpResults{}, nil
 	}
@@ -169,13 +175,19 @@ func (o *orgRoleResourceType) Grants(
 		users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, listOpts)
 		if err != nil {
 			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+				l.Warn("insufficient access to list users assigned to org role, skipping",
+					zap.String("org", orgName),
+					zap.Int64("role_id", roleID),
+					zap.Int("http_status", resp.StatusCode),
+					zap.String("github_error", gitHubErrorMessage(err)),
+				)
 				pageToken, err := bag.NextToken("")
 				if err != nil {
 					return nil, nil, err
 				}
 				return rv, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
 			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list users assigned to org role")
+			return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list users assigned to org role %d in %s", roleID, orgName))
 		}
 		nextPage, respAnnos, err := parseResp(resp)
 		if err != nil {
@@ -215,14 +227,19 @@ func (o *orgRoleResourceType) Grants(
 		if err != nil {
 			// Handle permission errors without erroring out. Some customers may not want to give us permissions to get org roles and members.
 			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
-				// Return empty list with no error to indicate we skipped this resource
+				l.Warn("insufficient access to list teams assigned to org role, skipping",
+					zap.String("org", orgName),
+					zap.Int64("role_id", roleID),
+					zap.Int("http_status", resp.StatusCode),
+					zap.String("github_error", gitHubErrorMessage(err)),
+				)
 				pageToken, err := bag.NextToken("")
 				if err != nil {
 					return nil, nil, err
 				}
 				return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken}, nil
 			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list teams assigned to org role")
+			return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list teams assigned to org role %d in %s", roleID, orgName))
 		}
 
 		nextPage, respAnnos, err := parseResp(resp)

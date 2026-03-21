@@ -71,7 +71,7 @@ func (i *invitationResourceType) List(ctx context.Context, parentID *v2.Resource
 		if isNotFoundError(resp) {
 			return nil, &resourceSdk.SyncOpResults{}, nil
 		}
-		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list pending org invitations")
+		return nil, nil, wrapGitHubErrorWithContext(ctx, err, resp, fmt.Sprintf("github-connector: failed to list pending org invitations for %s", orgName))
 	}
 
 	restApiRateLimit, err := extractRateLimitData(resp)
