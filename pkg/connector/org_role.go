@@ -86,7 +86,7 @@ func (o *orgRoleResourceType) List(
 		// Handle permission errors gracefully
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 			l := ctxzap.Extract(ctx)
-			l.Warn("insufficient access to list organization roles, skipping",
+			l.Debug("insufficient access to list organization roles, skipping",
 				zap.String("org", orgName),
 				zap.Int("http_status", resp.StatusCode),
 				zap.String("github_error", gitHubErrorMessage(err)),
@@ -175,7 +175,7 @@ func (o *orgRoleResourceType) Grants(
 		if err != nil {
 			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 				l := ctxzap.Extract(ctx)
-				l.Warn("insufficient access to list users assigned to org role, skipping",
+				l.Debug("insufficient access to list users assigned to org role, skipping",
 					zap.String("org", orgName),
 					zap.Int64("role_id", roleID),
 					zap.Int("http_status", resp.StatusCode),
@@ -228,7 +228,7 @@ func (o *orgRoleResourceType) Grants(
 			// Handle permission errors without erroring out. Some customers may not want to give us permissions to get org roles and members.
 			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 				l := ctxzap.Extract(ctx)
-				l.Warn("insufficient access to list teams assigned to org role, skipping",
+				l.Debug("insufficient access to list teams assigned to org role, skipping",
 					zap.String("org", orgName),
 					zap.Int64("role_id", roleID),
 					zap.Int("http_status", resp.StatusCode),

@@ -198,7 +198,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 						l.Warn("failed to load enterprise email cache", zap.Error(loadErr))
 					}
 				} else {
-					l.Warn("GraphQL SAML identity query failed",
+					l.Debug("GraphQL SAML identity query failed",
 						zap.String("org", orgName),
 						zap.String("user", u.GetLogin()),
 						zap.Error(err),
