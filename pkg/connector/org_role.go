@@ -85,7 +85,12 @@ func (o *orgRoleResourceType) List(
 	if err != nil {
 		// Handle permission errors gracefully
 		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
-			// Return empty list with no error to indicate we skipped this resource
+			l := ctxzap.Extract(ctx)
+			l.Warn("insufficient access to list organization roles, skipping",
+				zap.String("org", orgName),
+				zap.Int("http_status", resp.StatusCode),
+				zap.String("github_error", gitHubErrorMessage(err)),
+			)
 			return nil, &resourceSdk.SyncOpResults{}, nil
 		}
 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list organization roles")
@@ -169,6 +174,13 @@ func (o *orgRoleResourceType) Grants(
 		users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, listOpts)
 		if err != nil {
 			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
+				l := ctxzap.Extract(ctx)
+				l.Warn("insufficient access to list users assigned to org role, skipping",
+					zap.String("org", orgName),
+					zap.Int64("role_id", roleID),
+					zap.Int("http_status", resp.StatusCode),
+					zap.String("github_error", gitHubErrorMessage(err)),
+				)
 				pageToken, err := bag.NextToken("")
 				if err != nil {
 					return nil, nil, err
@@ -215,7 +227,13 @@ func (o *orgRoleResourceType) Grants(
 		if err != nil {
 			// Handle permission errors without erroring out. Some customers may not want to give us permissions to get org roles and members.
 			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
-				// Return empty list with no error to indicate we skipped this resource
+				l := ctxzap.Extract(ctx)
+				l.Warn("insufficient access to list teams assigned to org role, skipping",
+					zap.String("org", orgName),
+					zap.Int64("role_id", roleID),
+					zap.Int("http_status", resp.StatusCode),
+					zap.String("github_error", gitHubErrorMessage(err)),
+				)
 				pageToken, err := bag.NextToken("")
 				if err != nil {
 					return nil, nil, err

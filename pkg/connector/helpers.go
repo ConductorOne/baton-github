@@ -303,6 +303,32 @@ func isTemporarilyUnavailable(resp *github.Response) bool {
 		resp.StatusCode == http.StatusGatewayTimeout
 }
 
+// gitHubErrorMessage extracts a human-readable error message from a GitHub API error.
+// For *github.ErrorResponse, it includes the HTTP method, URL path, message, and sub-error details.
+// For other error types, it returns err.Error().
+func gitHubErrorMessage(err error) string {
+	var ghErr *github.ErrorResponse
+	if errors.As(err, &ghErr) {
+		msg := ghErr.Message
+		if ghErr.Response != nil && ghErr.Response.Request != nil {
+			msg = fmt.Sprintf("%s %s: %s", ghErr.Response.Request.Method, ghErr.Response.Request.URL.Path, msg)
+		}
+		if len(ghErr.Errors) > 0 {
+			var errDetails []string
+			for _, e := range ghErr.Errors {
+				detail := e.Message
+				if detail == "" {
+					detail = fmt.Sprintf("resource=%s field=%s code=%s", e.Resource, e.Field, e.Code)
+				}
+				errDetails = append(errDetails, detail)
+			}
+			msg = fmt.Sprintf("%s [%s]", msg, strings.Join(errDetails, "; "))
+		}
+		return msg
+	}
+	return err.Error()
+}
+
 // wrapGitHubError wraps GitHub API errors with appropriate gRPC status codes based on the HTTP response.
 // It handles rate limiting, authentication errors, permission errors, and generic errors.
 // The contextMsg parameter should describe the operation that failed (e.g., "failed to list teams").
@@ -337,10 +363,10 @@ func wrapGitHubError(err error, resp *github.Response, contextMsg string) error 
 	}
 
 	if isAuthError(resp) {
-		return uhttp.WrapErrors(codes.Unauthenticated, contextMsg, err)
+		return uhttp.WrapErrors(codes.Unauthenticated, fmt.Sprintf("%s: %s", contextMsg, gitHubErrorMessage(err)), err)
 	}
 	if isPermissionError(resp) {
-		return uhttp.WrapErrors(codes.PermissionDenied, contextMsg, err)
+		return uhttp.WrapErrors(codes.PermissionDenied, fmt.Sprintf("%s: %s", contextMsg, gitHubErrorMessage(err)), err)
 	}
 	return fmt.Errorf("%s: %w", contextMsg, err)
 }

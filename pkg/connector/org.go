@@ -126,7 +126,10 @@ func (o *orgResourceType) List(
 		membership, resp, err := o.client.Organizations.GetOrgMembership(ctx, "", org.GetLogin())
 		if err != nil {
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
-				l.Warn("insufficient access to list org membership, skipping org", zap.String("org", org.GetLogin()))
+				l.Warn("insufficient access to list org membership, skipping org",
+				zap.String("org", org.GetLogin()),
+				zap.String("github_error", gitHubErrorMessage(err)),
+			)
 				continue
 			}
 			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get org membership")
