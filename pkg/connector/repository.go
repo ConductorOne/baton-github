@@ -178,7 +178,7 @@ func (o *repositoryResourceType) Grants(
 		users, resp, err := o.client.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, listOpts)
 		if err != nil {
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
-				l.Warn("insufficient access to list collaborators, skipping",
+				l.Debug("insufficient access to list collaborators, skipping",
 					zap.String("org", orgName),
 					zap.String("repository", resource.DisplayName),
 					zap.String("github_error", gitHubErrorMessage(err)),
@@ -233,7 +233,7 @@ func (o *repositoryResourceType) Grants(
 		teams, resp, err := o.client.Repositories.ListTeams(ctx, orgName, resource.DisplayName, listOpts)
 		if err != nil {
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
-				l.Warn("insufficient access to list teams for repository, skipping",
+				l.Debug("insufficient access to list teams for repository, skipping",
 					zap.String("org", orgName),
 					zap.String("repository", resource.DisplayName),
 					zap.String("github_error", gitHubErrorMessage(err)),
