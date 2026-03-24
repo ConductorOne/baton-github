@@ -132,6 +132,29 @@ git add baton_capabilities.json config_schema.json docs/connector.mdx
 
 ## Verify workflow failures
 
+### MDX documentation validation failures
+
+**When**: The `Verify / docs` job fails with "MDX compilation failed."
+
+**Cause**: `docs/connector.mdx` has syntax that the MDX compiler can't parse. The verify workflow compiles the MDX using the same compiler the registry uses to generate documentation HTML.
+
+**Common causes and fixes**:
+
+| Error | Cause | Fix |
+|-|-|-|
+| `Expected component 'X' to be defined` | Unknown component tag | Use only: `Tip`, `Warning`, `Note`, `Info`, `Icon`, `Steps`, `Step`, `Tabs`, `Tab`, `Frame`, `Card` |
+| `Expected the closing tag after the end of 'listItem'` | Closing tag (e.g. `</Warning>`) indented inside a list item | Move the closing tag to column 0 (no indentation) |
+| `Unexpected closing tag` | Mismatched open/close tags | Check that every `<Tip>` has `</Tip>`, etc. |
+| `Could not parse expression` | Bare curly braces `{` `}` in text | Escape as `\{` `\}` or wrap in backticks |
+
+**Fix**: Run the MDX compiler locally to see the full error:
+
+```bash
+npx --yes @mdx-js/mdx < docs/connector.mdx
+```
+
+**Key rule for MDX**: Block-level custom component tags (`<Tip>`, `</Warning>`, etc.) must start at column 0 — no leading whitespace. Indented closing tags are the most common cause of failures.
+
 ### Lint failures
 
 **When**: The `Verify / lint` job fails.
