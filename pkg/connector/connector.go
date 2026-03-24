@@ -446,11 +446,6 @@ func getJWTToken(appID string, privateKey string) (string, error) {
 func findInstallation(ctx context.Context, c *github.Client, orgName string) (*github.Installation, error) {
 	installation, resp, err := c.Apps.FindOrganizationInstallation(ctx, orgName)
 	if err != nil {
-		l := ctxzap.Extract(ctx)
-		l.Warn("failed to find GitHub App installation",
-			zap.String("org", orgName),
-			zap.String("github_error", gitHubErrorMessage(err)),
-		)
 		return nil, wrapGitHubError(err, resp, fmt.Sprintf("github-connector: failed to find installation for org %s", orgName))
 	}
 	return installation, nil

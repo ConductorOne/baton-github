@@ -198,11 +198,6 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 						l.Warn("failed to load enterprise email cache", zap.Error(loadErr))
 					}
 				} else {
-					l.Debug("GraphQL SAML identity query failed",
-						zap.String("org", orgName),
-						zap.String("user", u.GetLogin()),
-						zap.Error(err),
-					)
 					return nil, nil, fmt.Errorf("baton-github: GraphQL SAML identity query failed for user %s in org %s: %w", u.GetLogin(), orgName, err)
 				}
 			}

@@ -13,8 +13,6 @@ import (
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 )
 
@@ -60,13 +58,6 @@ func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
 		for continuePagination {
 			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
 			if err != nil {
-				l := ctxzap.Extract(ctx)
-				l.Warn("failed to list enterprise consumed licenses",
-					zap.String("enterprise", enterprise),
-					zap.Int("page", page),
-					zap.String("endpoint", fmt.Sprintf("GET /enterprises/%s/consumed-licenses", enterprise)),
-					zap.Error(err),
-				)
 				return uhttp.WrapErrors(codes.PermissionDenied, fmt.Sprintf("baton-github: error listing enterprise consumed licenses for %s", enterprise), err)
 			}
 
