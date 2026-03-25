@@ -24,6 +24,7 @@ import (
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
+	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -445,20 +446,30 @@ func getJWTToken(appID string, privateKey string) (string, error) {
 func findInstallation(ctx context.Context, c *github.Client, orgName string) (*github.Installation, error) {
 	installation, resp, err := c.Apps.FindOrganizationInstallation(ctx, orgName)
 	if err != nil {
-		return nil, wrapGitHubError(err, resp, "github-connector: failed to find installation")
+		return nil, wrapGitHubError(err, resp, fmt.Sprintf("github-connector: failed to find installation for org %s", orgName))
 	}
 	return installation, nil
 }
 
 func getInstallationToken(ctx context.Context, c *github.Client, id int64) (*github.InstallationToken, error) {
+	l := ctxzap.Extract(ctx)
 	token, resp, err := c.Apps.CreateInstallationToken(ctx, id, &github.InstallationTokenOptions{})
 	if err != nil {
-		return nil, err
+		l.Warn("failed to create GitHub App installation token",
+			zap.Int64("installation_id", id),
+			zap.String("github_error", gitHubErrorMessage(err)),
+		)
+		return nil, fmt.Errorf("github-connector: failed to create installation token for installation %d: %w", id, err)
 	}
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API error: %s", body)
+		l.Warn("unexpected status creating GitHub App installation token",
+			zap.Int64("installation_id", id),
+			zap.Int("http_status", resp.StatusCode),
+			zap.String("response_body", string(body)),
+		)
+		return nil, fmt.Errorf("github-connector: unexpected status %d creating installation token for installation %d: %s", resp.StatusCode, id, body)
 	}
 
 	return token, nil

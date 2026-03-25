@@ -198,7 +198,7 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 						l.Warn("failed to load enterprise email cache", zap.Error(loadErr))
 					}
 				} else {
-					return nil, nil, err
+					return nil, nil, fmt.Errorf("baton-github: GraphQL SAML identity query failed for user %s in org %s: %w", u.GetLogin(), orgName, err)
 				}
 			}
 			if err == nil && len(q.Organization.SamlIdentityProvider.ExternalIdentities.Edges) == 1 {
@@ -362,6 +362,12 @@ func (o *userResourceType) loadEnterpriseEmailCache(ctx context.Context, ss sess
 		for {
 			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
 			if err != nil {
+				l.Warn("failed to fetch enterprise consumed licenses",
+					zap.String("enterprise", enterprise),
+					zap.Int("page", page),
+					zap.String("endpoint", fmt.Sprintf("GET /enterprises/%s/consumed-licenses", enterprise)),
+					zap.Error(err),
+				)
 				// Mark as loaded so we don't retry; partial data is still available.
 				_ = session.SetJSON(ctx, ss, enterpriseEmailCacheLoadedKey, true)
 				return fmt.Errorf("baton-github: failed to fetch enterprise consumed licenses for %s (page %d): %w", enterprise, page, err)
@@ -440,7 +446,11 @@ func (o *userResourceType) hasSAML(ctx context.Context, orgName string, ss sessi
 			}
 			return false, nil
 		}
-		return false, err
+		l.Warn("GraphQL SAML provider query failed",
+			zap.String("org", orgName),
+			zap.Error(err),
+		)
+		return false, fmt.Errorf("baton-github: GraphQL SAML provider query failed for org %s: %w", orgName, err)
 	}
 	if q.Organization.SamlIdentityProvider.Id != "" {
 		samlBool = true
