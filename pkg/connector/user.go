@@ -229,6 +229,11 @@ func (o *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 			// the user has a SAML identity, use it. If not, leave email blank
 			// rather than using the REST API public email, which is not a
 			// corporate identity.
+			// Ensure the cache is loaded — it may have been cleared between syncs
+			// since the session store is per-sync but hasSAMLEnabled persists on the struct.
+			if loadErr := o.loadEnterpriseEmailCache(ctx, opts.Session); loadErr != nil {
+				l.Warn("failed to load enterprise email cache", zap.Error(loadErr))
+			}
 			userEmail = o.getEnterpriseSAMLEmail(ctx, opts.Session, u.GetLogin())
 			if userEmail != "" {
 				l.Debug("enriched user email from enterprise consumed licenses",
