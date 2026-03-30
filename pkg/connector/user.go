@@ -361,44 +361,43 @@ func (o *userResourceType) loadEnterpriseEmailCache(ctx context.Context, ss sess
 		return nil
 	}
 
-	userCount := 0
-	for _, enterprise := range o.enterprises {
-		page := 1
-		for {
-			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
-			if err != nil {
-				// Mark as loaded so we don't retry; partial data is still available.
-				_ = session.SetJSON(ctx, ss, enterpriseEmailCacheLoadedKey, true)
-				return fmt.Errorf("baton-github: failed to fetch enterprise consumed licenses for %s (page %d): %w", enterprise, page, err)
-			}
+	allUsers := make(map[string]*enterpriseEmailInfo)
+	enterprise := o.enterprises[0]
+	page := 1
+	for {
+		consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
+		if err != nil {
+			_ = session.SetJSON(ctx, ss, enterpriseEmailCacheLoadedKey, true)
+			return fmt.Errorf("baton-github: failed to fetch enterprise consumed licenses for %s (page %d): %w", enterprise, page, err)
+		}
 
-			if len(consumedLicenses.Users) == 0 {
-				break
-			}
+		if len(consumedLicenses.Users) == 0 {
+			break
+		}
 
-			batch := make(map[string]*enterpriseEmailInfo, len(consumedLicenses.Users))
-			for _, user := range consumedLicenses.Users {
-				if user.GitHubComLogin == "" {
-					continue
-				}
-				info := &enterpriseEmailInfo{}
-				if user.GitHubComSAMLNameID != nil {
-					info.SAMLNameID = *user.GitHubComSAMLNameID
-				}
-				key := enterpriseEmailPrefix + strings.ToLower(user.GitHubComLogin)
-				batch[key] = info
+		for _, user := range consumedLicenses.Users {
+			if user.GitHubComLogin == "" {
+				continue
 			}
-			if err := session.SetManyJSON(ctx, ss, batch); err != nil {
-				_ = session.SetJSON(ctx, ss, enterpriseEmailCacheLoadedKey, true)
-				return fmt.Errorf("baton-github: failed to store enterprise email batch for %s (page %d): %w", enterprise, page, err)
+			info := &enterpriseEmailInfo{}
+			if user.GitHubComSAMLNameID != nil {
+				info.SAMLNameID = *user.GitHubComSAMLNameID
 			}
-			userCount += len(batch)
-			page++
+			key := enterpriseEmailPrefix + strings.ToLower(user.GitHubComLogin)
+			allUsers[key] = info
+		}
+		page++
+	}
+
+	if len(allUsers) > 0 {
+		if err := session.SetManyJSON(ctx, ss, allUsers); err != nil {
+			_ = session.SetJSON(ctx, ss, enterpriseEmailCacheLoadedKey, true)
+			return fmt.Errorf("baton-github: failed to store enterprise email cache: %w", err)
 		}
 	}
 
 	l.Info("loaded enterprise email cache",
-		zap.Int("user_count", userCount))
+		zap.Int("user_count", len(allUsers)))
 	_ = session.SetJSON(ctx, ss, enterpriseEmailCacheLoadedKey, true)
 	return nil
 }
