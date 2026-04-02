@@ -100,7 +100,6 @@ type GitHub struct {
 	customClient             *customclient.Client
 	instanceURL              string
 	graphqlClient            *githubv4.Client
-	hasSAMLEnabled           *bool
 	orgCache                 *orgNameCache
 	syncSecrets              bool
 	omitArchivedRepositories bool
@@ -111,7 +110,7 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	resourceSyncers := []connectorbuilder.ResourceSyncerV2{
 		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
 		teamBuilder(gh.client, gh.orgCache),
-		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises),
+		userBuilder(gh.client, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises),
 		repositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories),
 		orgRoleBuilder(gh.client, gh.orgCache),
 		invitationBuilder(invitationBuilderParams{
@@ -122,7 +121,7 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	}
 
 	if gh.syncSecrets {
-		resourceSyncers = append(resourceSyncers, apiTokenBuilder(gh.client, gh.hasSAMLEnabled, gh.orgCache))
+		resourceSyncers = append(resourceSyncers, apiTokenBuilder(gh.client, gh.orgCache))
 	}
 
 	if len(gh.enterprises) > 0 {
@@ -228,6 +227,14 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 	if err != nil {
 		return nil, err
 	}
+
+	if len(gh.enterprises) > 0 {
+		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
+		if err != nil {
+			return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: failed to access enterprise licenses (GitHub App installations cannot access this endpoint — use a PAT with enterprise admin scope)", err)
+		}
+	}
+
 	return nil, nil
 }
 

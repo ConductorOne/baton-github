@@ -47,7 +47,6 @@ func TestUsersList(t *testing.T) {
 			cache := newOrgNameCache(githubClient)
 			client := userBuilder(
 				githubClient,
-				testCase.hasSamlEnabled,
 				graphQLClient,
 				cache,
 				[]string{organization.DisplayName},

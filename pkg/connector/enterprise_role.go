@@ -53,7 +53,9 @@ func (o *enterpriseRoleResourceType) getRoleUsersCache(ctx context.Context) (map
 
 func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
 	for _, enterprise := range o.enterprises {
-		page := 0
+		// GitHub's consumed-licenses API is 1-indexed; page 0 is undocumented
+		// and may return the same results as page 1, causing duplicates.
+		page := 1
 		continuePagination := true
 		for continuePagination {
 			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)

@@ -1,3 +1,4 @@
+//nolint:gosec // We don't care about XSS in mock data for tests.
 package mocks
 
 import (
