@@ -231,7 +231,12 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 	if len(gh.enterprises) > 0 {
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
 		if err != nil {
-			return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: failed to access enterprise licenses (GitHub App installations cannot access this endpoint — use a PAT with enterprise admin scope)", err)
+			return nil, uhttp.WrapErrors(
+				codes.PermissionDenied,
+				"github-connector: failed to access enterprise licenses"+
+					" (GitHub App installations cannot access this endpoint — use a PAT with enterprise admin scope)",
+				err,
+			)
 		}
 	}
 

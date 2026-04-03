@@ -212,6 +212,8 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 		var extraEmails []string
 
 		switch currentSAMLState {
+		case samlStateUnknown:
+			return nil, nil, fmt.Errorf("baton-github: unexpected unknown SAML state for org %s", orgName)
 		case samlStateOrgEnabled:
 			q := listUsersQuery{}
 			variables := map[string]interface{}{
