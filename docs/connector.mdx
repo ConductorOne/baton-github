@@ -1,13 +1,13 @@
 ---
 title: "Set up a GitHub connector"
 og:title: "Set up a GitHub connector"
-description: "ConductorOne provides identity governance and just-in-time provisioning for GitHub. Integrate your GitHub instance with ConductorOne to run user access reviews (UARs), enable just-in-time access requests, and automatically provision and deprovision access."
-og:description: "ConductorOne provides identity governance and just-in-time provisioning for GitHub. Integrate your GitHub instance with ConductorOne to run user access reviews (UARs), enable just-in-time access requests, and automatically provision and deprovision access."
+description: "C1 provides identity governance and just-in-time provisioning for GitHub. Integrate your GitHub instance with C1 to run user access reviews (UARs), enable just-in-time access requests, and automatically provision and deprovision access."
+og:description: "C1 provides identity governance and just-in-time provisioning for GitHub. Integrate your GitHub instance with C1 to run user access reviews (UARs), enable just-in-time access requests, and automatically provision and deprovision access."
 sidebarTitle: "GitHub"
 ---
 
 <Tip>
-**This is an updated and improved version of the GitHub integration!** The v2 version of the GitHub integration adds provisioning support for repositories and modernizes the underlying architecture. If you're setting up a GitHub connector with ConductorOne for the first time, you're in the right place.
+**This is an updated and improved version of the GitHub integration!** The v2 version of the GitHub integration adds provisioning support for repositories and modernizes the underlying architecture. If you're setting up a GitHub connector with C1 for the first time, you're in the right place.
 
 Use this integration if your organization accesses GitHub at `github.com`. If you use a custom domain, follow the instructions to set up the [GitHub Enterprise](/baton/github-enterprise) integration.
 </Tip>
@@ -16,15 +16,15 @@ Use this integration if your organization accesses GitHub at `github.com`. If yo
 
 | Resource | Sync | Provision |
 | :--- | :--- | :--- |
-| Accounts | <Icon icon="square-check" iconType="solid"  color="#65DE23"/> | <Icon icon="square-check" iconType="solid"  color="#65DE23"/> |
-| Repositories | <Icon icon="square-check" iconType="solid"  color="#65DE23"/> | <Icon icon="square-check" iconType="solid"  color="#65DE23"/> |
-| Teams | <Icon icon="square-check" iconType="solid"  color="#65DE23"/> | <Icon icon="square-check" iconType="solid"  color="#65DE23"/> |
-| Orgs | <Icon icon="square-check" iconType="solid"  color="#65DE23"/> | <Icon icon="square-check" iconType="solid"  color="#65DE23"/> |
-| Secrets - API keys | <Icon icon="square-check" iconType="solid"  color="#65DE23"/> |  |
+| Accounts | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
+| Repositories | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
+| Teams | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
+| Orgs | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
+| Secrets - API keys | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |  |
 
 The GitHub connector supports [automatic account provisioning and deprovisioning](/product/admin/account-provisioning). New accounts will send an invitation to the account owner; if an invitation is pending, the account status will be shown as **Unspecified**. 
 
-Repository permissions that are inherited through team membership are labeled as such on the relevant entitlement's **Grants** tab in the ConductorOne web app. 
+Repository permissions that are inherited through team membership are labeled as such on the relevant entitlement's **Grants** tab in the C1 web app. 
 
 [This connector can sync secrets](/product/admin/inventory) and display them on the **Inventory** page. 
 
@@ -60,17 +60,17 @@ Click **Personal access tokens > Tokens (classic)**.
 Click **Generate new token > Generate new token (classic)**.
 </Step>
 <Step>
-Name your token (for example, **ConductorOne Integration**). Optionally, add a token expiration date.
+Name your token (for example, **C1 Integration**). Optionally, add a token expiration date.
 </Step>
 <Step>
 Select the following **Scopes:**
 
    - **repo** - select all
-   - **admin:org** - select all if using ConductorOne for GitHub provisioning (see the note below), or **read::org** otherwise
+   - **admin:org** - select all if using C1 for GitHub provisioning (see the note below), or **read::org** otherwise
    - **user** - select all
 
    <Warning>
-   The **write::org** scope is used by ConductorOne when automatically provisioning and deprovisioning GitHub access on your behalf. **If you do not want ConductorOne to perform these tasks for you, do not give your token this scope.**
+   The **write::org** scope is used by C1 when automatically provisioning and deprovisioning GitHub access on your behalf. **If you do not want C1 to perform these tasks for you, do not give your token this scope.**
    </Warning>
 </Step>
 <Step>
@@ -110,7 +110,7 @@ Click **Personal access tokens > Fine-grained tokens**.
 Click **Generate new token**.
 </Step>
 <Step>
-Name your token (for example, **ConductorOne Integration**) and set a token expiration date. Optionally, add a description.
+Name your token (for example, **C1 Integration**) and set a token expiration date. Optionally, add a description.
 </Step>
 <Step>
 In the **Resource owner** dropdown, select a resource owner. The token is able to access resources owned by the selected resource owner. Organizations will not appear unless they have opted in to fine-grained personal access tokens.
@@ -132,7 +132,7 @@ In the **Permissions** section of the page, give the token the following permiss
      - **Metadata**: Read-only access
 
    <Warning>
-   The repository permissions are used by ConductorOne to sync and display data on repo membership, and to provision repository permissions for GitHub accounts. **If you do not want ConductorOne to sync and display your GitHub organization's repo data, do not give your token these permissions.**
+   The repository permissions are used by C1 to sync and display data on repo membership, and to provision repository permissions for GitHub accounts. **If you do not want C1 to sync and display your GitHub organization's repo data, do not give your token these permissions.**
    </Warning>
 </Step>
 <Step>
@@ -146,12 +146,12 @@ Click **Generate token**. Carefully copy and save the new token.
 
 Follow these instructions to integrate your GitHub instance by using a [GitHub app](https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/about-creating-github-apps).
 
-This process creates a GitHub app that is only available to your GitHub organization, then generates an installation token for that app, which can be used to integrate the GitHub organization with ConductorOne. This creates the equivalent of a personal access token, but does not tie the token to a specific identity.
+This process creates a GitHub app that is only available to your GitHub organization, then generates an installation token for that app, which can be used to integrate the GitHub organization with C1. This creates the equivalent of a personal access token, but does not tie the token to a specific identity.
 
-**If you want to integrate multiple GitHub organizations with ConductorOne, you must create an app and set up a connector for each one.**
+**If you want to integrate multiple GitHub organizations with C1, you must create an app and set up a connector for each one.**
 
 <Warning>
-A user with the **Org Owner** permission in the GitHub organization to be integrated with ConductorOne must perform this task.
+A user with the **Org Owner** permission in the GitHub organization to be integrated with C1 must perform this task.
 </Warning>
 
 <Steps>
@@ -237,17 +237,17 @@ Click **Install**.
 <Warning>
 To complete this task, you'll need:
 
-- The **Connector Administrator** or **Super Administrator** role in ConductorOne
+- The **Connector Administrator** or **Super Administrator** role in C1
 - Access to the set of GitHub credentials generated by following the instructions above
 </Warning>
 
 <Tabs>
 <Tab title="Cloud-hosted">
-**Follow these instructions to use a built-in, no-code connector hosted by ConductorOne.**
+**Follow these instructions to use a built-in, no-code connector hosted by C1.**
 
 <Steps>
 <Step>
-In ConductorOne, navigate to **Integrations** > **Connectors** and click **Add connector**.
+In C1, navigate to **Integrations** > **Connectors** and click **Add connector**.
 </Step>
 <Step>
 Search for **GitHub v2** and click **Add**.
@@ -255,16 +255,16 @@ Search for **GitHub v2** and click **Add**.
 <Step>
 Choose how to set up the new GitHub connector:
 
-   * Add the connector to a currently unmanaged app (select from the list of apps that were discovered in your identity, SSO, or federation provider that aren't yet managed with ConductorOne)
+   * Add the connector to a currently unmanaged app (select from the list of apps that were discovered in your identity, SSO, or federation provider that aren't yet managed with C1)
 
    * Add the connector to a managed app (select from the list of existing managed apps)
 
    * Create a new managed app
 </Step>
 <Step>
-Set the owner for this connector. You can manage the connector yourself, or choose someone else from the list of ConductorOne users. Setting multiple owners is allowed.
+Set the owner for this connector. You can manage the connector yourself, or choose someone else from the list of C1 users. Setting multiple owners is allowed.
 
-   If you choose someone else, ConductorOne will notify the new connector owner by email that their help is needed to complete the setup process.
+   If you choose someone else, C1 will notify the new connector owner by email that their help is needed to complete the setup process.
 </Step>
 <Step>
 Click **Next**.
@@ -279,7 +279,7 @@ If you're using a personal access token to set up the connector:
 
     1. Paste the token you generated into the **Personal access token** field.
 
-    1. **Optional.** If you want to sync only specific GitHub organizations, enter the organizations' names in the **Orgs** field. If you do not specify specific organizations, ConductorOne will sync all organizations.
+    1. **Optional.** If you want to sync only specific GitHub organizations, enter the organizations' names in the **Orgs** field. If you do not specify specific organizations, C1 will sync all organizations.
 
     1. **Optional.** If you do not want to include archived repos in syncs, click to enable **Omit archived repositories**.
 </Step>
@@ -306,25 +306,25 @@ The connector's label changes to **Syncing**, followed by **Connected**. You can
 </Step>
 </Steps>
 
-**That's it!** Your GitHub connector is now pulling access data into ConductorOne.
+**That's it!** Your GitHub connector is now pulling access data into C1.
 </Tab>
 
 <Tab title="Self-hosted">
 **Follow these instructions to use the GitHub connector, hosted and run in your own environment.** 
 
-When running in service mode on Kubernetes, a self-hosted connector maintains an ongoing connection with ConductorOne, automatically syncing and uploading data at regular intervals. This data is immediately available in the ConductorOne UI for access reviews and access requests.
+When running in service mode on Kubernetes, a self-hosted connector maintains an ongoing connection with C1, automatically syncing and uploading data at regular intervals. This data is immediately available in the C1 UI for access reviews and access requests.
 
 ### Resources
 
 * [Official download center](https://dist.conductorone.com/ConductorOne/baton-github): For stable binaries (Windows/Linux/macOS) and container images.
 
-* [GitHub repository](https://github.com/ConductorOne/baton-github): Access the source code, report issues, or contribute to the project.
+* [GitHub repository](https://github.com/conductorone/baton-github): Access the source code, report issues, or contribute to the project.
 
 ### Step 1: Set up a new GitHub connector
 
 <Steps>
 <Step>
-In ConductorOne, navigate to **Integrations** > **Connectors** > **Add connector**.
+In C1, navigate to **Integrations** > **Connectors** > **Add connector**.
 </Step>
 <Step>
 Search for **Baton** and click **Add**.
@@ -332,16 +332,16 @@ Search for **Baton** and click **Add**.
 <Step>
 Choose how to set up the new GitHub connector:
 
-   * Add the connector to a currently unmanaged app (select from the list of apps that were discovered in your identity, SSO, or federation provider that aren't yet managed with ConductorOne)
+   * Add the connector to a currently unmanaged app (select from the list of apps that were discovered in your identity, SSO, or federation provider that aren't yet managed with C1)
 
    * Add the connector to a managed app (select from the list of existing managed apps)
 
    * Create a new managed app
 </Step>
 <Step>
-Set the owner for this connector. You can manage the connector yourself, or choose someone else from the list of ConductorOne users. Setting multiple owners is allowed.
+Set the owner for this connector. You can manage the connector yourself, or choose someone else from the list of C1 users. Setting multiple owners is allowed.
 
-   If you choose someone else, ConductorOne will notify the new connector owner by email that their help is needed to complete the setup process.
+   If you choose someone else, C1 will notify the new connector owner by email that their help is needed to complete the setup process.
 </Step>
 <Step>
 Click **Next**.
@@ -370,9 +370,9 @@ metadata:
   name: baton-github-secrets
 type: Opaque
 stringData:
-  # ConductorOne credentials
-  BATON_CLIENT_ID: <ConductorOne client ID>
-  BATON_CLIENT_SECRET: <ConductorOne client secret>
+  # C1 credentials
+  BATON_CLIENT_ID: <C1 client ID>
+  BATON_CLIENT_SECRET: <C1 client secret>
   
   # GitHub credentials if configuring with an access token
   BATON_TOKEN: <GitHub access token>
@@ -383,7 +383,7 @@ stringData:
   BATON_APP_PRIVATEKEY_PATH: <Path to the private key file for the GitHub app>
   BATON_ORGS: <Name of the single GitHib org the app was created for>
 
-  # Optional: include if you want ConductorOne to provision access using this connector
+  # Optional: include if you want C1 to provision access using this connector
   BATON_PROVISIONING: true
 
   # Optional: include if you do not want to sync archived repos
@@ -429,14 +429,14 @@ spec:
 
 <Steps>
 <Step>
-Create a namespace in which to run ConductorOne connectors (if desired), then apply the secret config and deployment config files.
+Create a namespace in which to run C1 connectors (if desired), then apply the secret config and deployment config files.
 </Step>
 <Step>
-Check that the connector data uploaded correctly. In ConductorOne, click **Apps**. On the **Managed apps** tab, locate and click the name of the application you added the GitHub connector to. GitHub data should be found on the **Entitlements** and **Accounts** tabs.
+Check that the connector data uploaded correctly. In C1, click **Apps**. On the **Managed apps** tab, locate and click the name of the application you added the GitHub connector to. GitHub data should be found on the **Entitlements** and **Accounts** tabs.
 </Step>
 </Steps>
 
-**That's it!** Your GitHub connector is now pulling access data into ConductorOne.
+**That's it!** Your GitHub connector is now pulling access data into C1.
 </Tab>
 </Tabs>
 
