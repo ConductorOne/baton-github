@@ -152,7 +152,7 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	if currentSAMLState == samlStateEnterprise {
 		if !u.enterpriseSAMLFetched {
 			if err := u.fetchAndStoreEnterpriseSAML(ctx, opts.Session); err != nil {
-				l.Warn("failed to fetch enterprise SAML emails, falling back to REST API emails",
+				l.Debug("failed to fetch enterprise SAML emails, falling back to REST API emails",
 					zap.Error(err))
 				u.enterpriseSAMLFetched = true
 				u.samlStates[orgName] = samlStateDisabled

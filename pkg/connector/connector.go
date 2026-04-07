@@ -221,7 +221,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		l := ctxzap.Extract(ctx)
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
 		if err != nil {
-			l.Warn("failed to access enterprise consumed licenses — enterprise SAML email enrichment and enterprise role sync will be skipped",
+			l.Debug("failed to access enterprise consumed licenses — enterprise SAML email enrichment and enterprise role sync will be skipped",
 				zap.Error(err))
 		} else {
 			gh.enterpriseLicensesAvailable = true
@@ -245,7 +245,7 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 		l := ctxzap.Extract(ctx)
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
 		if err != nil {
-			l.Warn("failed to access enterprise consumed licenses — enterprise SAML email enrichment and enterprise role sync will be skipped"+
+			l.Debug("failed to access enterprise consumed licenses — enterprise SAML email enrichment and enterprise role sync will be skipped"+
 				" (GitHub App installations cannot access this endpoint — use a PAT with enterprise admin scope)",
 				zap.Error(err))
 		} else {
