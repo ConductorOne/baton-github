@@ -104,22 +104,13 @@ type GitHub struct {
 	syncSecrets                 bool
 	omitArchivedRepositories    bool
 	enterprises                 []string
-	enterpriseLicensesAvailable bool // set during Validate; guards enterprise role sync and SAML enrichment
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
-	// Only pass enterprises to builders that need them if the consumed-licenses
-	// API is confirmed accessible. Otherwise, skip enterprise SAML enrichment
-	// and enterprise role sync gracefully.
-	var activeEnterprises []string
-	if gh.enterpriseLicensesAvailable {
-		activeEnterprises = gh.enterprises
-	}
-
 	resourceSyncers := []connectorbuilder.ResourceSyncerV2{
 		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
 		teamBuilder(gh.client, gh.orgCache),
-		userBuilder(gh.client, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, activeEnterprises),
+		userBuilder(gh.client, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises),
 		repositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories),
 		orgRoleBuilder(gh.client, gh.orgCache),
 		invitationBuilder(invitationBuilderParams{
@@ -133,8 +124,8 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 		resourceSyncers = append(resourceSyncers, apiTokenBuilder(gh.client, gh.orgCache))
 	}
 
-	if len(activeEnterprises) > 0 {
-		resourceSyncers = append(resourceSyncers, enterpriseRoleBuilder(gh.client, gh.customClient, activeEnterprises))
+	if len(gh.enterprises) > 0 {
+		resourceSyncers = append(resourceSyncers, enterpriseRoleBuilder(gh.client, gh.customClient, gh.enterprises))
 	}
 	return resourceSyncers
 }
@@ -221,10 +212,8 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		l := ctxzap.Extract(ctx)
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
 		if err != nil {
-			l.Debug("failed to access enterprise consumed licenses — enterprise SAML email enrichment and enterprise role sync will be skipped",
+			l.Debug("enterprise consumed licenses API is not accessible — enterprise SAML email enrichment and enterprise role sync may fail at sync time",
 				zap.Error(err))
-		} else {
-			gh.enterpriseLicensesAvailable = true
 		}
 	}
 	return nil, nil
@@ -245,11 +234,9 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 		l := ctxzap.Extract(ctx)
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
 		if err != nil {
-			l.Debug("failed to access enterprise consumed licenses — enterprise SAML email enrichment and enterprise role sync will be skipped"+
+			l.Debug("enterprise consumed licenses API is not accessible — enterprise SAML email enrichment and enterprise role sync may fail at sync time"+
 				" (GitHub App installations cannot access this endpoint — use a PAT with enterprise admin scope)",
 				zap.Error(err))
-		} else {
-			gh.enterpriseLicensesAvailable = true
 		}
 	}
 
