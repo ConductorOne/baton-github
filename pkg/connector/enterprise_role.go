@@ -11,9 +11,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
-	"google.golang.org/grpc/codes"
 )
 
 type enterpriseRoleResourceType struct {
@@ -53,12 +51,14 @@ func (o *enterpriseRoleResourceType) getRoleUsersCache(ctx context.Context) (map
 
 func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
 	for _, enterprise := range o.enterprises {
-		page := 0
+		// GitHub's consumed-licenses API is 1-indexed; page 0 is undocumented
+		// and may return the same results as page 1, causing duplicates.
+		page := 1
 		continuePagination := true
 		for continuePagination {
 			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
 			if err != nil {
-				return uhttp.WrapErrors(codes.PermissionDenied, fmt.Sprintf("baton-github: error listing enterprise consumed licenses for %s", enterprise), err)
+				return fmt.Errorf("baton-github: error listing enterprise consumed licenses for %s: %w", enterprise, err)
 			}
 
 			if len(consumedLicenses.Users) == 0 {

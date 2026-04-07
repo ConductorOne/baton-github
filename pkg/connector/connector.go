@@ -94,24 +94,32 @@ var (
 )
 
 type GitHub struct {
-	orgs                     []string
-	client                   *github.Client
-	appClient                *github.Client
-	customClient             *customclient.Client
-	instanceURL              string
-	graphqlClient            *githubv4.Client
-	hasSAMLEnabled           *bool
-	orgCache                 *orgNameCache
-	syncSecrets              bool
-	omitArchivedRepositories bool
-	enterprises              []string
+	orgs                        []string
+	client                      *github.Client
+	appClient                   *github.Client
+	customClient                *customclient.Client
+	instanceURL                 string
+	graphqlClient               *githubv4.Client
+	orgCache                    *orgNameCache
+	syncSecrets                 bool
+	omitArchivedRepositories    bool
+	enterprises                 []string
+	enterpriseLicensesAvailable bool // set during Validate; guards enterprise role sync and SAML enrichment
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
+	// Only pass enterprises to builders that need them if the consumed-licenses
+	// API is confirmed accessible. Otherwise, skip enterprise SAML enrichment
+	// and enterprise role sync gracefully.
+	var activeEnterprises []string
+	if gh.enterpriseLicensesAvailable {
+		activeEnterprises = gh.enterprises
+	}
+
 	resourceSyncers := []connectorbuilder.ResourceSyncerV2{
 		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
 		teamBuilder(gh.client, gh.orgCache),
-		userBuilder(gh.client, gh.hasSAMLEnabled, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises),
+		userBuilder(gh.client, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, activeEnterprises),
 		repositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories),
 		orgRoleBuilder(gh.client, gh.orgCache),
 		invitationBuilder(invitationBuilderParams{
@@ -122,11 +130,11 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	}
 
 	if gh.syncSecrets {
-		resourceSyncers = append(resourceSyncers, apiTokenBuilder(gh.client, gh.hasSAMLEnabled, gh.orgCache))
+		resourceSyncers = append(resourceSyncers, apiTokenBuilder(gh.client, gh.orgCache))
 	}
 
-	if len(gh.enterprises) > 0 {
-		resourceSyncers = append(resourceSyncers, enterpriseRoleBuilder(gh.client, gh.customClient, gh.enterprises))
+	if len(activeEnterprises) > 0 {
+		resourceSyncers = append(resourceSyncers, enterpriseRoleBuilder(gh.client, gh.customClient, activeEnterprises))
 	}
 	return resourceSyncers
 }
@@ -210,9 +218,13 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 	}
 
 	if len(gh.enterprises) > 0 {
+		l := ctxzap.Extract(ctx)
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
 		if err != nil {
-			return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: failed to access enterprise licenses", err)
+			l.Debug("failed to access enterprise consumed licenses — enterprise SAML email enrichment and enterprise role sync will be skipped",
+				zap.Error(err))
+		} else {
+			gh.enterpriseLicensesAvailable = true
 		}
 	}
 	return nil, nil
@@ -228,6 +240,19 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 	if err != nil {
 		return nil, err
 	}
+
+	if len(gh.enterprises) > 0 {
+		l := ctxzap.Extract(ctx)
+		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
+		if err != nil {
+			l.Debug("failed to access enterprise consumed licenses — enterprise SAML email enrichment and enterprise role sync will be skipped"+
+				" (GitHub App installations cannot access this endpoint — use a PAT with enterprise admin scope)",
+				zap.Error(err))
+		} else {
+			gh.enterpriseLicensesAvailable = true
+		}
+	}
+
 	return nil, nil
 }
 

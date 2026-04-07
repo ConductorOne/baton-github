@@ -2,7 +2,6 @@ package connector
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/conductorone/baton-github/test"
@@ -16,58 +15,45 @@ import (
 func TestUsersList(t *testing.T) {
 	ctx := context.Background()
 
-	trueBool, falseBool := true, false
+	t.Run("should get a list of users", func(t *testing.T) {
+		mgh := mocks.NewMockGitHub()
 
-	testCases := []struct {
-		hasSamlEnabled *bool
-		message        string
-	}{
-		{&trueBool, "true"},
-		{&falseBool, "false"},
-		{nil, "nil"},
-	}
-	for _, testCase := range testCases {
-		t.Run(fmt.Sprintf("should get a list of users (SAML:%s)", testCase.message), func(t *testing.T) {
-			mgh := mocks.NewMockGitHub()
+		githubOrganization, _, _, githubUser, _, _ := mgh.Seed()
 
-			githubOrganization, _, _, githubUser, _, _ := mgh.Seed()
+		organization, err := organizationResource(
+			ctx,
+			githubOrganization,
+			nil,
+			false,
+		)
+		if err != nil {
+			t.Error(err)
+		}
 
-			organization, err := organizationResource(
-				ctx,
-				githubOrganization,
-				nil,
-				false,
-			)
-			if err != nil {
-				t.Error(err)
-			}
+		githubClient := github.NewClient(mgh.Server())
+		graphQLClient := mocks.MockGraphQL()
+		cache := newOrgNameCache(githubClient)
+		client := userBuilder(
+			githubClient,
+			graphQLClient,
+			cache,
+			[]string{organization.DisplayName},
+			nil,
+			nil,
+		)
 
-			githubClient := github.NewClient(mgh.Server())
-			graphQLClient := mocks.MockGraphQL()
-			cache := newOrgNameCache(githubClient)
-			client := userBuilder(
-				githubClient,
-				testCase.hasSamlEnabled,
-				graphQLClient,
-				cache,
-				[]string{organization.DisplayName},
-				nil,
-				nil,
-			)
-
-			users, results, err := client.List(
-				ctx,
-				organization.Id,
-				resourceSdk.SyncOpAttrs{
-					PageToken: pagination.Token{},
-					Session:   &noOpSessionStore{},
-				},
-			)
-			require.Nil(t, err)
-			test.AssertHasRatelimitAnnotations(t, results.Annotations)
-			require.Equal(t, "", results.NextPageToken)
-			require.Len(t, users, 1)
-			require.Equal(t, *githubUser.Login, users[0].Id.Resource)
-		})
-	}
+		users, results, err := client.List(
+			ctx,
+			organization.Id,
+			resourceSdk.SyncOpAttrs{
+				PageToken: pagination.Token{},
+				Session:   &noOpSessionStore{},
+			},
+		)
+		require.Nil(t, err)
+		test.AssertHasRatelimitAnnotations(t, results.Annotations)
+		require.Equal(t, "", results.NextPageToken)
+		require.Len(t, users, 1)
+		require.Equal(t, *githubUser.Login, users[0].Id.Resource)
+	})
 }

@@ -258,7 +258,8 @@ type listUsersQuery struct {
 type hasSAMLQuery struct {
 	Organization struct {
 		SamlIdentityProvider struct {
-			Id string
+			Id     string
+			SsoUrl githubv4.String
 		}
 	} `graphql:"organization(login: $orgLoginName)"`
 }
