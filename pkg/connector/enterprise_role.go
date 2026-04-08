@@ -22,6 +22,7 @@ import (
 type enterpriseRoleResourceType struct {
 	resourceType   *v2.ResourceType
 	client         *github.Client
+	appClient      *github.Client
 	customClient   *customclient.Client
 	enterprises    []string
 	roleUsersCache map[string][]string
@@ -64,7 +65,7 @@ func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
 		for continuePagination {
 			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
 			if err != nil {
-				if page == 1 && isPermissionDenied(err) {
+				if page == 1 && o.appClient != nil && isPermissionDenied(err) {
 					l.Debug("baton-github: enterprise features (--enterprises) require a Personal Access Token. "+
 						"GitHub App authentication cannot access the consumed-licenses API. "+
 						"Either switch to PAT auth or remove the --enterprises flag.",
@@ -171,10 +172,11 @@ func (o *enterpriseRoleResourceType) Grants(
 	return ret, &resourceSdk.SyncOpResults{}, nil
 }
 
-func enterpriseRoleBuilder(client *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {
+func enterpriseRoleBuilder(client *github.Client, appClient *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {
 	return &enterpriseRoleResourceType{
 		resourceType:   resourceTypeEnterpriseRole,
 		client:         client,
+		appClient:      appClient,
 		customClient:   customClient,
 		enterprises:    enterprises,
 		roleUsersCache: make(map[string][]string),
