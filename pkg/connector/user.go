@@ -108,15 +108,14 @@ const (
 )
 
 type userResourceType struct {
-	resourceType          *v2.ResourceType
-	client                *github.Client
-	graphqlClient         *githubv4.Client
-	samlStates            map[string]samlState // per-org SAML state, keyed by org name
-	enterpriseSAMLFetched bool                 // true after first page fetches and stores SAML data
-	orgCache              *orgNameCache
-	orgs                  []string
-	customClient          *customclient.Client
-	enterprises           []string
+	resourceType  *v2.ResourceType
+	client        *github.Client
+	graphqlClient *githubv4.Client
+	samlStates    map[string]samlState // per-org SAML state, keyed by org name
+	orgCache      *orgNameCache
+	orgs          []string
+	customClient  *customclient.Client
+	enterprises   []string
 }
 
 func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -150,15 +149,20 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	// user loop can do plain map lookups with no session calls.
 	var enterpriseSAMLEmails map[string]string
 	if currentSAMLState == samlStateEnterprise {
-		if !u.enterpriseSAMLFetched {
+		_, alreadyFetched, err := session.GetJSON[[]string](ctx, opts.Session, enterpriseSAMLKeysIndex)
+		if err != nil {
+			return nil, nil, fmt.Errorf("baton-github: error checking enterprise SAML session: %w", err)
+		}
+		if !alreadyFetched {
 			if err := u.fetchAndStoreEnterpriseSAML(ctx, opts.Session); err != nil {
 				l.Debug("failed to fetch enterprise SAML emails, falling back to REST API emails",
 					zap.Error(err))
-				u.enterpriseSAMLFetched = true
+				// Write empty sentinel so we don't retry for remaining orgs in this sync
+				if setErr := session.SetJSON(ctx, opts.Session, enterpriseSAMLKeysIndex, []string{}); setErr != nil {
+					l.Debug("failed to write empty SAML sentinel to session", zap.Error(setErr))
+				}
 				u.samlStates[orgName] = samlStateDisabled
 				currentSAMLState = samlStateDisabled
-			} else {
-				u.enterpriseSAMLFetched = true
 			}
 		}
 		if currentSAMLState == samlStateEnterprise {
@@ -467,18 +471,20 @@ func (u *userResourceType) fetchAndStoreEnterpriseSAML(ctx context.Context, ss s
 		}
 	}
 
+	keys := make([]string, 0, len(samlByLogin))
+	for k := range samlByLogin {
+		keys = append(keys, k)
+	}
 	if len(samlByLogin) > 0 {
 		if err := session.SetManyJSON(ctx, ss, samlByLogin); err != nil {
 			return fmt.Errorf("baton-github: error storing enterprise SAML mappings: %w", err)
 		}
-
-		keys := make([]string, 0, len(samlByLogin))
-		for k := range samlByLogin {
-			keys = append(keys, k)
-		}
-		if err := session.SetJSON(ctx, ss, enterpriseSAMLKeysIndex, keys); err != nil {
-			return fmt.Errorf("baton-github: error storing enterprise SAML key index: %w", err)
-		}
+	}
+	// Always write the key index - its presence in the session tells future
+	// List() calls that we already fetched for this sync, even if zero
+	// SAML mappings were found.
+	if err := session.SetJSON(ctx, ss, enterpriseSAMLKeysIndex, keys); err != nil {
+		return fmt.Errorf("baton-github: error storing enterprise SAML key index: %w", err)
 	}
 
 	l.Debug("stored enterprise SAML mappings in session", zap.Int("count", len(samlByLogin)))
