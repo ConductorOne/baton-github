@@ -12,6 +12,8 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 )
 
 type enterpriseRoleResourceType struct {
@@ -50,6 +52,7 @@ func (o *enterpriseRoleResourceType) getRoleUsersCache(ctx context.Context) (map
 }
 
 func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
+	l := ctxzap.Extract(ctx)
 	for _, enterprise := range o.enterprises {
 		// GitHub's consumed-licenses API is 1-indexed; page 0 is undocumented
 		// and may return the same results as page 1, causing duplicates.
@@ -58,7 +61,12 @@ func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
 		for continuePagination {
 			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
 			if err != nil {
-				return fmt.Errorf("baton-github: error listing enterprise consumed licenses for %s: %w", enterprise, err)
+				l.Debug("baton-github: enterprise features (--enterprises) require a Personal Access Token. "+
+					"GitHub App authentication cannot access the consumed-licenses API. "+
+					"Either switch to PAT auth or remove the --enterprises flag.",
+					zap.String("enterprise", enterprise),
+					zap.Error(err))
+				return nil
 			}
 
 			if len(consumedLicenses.Users) == 0 {
