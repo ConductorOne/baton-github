@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -14,6 +15,8 @@ import (
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type enterpriseRoleResourceType struct {
@@ -61,12 +64,15 @@ func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
 		for continuePagination {
 			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
 			if err != nil {
-				l.Debug("baton-github: enterprise features (--enterprises) require a Personal Access Token. "+
-					"GitHub App authentication cannot access the consumed-licenses API. "+
-					"Either switch to PAT auth or remove the --enterprises flag.",
-					zap.String("enterprise", enterprise),
-					zap.Error(err))
-				return nil
+				if page == 1 && isPermissionDenied(err) {
+					l.Debug("baton-github: enterprise features (--enterprises) require a Personal Access Token. "+
+						"GitHub App authentication cannot access the consumed-licenses API. "+
+						"Either switch to PAT auth or remove the --enterprises flag.",
+						zap.String("enterprise", enterprise),
+						zap.Error(err))
+					return nil
+				}
+				return fmt.Errorf("baton-github: error listing enterprise consumed licenses for %s: %w", enterprise, err)
 			}
 
 			if len(consumedLicenses.Users) == 0 {
@@ -174,4 +180,12 @@ func enterpriseRoleBuilder(client *github.Client, customClient *customclient.Cli
 		roleUsersCache: make(map[string][]string),
 		mu:             &sync.Mutex{},
 	}
+}
+
+func isPermissionDenied(err error) bool {
+	var grpcErr interface{ GRPCStatus() *status.Status }
+	if errors.As(err, &grpcErr) {
+		return grpcErr.GRPCStatus().Code() == codes.PermissionDenied
+	}
+	return false
 }
