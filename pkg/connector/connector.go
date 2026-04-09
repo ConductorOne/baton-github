@@ -125,7 +125,7 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	}
 
 	if len(gh.enterprises) > 0 {
-		resourceSyncers = append(resourceSyncers, enterpriseRoleBuilder(gh.client, gh.customClient, gh.enterprises))
+		resourceSyncers = append(resourceSyncers, enterpriseRoleBuilder(gh.client, gh.appClient, gh.customClient, gh.enterprises))
 	}
 	return resourceSyncers
 }
@@ -212,7 +212,8 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		l := ctxzap.Extract(ctx)
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
 		if err != nil {
-			l.Debug("enterprise consumed licenses API is not accessible — enterprise SAML email enrichment and enterprise role sync may fail at sync time",
+			l.Debug("baton-github: enterprise features (--enterprises) require a Personal Access Token with enterprise admin scope. "+
+				"The consumed-licenses API is not accessible with the current token.",
 				zap.Error(err))
 		}
 	}
@@ -234,8 +235,9 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 		l := ctxzap.Extract(ctx)
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
 		if err != nil {
-			l.Debug("enterprise consumed licenses API is not accessible — enterprise SAML email enrichment and enterprise role sync may fail at sync time"+
-				" (GitHub App installations cannot access this endpoint — use a PAT with enterprise admin scope)",
+			l.Debug("baton-github: enterprise features (--enterprises) require a Personal Access Token. "+
+				"GitHub App authentication cannot access the consumed-licenses API. "+
+				"Either switch to PAT auth or remove the --enterprises flag.",
 				zap.Error(err))
 		}
 	}

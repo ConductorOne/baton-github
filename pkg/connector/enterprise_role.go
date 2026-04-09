@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -12,11 +13,16 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type enterpriseRoleResourceType struct {
 	resourceType   *v2.ResourceType
 	client         *github.Client
+	appClient      *github.Client
 	customClient   *customclient.Client
 	enterprises    []string
 	roleUsersCache map[string][]string
@@ -50,6 +56,7 @@ func (o *enterpriseRoleResourceType) getRoleUsersCache(ctx context.Context) (map
 }
 
 func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
+	l := ctxzap.Extract(ctx)
 	for _, enterprise := range o.enterprises {
 		// GitHub's consumed-licenses API is 1-indexed; page 0 is undocumented
 		// and may return the same results as page 1, causing duplicates.
@@ -58,6 +65,14 @@ func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
 		for continuePagination {
 			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
 			if err != nil {
+				if page == 1 && o.appClient != nil && isPermissionDenied(err) {
+					l.Debug("baton-github: enterprise features (--enterprises) require a Personal Access Token. "+
+						"GitHub App authentication cannot access the consumed-licenses API. "+
+						"Either switch to PAT auth or remove the --enterprises flag.",
+						zap.String("enterprise", enterprise),
+						zap.Error(err))
+					return nil
+				}
 				return fmt.Errorf("baton-github: error listing enterprise consumed licenses for %s: %w", enterprise, err)
 			}
 
@@ -157,13 +172,22 @@ func (o *enterpriseRoleResourceType) Grants(
 	return ret, &resourceSdk.SyncOpResults{}, nil
 }
 
-func enterpriseRoleBuilder(client *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {
+func enterpriseRoleBuilder(client *github.Client, appClient *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {
 	return &enterpriseRoleResourceType{
 		resourceType:   resourceTypeEnterpriseRole,
 		client:         client,
+		appClient:      appClient,
 		customClient:   customClient,
 		enterprises:    enterprises,
 		roleUsersCache: make(map[string][]string),
 		mu:             &sync.Mutex{},
 	}
+}
+
+func isPermissionDenied(err error) bool {
+	var grpcErr interface{ GRPCStatus() *status.Status }
+	if errors.As(err, &grpcErr) {
+		return grpcErr.GRPCStatus().Code() == codes.PermissionDenied
+	}
+	return false
 }
