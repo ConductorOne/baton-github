@@ -68,9 +68,7 @@ var (
 	resourceTypeInvitation = &v2.ResourceType{
 		Id:          "invitation",
 		DisplayName: "Invitation",
-		Traits: []v2.ResourceType_Trait{
-			v2.ResourceType_TRAIT_USER,
-		},
+		Traits:      []v2.ResourceType_Trait{},
 		Annotations: v1AnnotationsForResourceType("invitation"),
 	}
 	resourceTypeApiToken = &v2.ResourceType{
