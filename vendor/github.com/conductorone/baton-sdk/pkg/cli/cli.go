@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/field"
@@ -66,7 +69,44 @@ func MakeGenericConfiguration[T field.Configurable](v *viper.Viper, opts ...fiel
 // pass values through environment variables.
 func VisitFlags(cmd *cobra.Command, v *viper.Viper) {
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		if v.IsSet(f.Name) {
+		if !v.IsSet(f.Name) {
+			return
+		}
+
+		// v.GetString() mangles non-scalar types: YAML arrays become "[a b c]"
+		// and maps become "map[k:v]". Use type-appropriate getters so that
+		// pflag receives a properly formatted value for Set().
+		switch f.Value.Type() {
+		case "stringSlice":
+			switch v.Get(f.Name).(type) {
+			case []interface{}, []string:
+				// From YAML/config file: viper parsed individual elements.
+				// CSV-encode so pflag's readAsCSV() preserves values that
+				// contain commas (e.g. LDAP DNs like "OU=X,DC=Y").
+				ss := v.GetStringSlice(f.Name)
+				if len(ss) > 0 {
+					var buf bytes.Buffer
+					w := csv.NewWriter(&buf)
+					_ = w.Write(ss)
+					w.Flush()
+					_ = cmd.Flags().Set(f.Name, strings.TrimSuffix(buf.String(), "\n"))
+				}
+			default:
+				// From env var or other string source: pass the raw string
+				// to pflag so it splits on commas as expected.
+				_ = cmd.Flags().Set(f.Name, v.GetString(f.Name))
+			}
+		case "stringToString":
+			sm := v.GetStringMapString(f.Name)
+			if len(sm) > 0 {
+				// pflag expects "key=value" CSV format.
+				pairs := make([]string, 0, len(sm))
+				for k, val := range sm {
+					pairs = append(pairs, k+"="+val)
+				}
+				_ = cmd.Flags().Set(f.Name, strings.Join(pairs, ","))
+			}
+		default:
 			_ = cmd.Flags().Set(f.Name, v.GetString(f.Name))
 		}
 	})
