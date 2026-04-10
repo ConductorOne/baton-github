@@ -144,6 +144,19 @@ func (i *invitationResourceType) CreateAccount(
 		return nil, nil, nil, fmt.Errorf("github-connectorv2: failed to get CreateUserParams: %w", err)
 	}
 
+	// Log if a previous invite expired so there's a record, then proceed
+	// to send a new one.
+	failedInv, failedErr := i.lookupFailedInvitation(ctx, params.org, params.login, *params.email)
+	if failedErr != nil {
+		l.Debug("failed to check for expired invitations", zap.Error(failedErr))
+	}
+	if failedErr == nil && failedInv != nil {
+		l.Warn("previous invitation expired or failed, sending a new one",
+			zap.String("failed_reason", failedInv.GetFailedReason()),
+			zap.Time("failed_at", failedInv.GetFailedAt().Time),
+		)
+	}
+
 	invitation, resp, err := i.client.Organizations.CreateOrgInvitation(ctx, params.org, &github.CreateOrgInvitationOptions{
 		Email: params.email,
 	})
@@ -301,6 +314,27 @@ func (i *invitationResourceType) lookupPendingInvitation(ctx context.Context, or
 		opts.Page = resp.NextPage
 	}
 	return nil, fmt.Errorf("github-connector: no pending invitation found for login %q or email %s", login, email)
+}
+
+// lookupFailedInvitation searches failed/expired org invitations matching by login or email.
+func (i *invitationResourceType) lookupFailedInvitation(ctx context.Context, org, login, email string) (*github.Invitation, error) {
+	opts := &github.ListOptions{PerPage: 100}
+	for {
+		invitations, resp, err := i.client.Organizations.ListFailedOrgInvitations(ctx, org, opts)
+		if err != nil {
+			return nil, fmt.Errorf("github-connector: failed to list failed invitations: %w", err)
+		}
+		for _, inv := range invitations {
+			if invitationMatches(inv, login, email) {
+				return inv, nil
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return nil, fmt.Errorf("github-connector: no failed invitation found for login %q or email %s", login, email)
 }
 
 // invitationMatches returns true if the invitation matches the given login or email.
