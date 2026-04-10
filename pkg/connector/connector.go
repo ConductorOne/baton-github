@@ -155,6 +155,16 @@ func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 					Placeholder: "organization name",
 					Order:       2,
 				},
+				"github_username": {
+					DisplayName: "GitHub username",
+					Required:    false,
+					Description: "The user's GitHub username (optional, used to look up the user if email is private).",
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "octocat",
+					Order:       3,
+				},
 			},
 		},
 	}, nil
