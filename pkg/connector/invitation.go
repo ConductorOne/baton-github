@@ -166,6 +166,9 @@ func (i *invitationResourceType) CreateAccount(
 				Message:  "GitHub org invite already pending. User must accept the existing invitation.",
 			}, nil, nil, nil
 		}
+		if isEMUOrgError(err, resp) {
+			return nil, nil, nil, fmt.Errorf("github-connector: organization %s uses Enterprise Managed Users (EMU); accounts are provisioned by the IdP, not via org invitations", params.org)
+		}
 		return nil, nil, nil, wrapGitHubError(err, resp, "github-connector: failed to create org invitation")
 	}
 
@@ -348,6 +351,28 @@ func isAlreadyInvitedError(err error, resp *github.Response) bool {
 		for _, e := range ghErr.Errors {
 			lower := strings.ToLower(e.Message)
 			if strings.Contains(lower, "already invited") || strings.Contains(lower, "already been invited") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isEMUOrgError returns true if the GitHub API error indicates the org uses
+// Enterprise Managed Users, where invitations are not supported.
+func isEMUOrgError(err error, resp *github.Response) bool {
+	if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	var ghErr *github.ErrorResponse
+	if errors.As(err, &ghErr) {
+		msg := strings.ToLower(ghErr.Message)
+		if strings.Contains(msg, "managed by an enterprise") || strings.Contains(msg, "enterprise managed") {
+			return true
+		}
+		for _, e := range ghErr.Errors {
+			eMsg := strings.ToLower(e.Message)
+			if strings.Contains(eMsg, "managed by an enterprise") || strings.Contains(eMsg, "enterprise managed") {
 				return true
 			}
 		}
