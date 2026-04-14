@@ -184,8 +184,9 @@ func (o *repositoryResourceType) Grants(
 				for _, perm := range repoAccessLevels {
 					rv = append(rv, grant.NewGrant(resource, perm, resource.ParentResourceId,
 						grant.WithAnnotation(&v2.GrantExpandable{
-							EntitlementIds: []string{adminEntitlementID},
-							Shallow:        true,
+							EntitlementIds:  []string{adminEntitlementID},
+							Shallow:         true,
+							ResourceTypeIds: []string{resourceTypeUser.Id},
 						}),
 					))
 				}
@@ -196,8 +197,9 @@ func (o *repositoryResourceType) Grants(
 					for _, perm := range memberPerms {
 						rv = append(rv, grant.NewGrant(resource, perm, resource.ParentResourceId,
 							grant.WithAnnotation(&v2.GrantExpandable{
-								EntitlementIds: []string{memberEntitlementID},
-								Shallow:        true,
+								EntitlementIds:  []string{memberEntitlementID},
+								Shallow:         true,
+								ResourceTypeIds: []string{resourceTypeUser.Id},
 							}),
 						))
 					}
