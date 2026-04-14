@@ -143,19 +143,6 @@ func (i *invitationResourceType) CreateAccount(
 		return nil, nil, nil, fmt.Errorf("github-connectorv2: failed to get CreateUserParams: %w", err)
 	}
 
-	// Log if a previous invite expired so there's a record, then proceed
-	// to send a new one.
-	failedInv, failedErr := i.lookupFailedInvitation(ctx, params.org, params.login, *params.email)
-	if failedErr != nil {
-		l.Warn("failed to check for expired invitations", zap.Error(failedErr))
-	}
-	if failedInv != nil {
-		l.Warn("previous invitation expired or failed, sending a new one",
-			zap.String("failed_reason", failedInv.GetFailedReason()),
-			zap.Time("failed_at", failedInv.GetFailedAt().Time),
-		)
-	}
-
 	invitation, resp, err := i.client.Organizations.CreateOrgInvitation(ctx, params.org, &github.CreateOrgInvitationOptions{
 		Email: params.email,
 	})
@@ -184,6 +171,19 @@ func (i *invitationResourceType) CreateAccount(
 		if isEMUOrgError(err, resp) {
 			return nil, nil, nil, fmt.Errorf("github-connector: organization %s uses Enterprise Managed Users (EMU); accounts are provisioned by the IdP, not via org invitations", params.org)
 		}
+
+		// Check for expired/failed invitations as diagnostic context for unexpected failures.
+		failedInv, failedErr := i.lookupFailedInvitation(ctx, params.org, params.login, *params.email)
+		if failedErr != nil {
+			l.Warn("failed to check for expired invitations", zap.Error(failedErr))
+		}
+		if failedInv != nil {
+			l.Warn("previous invitation expired or failed",
+				zap.String("failed_reason", failedInv.GetFailedReason()),
+				zap.Time("failed_at", failedInv.GetFailedAt().Time),
+			)
+		}
+
 		return nil, nil, nil, wrapGitHubError(err, resp, "github-connector: failed to create org invitation")
 	}
 
@@ -359,43 +359,34 @@ func invitationMatches(inv *github.Invitation, login, email string) bool {
 	return false
 }
 
-// isAlreadyOrgMemberError returns true if the GitHub API error indicates
-// the user is already an organization member.
 func isAlreadyOrgMemberError(err error, resp *github.Response) bool {
-	if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
-		return false
-	}
-	var ghErr *github.ErrorResponse
-	if errors.As(err, &ghErr) {
-		msg := strings.ToLower(ghErr.Message)
-		if strings.Contains(msg, "already a member") || strings.Contains(msg, "already a part of") {
-			return true
-		}
-		for _, e := range ghErr.Errors {
-			eMsg := strings.ToLower(e.Message)
-			if strings.Contains(eMsg, "already a member") || strings.Contains(eMsg, "already a part of") {
-				return true
-			}
-		}
-	}
-	return false
+	return isGitHubValidationError(err, resp, "already a member", "already a part of")
 }
 
-// isAlreadyInvitedError returns true if the GitHub API error indicates
-// the user already has a pending invitation.
 func isAlreadyInvitedError(err error, resp *github.Response) bool {
+	return isGitHubValidationError(err, resp, "already invited", "already been invited")
+}
+
+func isEMUOrgError(err error, resp *github.Response) bool {
+	return isGitHubValidationError(err, resp, "managed by an enterprise", "enterprise managed")
+}
+
+// isGitHubValidationError returns true if the GitHub API response is a 422
+// and the error message contains any of the given substrings (case-insensitive).
+func isGitHubValidationError(err error, resp *github.Response, substrings ...string) bool {
 	if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
 		return false
 	}
 	var ghErr *github.ErrorResponse
-	if errors.As(err, &ghErr) {
-		msg := strings.ToLower(ghErr.Message)
-		if strings.Contains(msg, "already invited") || strings.Contains(msg, "already been invited") {
+	if !errors.As(err, &ghErr) {
+		return false
+	}
+	for _, sub := range substrings {
+		if containsLower(ghErr.Message, sub) {
 			return true
 		}
 		for _, e := range ghErr.Errors {
-			lower := strings.ToLower(e.Message)
-			if strings.Contains(lower, "already invited") || strings.Contains(lower, "already been invited") {
+			if containsLower(e.Message, sub) {
 				return true
 			}
 		}
@@ -403,26 +394,8 @@ func isAlreadyInvitedError(err error, resp *github.Response) bool {
 	return false
 }
 
-// isEMUOrgError returns true if the GitHub API error indicates the org uses
-// Enterprise Managed Users, where invitations are not supported.
-func isEMUOrgError(err error, resp *github.Response) bool {
-	if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
-		return false
-	}
-	var ghErr *github.ErrorResponse
-	if errors.As(err, &ghErr) {
-		msg := strings.ToLower(ghErr.Message)
-		if strings.Contains(msg, "managed by an enterprise") || strings.Contains(msg, "enterprise managed") {
-			return true
-		}
-		for _, e := range ghErr.Errors {
-			eMsg := strings.ToLower(e.Message)
-			if strings.Contains(eMsg, "managed by an enterprise") || strings.Contains(eMsg, "enterprise managed") {
-				return true
-			}
-		}
-	}
-	return false
+func containsLower(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), substr)
 }
 
 type invitationBuilderParams struct {
