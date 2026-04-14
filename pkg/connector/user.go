@@ -18,6 +18,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Create a new connector resource for a GitHub user.
@@ -155,7 +156,7 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	// For enterprise SAML: on the first page, fetch from the API and store in
 	// session. On every page, bulk-read the mappings into a local map so the
 	// user loop can do plain map lookups with no session calls.
-	var enterpriseSAMLEmails map[string]string
+	var enterpriseSAMLIdentities map[string]SAMLIdentity
 	if currentSAMLState == samlStateEnterprise {
 		_, alreadyFetched, err := session.GetJSON[[]string](ctx, opts.Session, enterpriseSAMLKeysIndex)
 		if err != nil {
@@ -174,7 +175,7 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 			}
 		}
 		if currentSAMLState == samlStateEnterprise {
-			enterpriseSAMLEmails, err = loadEnterpriseSAMLEmails(ctx, opts.Session)
+			enterpriseSAMLIdentities, err = loadEnterpriseSAMLIdentities(ctx, opts.Session)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -191,9 +192,10 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 			return nil, nil, fmt.Errorf("baton-github: error checking org SAML session: %w", err)
 		}
 		if !alreadyFetched {
-			if err := u.fetchAndStoreOrgSAML(ctx, opts.Session, orgName); err != nil {
+			graphqlRateLimit, fetchErr := u.fetchAndStoreOrgSAML(ctx, opts.Session, orgName)
+			if fetchErr != nil {
 				l.Debug("failed to fetch org SAML identities, falling back to REST API emails",
-					zap.Error(err),
+					zap.Error(fetchErr),
 					zap.String("org", orgName))
 				// Write empty sentinel so we don't retry
 				if setErr := session.SetJSON(ctx, opts.Session, keyIndex, []string{}); setErr != nil {
@@ -201,6 +203,8 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 				}
 				u.samlStates[orgName] = samlStateDisabled
 				currentSAMLState = samlStateDisabled
+			} else if graphqlRateLimit != nil {
+				annotations.WithRateLimiting(graphqlRateLimit)
 			}
 		}
 		if currentSAMLState == samlStateOrgEnabled {
@@ -252,21 +256,31 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 
 		case samlStateOrgEnabled:
 			// Use cached SAML identity instead of per-user GraphQL query.
-			// Skip GetByID - we have the identity data we need from SAML cache.
+			// Skip GetByID - we have the identity data we need from SAML cache,
+			// including the user's Name from the GraphQL batch query.
 			ghUser = user
 			login := strings.ToLower(user.GetLogin())
 			key := orgSAMLKeyPrefix + orgName + ":" + login
 			if ident, ok := orgSAMLIdentities[key]; ok {
 				userEmail = ident.PrimaryEmail
 				extraEmails = ident.ExtraEmails
+				if ident.Name != "" && ghUser.Name == nil {
+					ghUser.Name = &ident.Name
+				}
 			}
 
 		case samlStateEnterprise:
-			// Use cached SAML email. Skip GetByID - we have email from consumed licenses.
+			// Use cached SAML identity from consumed licenses (email + name).
+			// No GetByID needed — name comes from the licenses API.
 			ghUser = user
 			key := enterpriseSAMLKeyPrefix + strings.ToLower(user.GetLogin())
-			if samlEmail, ok := enterpriseSAMLEmails[key]; ok && isEmail(samlEmail) {
-				userEmail = samlEmail
+			if ident, ok := enterpriseSAMLIdentities[key]; ok {
+				if isEmail(ident.PrimaryEmail) {
+					userEmail = ident.PrimaryEmail
+				}
+				if ident.Name != "" && ghUser.Name == nil {
+					ghUser.Name = &ident.Name
+				}
 			}
 
 		case samlStateDisabled:
@@ -439,13 +453,13 @@ func (u *userResourceType) checkOrgSAML(ctx context.Context, orgName string) (sa
 }
 
 // fetchAndStoreEnterpriseSAML pages through the consumed licenses API for all
-// configured enterprises, aggregates the login-to-SAML-email mappings, and
+// configured enterprises, aggregates the login-to-SAML-identity mappings, and
 // writes them to the session store in a single batch. It also stores the list
-// of keys under enterpriseSAMLKeysIndex so that loadEnterpriseSAMLEmails can
+// of keys under enterpriseSAMLKeysIndex so that loadEnterpriseSAMLIdentities can
 // bulk-read them back on subsequent List pages.
 func (u *userResourceType) fetchAndStoreEnterpriseSAML(ctx context.Context, ss sessions.SessionStore) error {
 	l := ctxzap.Extract(ctx)
-	samlByLogin := make(map[string]string)
+	samlByLogin := make(map[string]SAMLIdentity)
 
 	for _, enterprise := range u.enterprises {
 		// GitHub's consumed-licenses API is 1-indexed; page 0 is undocumented
@@ -463,7 +477,10 @@ func (u *userResourceType) fetchAndStoreEnterpriseSAML(ctx context.Context, ss s
 			for _, user := range consumedLicenses.Users {
 				if user.GitHubComSAMLNameID != nil && *user.GitHubComSAMLNameID != "" && user.GitHubComLogin != "" {
 					key := enterpriseSAMLKeyPrefix + strings.ToLower(user.GitHubComLogin)
-					samlByLogin[key] = *user.GitHubComSAMLNameID
+					samlByLogin[key] = SAMLIdentity{
+						PrimaryEmail: *user.GitHubComSAMLNameID,
+						Name:         user.GitHubComName,
+					}
 				}
 			}
 			page++
@@ -471,11 +488,17 @@ func (u *userResourceType) fetchAndStoreEnterpriseSAML(ctx context.Context, ss s
 	}
 
 	keys := make([]string, 0, len(samlByLogin))
-	for k := range samlByLogin {
+	stringMap := make(map[string]string, len(samlByLogin))
+	for k, v := range samlByLogin {
 		keys = append(keys, k)
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Errorf("baton-github: error serializing enterprise SAML identity: %w", err)
+		}
+		stringMap[k] = string(data)
 	}
-	if len(samlByLogin) > 0 {
-		if err := session.SetManyJSON(ctx, ss, samlByLogin); err != nil {
+	if len(stringMap) > 0 {
+		if err := session.SetManyJSON(ctx, ss, stringMap); err != nil {
 			return fmt.Errorf("baton-github: error storing enterprise SAML mappings: %w", err)
 		}
 	}
@@ -490,11 +513,11 @@ func (u *userResourceType) fetchAndStoreEnterpriseSAML(ctx context.Context, ss s
 	return nil
 }
 
-// loadEnterpriseSAMLEmails bulk-reads all enterprise SAML mappings from the
+// loadEnterpriseSAMLIdentities bulk-reads all enterprise SAML mappings from the
 // session store in two calls: one to get the key index, one to get the values.
-// Returns a map of "enterprise_saml:<login>" -> SAML email for use as a local
+// Returns a map of "enterprise_saml:<login>" -> SAMLIdentity for use as a local
 // lookup table in the List loop (no session calls needed per user).
-func loadEnterpriseSAMLEmails(ctx context.Context, ss sessions.SessionStore) (map[string]string, error) {
+func loadEnterpriseSAMLIdentities(ctx context.Context, ss sessions.SessionStore) (map[string]SAMLIdentity, error) {
 	keys, found, err := session.GetJSON[[]string](ctx, ss, enterpriseSAMLKeysIndex)
 	if err != nil {
 		return nil, fmt.Errorf("baton-github: error reading enterprise SAML key index: %w", err)
@@ -503,20 +526,30 @@ func loadEnterpriseSAMLEmails(ctx context.Context, ss sessions.SessionStore) (ma
 		return nil, nil
 	}
 
-	samlByLogin, err := session.GetManyJSON[string](ctx, ss, keys)
+	stringMap, err := session.GetManyJSON[string](ctx, ss, keys)
 	if err != nil {
 		return nil, fmt.Errorf("baton-github: error reading enterprise SAML mappings: %w", err)
 	}
-	return samlByLogin, nil
+
+	result := make(map[string]SAMLIdentity, len(stringMap))
+	for k, v := range stringMap {
+		var ident SAMLIdentity
+		if err := json.Unmarshal([]byte(v), &ident); err != nil {
+			continue
+		}
+		result[k] = ident
+	}
+	return result, nil
 }
 
 // fetchAndStoreOrgSAML pages through the org's SAML external identities via GraphQL,
 // aggregates the login-to-SAML-identity mappings, and writes them to the session store.
 // This avoids N+1 GraphQL queries when syncing users for orgs with SAML enabled.
-func (u *userResourceType) fetchAndStoreOrgSAML(ctx context.Context, ss sessions.SessionStore, orgName string) error {
+func (u *userResourceType) fetchAndStoreOrgSAML(ctx context.Context, ss sessions.SessionStore, orgName string) (*v2.RateLimitDescription, error) {
 	l := ctxzap.Extract(ctx)
 	samlByLogin := make(map[string]SAMLIdentity)
 
+	var lastRateLimit *v2.RateLimitDescription
 	var cursor *githubv4.String
 	for {
 		q := batchSAMLQuery{}
@@ -526,7 +559,12 @@ func (u *userResourceType) fetchAndStoreOrgSAML(ctx context.Context, ss sessions
 		}
 		err := u.graphqlClient.Query(ctx, &q, variables)
 		if err != nil {
-			return fmt.Errorf("baton-github: error fetching org SAML identities for %s: %w", orgName, err)
+			return nil, fmt.Errorf("baton-github: error fetching org SAML identities for %s: %w", orgName, err)
+		}
+		lastRateLimit = &v2.RateLimitDescription{
+			Limit:     int64(q.RateLimit.Limit),
+			Remaining: int64(q.RateLimit.Remaining),
+			ResetAt:   timestamppb.New(q.RateLimit.ResetAt.Time),
 		}
 
 		for _, edge := range q.Organization.SamlIdentityProvider.ExternalIdentities.Edges {
@@ -536,7 +574,9 @@ func (u *userResourceType) fetchAndStoreOrgSAML(ctx context.Context, ss sessions
 			login := strings.ToLower(edge.Node.User.Login)
 			key := orgSAMLKeyPrefix + orgName + ":" + login
 
-			ident := SAMLIdentity{}
+			ident := SAMLIdentity{
+				Name: edge.Node.User.Name,
+			}
 			// Extract primary email from NameId or first email
 			if edge.Node.SamlIdentity.NameId != "" && isEmail(edge.Node.SamlIdentity.NameId) {
 				ident.PrimaryEmail = edge.Node.SamlIdentity.NameId
@@ -573,23 +613,23 @@ func (u *userResourceType) fetchAndStoreOrgSAML(ctx context.Context, ss sessions
 		// Serialize SAMLIdentity to JSON string for storage
 		data, err := json.Marshal(v)
 		if err != nil {
-			return fmt.Errorf("baton-github: error serializing SAML identity: %w", err)
+			return nil, fmt.Errorf("baton-github: error serializing SAML identity: %w", err)
 		}
 		stringMap[k] = string(data)
 	}
 
 	if len(stringMap) > 0 {
 		if err := session.SetManyJSON(ctx, ss, stringMap); err != nil {
-			return fmt.Errorf("baton-github: error storing org SAML mappings: %w", err)
+			return nil, fmt.Errorf("baton-github: error storing org SAML mappings: %w", err)
 		}
 	}
 	// Always write the key index
 	if err := session.SetJSON(ctx, ss, keyIndex, keys); err != nil {
-		return fmt.Errorf("baton-github: error storing org SAML key index: %w", err)
+		return nil, fmt.Errorf("baton-github: error storing org SAML key index: %w", err)
 	}
 
 	l.Debug("stored org SAML mappings in session", zap.String("org", orgName), zap.Int("count", len(samlByLogin)))
-	return nil
+	return lastRateLimit, nil
 }
 
 // loadOrgSAMLIdentities bulk-reads all org SAML mappings from the session store.

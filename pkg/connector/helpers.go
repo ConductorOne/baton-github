@@ -275,6 +275,7 @@ type batchSAMLQuery struct {
 						}
 						User struct {
 							Login string
+							Name  string
 						}
 					}
 				}
@@ -293,6 +294,7 @@ type batchSAMLQuery struct {
 type SAMLIdentity struct {
 	PrimaryEmail string   `json:"primary_email"`
 	ExtraEmails  []string `json:"extra_emails,omitempty"`
+	Name         string   `json:"name,omitempty"`
 }
 
 type hasSAMLQuery struct {
