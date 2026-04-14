@@ -10,9 +10,11 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/session"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/types/sessions"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -167,6 +169,41 @@ func (o *repositoryResourceType) Grants(
 		bag.Push(pagination.PageState{
 			ResourceTypeID: resourceTypeTeam.Id,
 		})
+
+		// When direct-collaborators-only is enabled, org members whose only repo access
+		// is via the org base permission won't appear in ListCollaborators. Add expandable
+		// grants so the SDK resolves org membership into repo access.
+		if o.directCollaboratorsOnly {
+			basePerm, err := o.getOrgBasePermission(ctx, opts.Session, orgName, resource.ParentResourceId)
+			if err != nil {
+				l.Debug("failed to fetch org base permission, skipping org expansion", zap.Error(err))
+			} else {
+				orgResID := resource.ParentResourceId.Resource
+				// Org admins always have admin on all repos
+				adminEntitlementID := fmt.Sprintf("%s:%s:%s", resourceTypeOrg.Id, orgResID, orgRoleAdmin)
+				for _, perm := range repoAccessLevels {
+					rv = append(rv, grant.NewGrant(resource, perm, resource.ParentResourceId,
+						grant.WithAnnotation(&v2.GrantExpandable{
+							EntitlementIds: []string{adminEntitlementID},
+							Shallow:        true,
+						}),
+					))
+				}
+				// Org members get access based on the org's default repo permission
+				memberPerms := orgBasePermissionToRepoPermissions(basePerm)
+				if len(memberPerms) > 0 {
+					memberEntitlementID := fmt.Sprintf("%s:%s:%s", resourceTypeOrg.Id, orgResID, orgRoleMember)
+					for _, perm := range memberPerms {
+						rv = append(rv, grant.NewGrant(resource, perm, resource.ParentResourceId,
+							grant.WithAnnotation(&v2.GrantExpandable{
+								EntitlementIds: []string{memberEntitlementID},
+								Shallow:        true,
+							}),
+						))
+					}
+				}
+			}
+		}
 
 	case resourceTypeUser.Id:
 		affiliation := "all"
@@ -435,6 +472,54 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 	}
 
 	return nil, nil
+}
+
+// orgBasePermissionSessionKey returns the session key for caching the org's default repo permission.
+func orgBasePermissionSessionKey(orgID string) string {
+	return "org_base_perm:" + orgID
+}
+
+// getOrgBasePermission fetches the org's default_repository_permission, caching in the session.
+// Returns "read", "write", "admin", or "none".
+func (o *repositoryResourceType) getOrgBasePermission(ctx context.Context, ss sessions.SessionStore, orgName string, orgResourceID *v2.ResourceId) (string, error) {
+	key := orgBasePermissionSessionKey(orgResourceID.Resource)
+	cached, found, err := session.GetJSON[string](ctx, ss, key)
+	if err != nil {
+		return "", fmt.Errorf("baton-github: error reading org base permission from session: %w", err)
+	}
+	if found {
+		return cached, nil
+	}
+
+	org, resp, err := o.client.Organizations.Get(ctx, orgName)
+	if err != nil {
+		return "", wrapGitHubError(err, resp, "baton-github: failed to get organization")
+	}
+
+	perm := org.GetDefaultRepoPermission()
+	if perm == "" {
+		perm = "read" // GitHub default
+	}
+
+	if err := session.SetJSON(ctx, ss, key, perm); err != nil {
+		return "", fmt.Errorf("baton-github: error caching org base permission: %w", err)
+	}
+	return perm, nil
+}
+
+// orgBasePermissionToRepoPermissions maps the org's default_repository_permission to
+// the cumulative repo permission levels it grants.
+func orgBasePermissionToRepoPermissions(basePerm string) []string {
+	switch basePerm {
+	case "admin":
+		return []string{repoPermissionPull, repoPermissionTriage, repoPermissionPush, repoPermissionMaintain, repoPermissionAdmin}
+	case "write":
+		return []string{repoPermissionPull, repoPermissionTriage, repoPermissionPush}
+	case "read":
+		return []string{repoPermissionPull}
+	default:
+		return nil
+	}
 }
 
 func repositoryBuilder(client *github.Client, orgCache *orgNameCache, omitArchivedRepositories bool, directCollaboratorsOnly bool) *repositoryResourceType {
