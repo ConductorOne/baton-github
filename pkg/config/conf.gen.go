@@ -8,11 +8,12 @@ type Github struct {
 	Orgs []string `mapstructure:"orgs"`
 	Enterprises []string `mapstructure:"enterprises"`
 	InstanceUrl string `mapstructure:"instance-url"`
-	SyncSecrets bool `mapstructure:"sync-secrets"`
-	OmitArchivedRepositories bool `mapstructure:"omit-archived-repositories"`
 	AppId string `mapstructure:"app-id"`
 	AppPrivatekeyPath []byte `mapstructure:"app-privatekey-path"`
 	Org string `mapstructure:"org"`
+	SyncSecrets bool `mapstructure:"sync-secrets"`
+	OmitArchivedRepositories bool `mapstructure:"omit-archived-repositories"`
+	DirectCollaboratorsOnly bool `mapstructure:"direct-collaborators-only"`
 }
 
 func (c *Github) findFieldByTag(tagValue string) (any, bool) {

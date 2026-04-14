@@ -61,6 +61,7 @@ type repositoryResourceType struct {
 	client                   *github.Client
 	orgCache                 *orgNameCache
 	omitArchivedRepositories bool
+	directCollaboratorsOnly  bool
 }
 
 func (o *repositoryResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -168,8 +169,12 @@ func (o *repositoryResourceType) Grants(
 		})
 
 	case resourceTypeUser.Id:
+		affiliation := "all"
+		if o.directCollaboratorsOnly {
+			affiliation = "direct"
+		}
 		listOpts := &github.ListCollaboratorsOptions{
-			Affiliation: "all",
+			Affiliation: affiliation,
 			ListOptions: github.ListOptions{
 				Page:    page,
 				PerPage: maxPageSize,
@@ -427,12 +432,13 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 	return nil, nil
 }
 
-func repositoryBuilder(client *github.Client, orgCache *orgNameCache, omitArchivedRepositories bool) *repositoryResourceType {
+func repositoryBuilder(client *github.Client, orgCache *orgNameCache, omitArchivedRepositories bool, directCollaboratorsOnly bool) *repositoryResourceType {
 	return &repositoryResourceType{
 		resourceType:             resourceTypeRepository,
 		client:                   client,
 		orgCache:                 orgCache,
 		omitArchivedRepositories: omitArchivedRepositories,
+		directCollaboratorsOnly:  directCollaboratorsOnly,
 	}
 }
 

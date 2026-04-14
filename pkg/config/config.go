@@ -59,6 +59,14 @@ var (
 		field.WithDisplayName("Omit syncing archived repositories"),
 		field.WithDescription("Whether to skip syncing archived repositories or not"),
 	)
+	directCollaboratorsOnly = field.BoolField(
+		"direct-collaborators-only",
+		field.WithDisplayName("Sync only direct repository collaborators"),
+		field.WithDescription(
+			"When enabled, only sync users with direct repository access (not team-based). "+
+				"Team-based access is discovered via grant expansion. Reduces API calls for large orgs.",
+		),
+	)
 	orgField = field.StringField(
 		"org",
 		field.WithDisplayName("Github App Organization"),
@@ -79,6 +87,7 @@ var Config = field.NewConfiguration(
 		orgField,
 		syncSecrets,
 		omitArchivedRepositories,
+		directCollaboratorsOnly,
 	},
 	field.WithConnectorDisplayName("GitHub v2"),
 	field.WithHelpUrl("/docs/baton/github-v2"),
@@ -88,14 +97,14 @@ var Config = field.NewConfiguration(
 			Name:        GithubPersonalAccessTokenGroup,
 			DisplayName: "Personal access token",
 			HelpText:    "Use a personal access token for authentication.",
-			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories},
+			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories, directCollaboratorsOnly},
 			Default:     true,
 		},
 		{
 			Name:        GithubAppGroup,
 			DisplayName: "GitHub app",
 			HelpText:    "Use a github app for authentication",
-			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgField, syncSecrets, omitArchivedRepositories},
+			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgField, syncSecrets, omitArchivedRepositories, directCollaboratorsOnly},
 			Default:     false,
 		},
 	}),
