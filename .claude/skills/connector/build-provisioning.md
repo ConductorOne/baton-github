@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # build-provisioning
 
 Implementing Grant, Revoke, and account operations.

@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # review-breaking-changes
 
 Breaking change detection rules for connector reviews.

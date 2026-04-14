@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 ---
 name: c1-connector-docs
 description: Write connector documentation for ConductorOne following the established template structure. Use when creating or updating docs/connector.mdx in a connector repo, or reviewing connector documentation. Ensures consistency with the standardized connector doc format including capabilities tables, credential gathering, and cloud/self-hosted configuration tabs.

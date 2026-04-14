@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # concepts-access-model
 
 What connectors sync: resources, entitlements, and grants.

@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # ref-unused-features
 
 SDK features that C1 does not currently use. Don't invest effort here.

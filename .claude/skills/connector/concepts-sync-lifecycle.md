@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # concepts-sync-lifecycle
 
 How connectors sync data to ConductorOne.

@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # review-checklist
 
 Pre-merge verification checklist for connector code reviews.

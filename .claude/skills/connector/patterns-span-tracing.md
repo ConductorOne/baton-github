@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # patterns-span-tracing
 
 Span creation, naming, attributes, and error recording for connector observability.

@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # CLAUDE.md
 
 Instructions for AI assistants working with this Baton connector.

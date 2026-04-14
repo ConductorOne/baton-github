@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # patterns-entity-sources
 
 CRITICAL: Which entity provides which data in Grant/Revoke operations.

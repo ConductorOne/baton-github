@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # ref-traits
 
 Trait selection guide for resource types.

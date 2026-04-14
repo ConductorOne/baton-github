@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # patterns-json-safety
 
 JSON unmarshaling pitfalls and type flexibility patterns.

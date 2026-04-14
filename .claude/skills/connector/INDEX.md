@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # Connector Skills Index
 
 Skills for building and reviewing ConductorOne Baton connectors.

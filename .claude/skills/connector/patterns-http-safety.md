@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # patterns-http-safety
 
 HTTP response handling and nil pointer safety.

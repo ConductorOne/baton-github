@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # concepts-identifiers
 
 How identifiers work in connectors. Four "ExternalId" concepts exist - only one matters.

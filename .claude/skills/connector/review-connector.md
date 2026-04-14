@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 ---
 name: review-connector
 description: Review a baton connector PR. Use when asked to review a connector, review a PR, review connector code, or run a connector code review. Trigger phrases include "review connector", "review PR", "connector review", "code review connector".

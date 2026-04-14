@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # ref-antipatterns
 
 What NOT to do when building connectors.

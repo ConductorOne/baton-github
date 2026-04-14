@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # build-pagination
 
 Pagination is critical. Enterprise environments have tens of thousands of users.

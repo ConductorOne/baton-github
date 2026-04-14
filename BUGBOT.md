@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # Project review guidelines
 
 ## Excluded Paths

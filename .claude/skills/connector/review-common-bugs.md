@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # review-common-bugs
 
 Top bug patterns from production connector experience.

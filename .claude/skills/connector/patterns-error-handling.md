@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # patterns-error-handling
 
 Error wrapping, prefixes, and distinguishing retryable from fatal errors.

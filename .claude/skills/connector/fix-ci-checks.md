@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 ---
 name: fix-ci-checks
 description: Fix CI check failures in a connector repo. Covers doc freshness (Generate Baton Metadata), lint and test failures (Verify), and version mismatches (Check versions). Run this when any managed CI workflow fails on your PR.

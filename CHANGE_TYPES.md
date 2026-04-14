@@ -1,3 +1,4 @@
+<!-- This file is managed by baton-admin. DO NOT EDIT. -->
 # Change Type Detection and Guidance
 
 When working on a connector, first identify what type of change you're making. Each type has specific patterns and pitfalls.
