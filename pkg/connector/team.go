@@ -30,12 +30,15 @@ var teamAccessLevels = []string{
 }
 
 // teamResource creates a new connector resource for a GitHub Team. It is possible that the team has a parent resource.
-func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+// orgID must be passed explicitly since ListTeams() doesn't return the full organization object.
+func teamResource(team *github.Team, orgID int64, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	profile := map[string]interface{}{
+		// Note: members_count and repos_count are only populated when fetching
+		// individual teams. We skip the per-team API call to avoid N+1 requests.
 		"members_count": team.GetMembersCount(),
 		"repos_count":   team.GetReposCount(),
 		// Store the org ID in the profile so that we can reference it when calculating grants
-		"orgID": team.GetOrganization().GetID(),
+		"orgID": orgID,
 	}
 
 	ret, err := rType.NewGroupResource(
@@ -104,12 +107,10 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	}
 
 	for _, team := range teams {
-		fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
-		if err != nil {
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get team details")
-		}
-
-		tr, err := teamResource(fullTeam, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
+		// Use team data directly from ListTeams() to avoid N+1 API calls.
+		// Note: members_count and repos_count won't be populated, but orgID
+		// is passed explicitly since we already have it from the parent resource.
+		tr, err := teamResource(team, orgID, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
 		if err != nil {
 			return nil, nil, err
 		}

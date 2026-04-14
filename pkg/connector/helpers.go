@@ -255,6 +255,46 @@ type listUsersQuery struct {
 	}
 }
 
+// batchSAMLQuery fetches all SAML identities for an organization with pagination.
+// This is used to avoid N+1 queries when syncing users.
+type batchSAMLQuery struct {
+	Organization struct {
+		SamlIdentityProvider struct {
+			ExternalIdentities struct {
+				PageInfo struct {
+					HasNextPage bool
+					EndCursor   githubv4.String
+				}
+				Edges []struct {
+					Node struct {
+						SamlIdentity struct {
+							NameId string
+							Emails []struct {
+								Value string
+							}
+						}
+						User struct {
+							Login string
+						}
+					}
+				}
+			} `graphql:"externalIdentities(first: 100, after: $cursor)"`
+		}
+	} `graphql:"organization(login: $orgLoginName)"`
+	RateLimit struct {
+		Limit     int
+		Cost      int
+		Remaining int
+		ResetAt   githubv4.DateTime
+	}
+}
+
+// SAMLIdentity holds the parsed SAML identity data for a user.
+type SAMLIdentity struct {
+	PrimaryEmail string   `json:"primary_email"`
+	ExtraEmails  []string `json:"extra_emails,omitempty"`
+}
+
 type hasSAMLQuery struct {
 	Organization struct {
 		SamlIdentityProvider struct {

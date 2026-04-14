@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/mail"
 	"strconv"
@@ -17,7 +18,6 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
 	"go.uber.org/zap"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Create a new connector resource for a GitHub user.
@@ -105,6 +105,14 @@ const (
 	// enterprise_saml:* keys. This allows bulk-reading SAML mappings with
 	// GetManyJSON without scanning the entire session store.
 	enterpriseSAMLKeysIndex = "enterprise_saml_keys"
+
+	// orgSAMLKeyPrefix is prepended to each GitHub login to form
+	// individual session keys for org-level SAML, e.g. "org_saml:myorg:octocat".
+	orgSAMLKeyPrefix = "org_saml:"
+
+	// orgSAMLKeysIndexPrefix is the session key prefix that stores the list of all
+	// org_saml:* keys for a specific org. Format: "org_saml_keys:myorg"
+	orgSAMLKeysIndexPrefix = "org_saml_keys:"
 )
 
 type userResourceType struct {
@@ -173,6 +181,36 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 		}
 	}
 
+	// For org-level SAML: batch-fetch all SAML identities on first page and cache them.
+	// This avoids N+1 GraphQL queries (one per user) during user sync.
+	var orgSAMLIdentities map[string]SAMLIdentity
+	if currentSAMLState == samlStateOrgEnabled {
+		keyIndex := orgSAMLKeysIndexPrefix + orgName
+		_, alreadyFetched, err := session.GetJSON[[]string](ctx, opts.Session, keyIndex)
+		if err != nil {
+			return nil, nil, fmt.Errorf("baton-github: error checking org SAML session: %w", err)
+		}
+		if !alreadyFetched {
+			if err := u.fetchAndStoreOrgSAML(ctx, opts.Session, orgName); err != nil {
+				l.Debug("failed to fetch org SAML identities, falling back to REST API emails",
+					zap.Error(err),
+					zap.String("org", orgName))
+				// Write empty sentinel so we don't retry
+				if setErr := session.SetJSON(ctx, opts.Session, keyIndex, []string{}); setErr != nil {
+					l.Debug("failed to write empty org SAML sentinel to session", zap.Error(setErr))
+				}
+				u.samlStates[orgName] = samlStateDisabled
+				currentSAMLState = samlStateDisabled
+			}
+		}
+		if currentSAMLState == samlStateOrgEnabled {
+			orgSAMLIdentities, err = loadOrgSAMLIdentities(ctx, opts.Session, orgName)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
 	var restApiRateLimit *v2.RateLimitDescription
 
 	listOpts := github.ListMembersOptions{
@@ -202,80 +240,49 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 		return nil, nil, err
 	}
 
-	var lastGraphQLRateLimit *struct {
-		Limit     int
-		Remaining int
-		ResetAt   githubv4.DateTime
-	}
 	rv := make([]*v2.Resource, 0, len(users))
 	for _, user := range users {
-		ghUser, res, err := u.client.Users.GetByID(ctx, user.GetID())
-		if err != nil {
-			// This undocumented API can return 404 for some users. If this fails it means we won't get some of their details like email
-			if isNotFoundError(res) {
-				l.Warn("error fetching user by id", zap.Error(err), zap.Int64("user_id", user.GetID()))
-				ghUser = user
-			} else {
-				return nil, nil, wrapGitHubError(err, res, "github-connector: failed to get user by id")
-			}
-		}
-		userEmail := ghUser.GetEmail()
+		var userEmail string
 		var extraEmails []string
+		var ghUser *github.User
 
 		switch currentSAMLState {
 		case samlStateUnknown:
 			return nil, nil, fmt.Errorf("baton-github: unexpected unknown SAML state for org %s", orgName)
+
 		case samlStateOrgEnabled:
-			q := listUsersQuery{}
-			variables := map[string]interface{}{
-				"orgLoginName": githubv4.String(orgName),
-				"userName":     githubv4.String(ghUser.GetLogin()),
-			}
-			err = u.graphqlClient.Query(ctx, &q, variables)
-
-			if err != nil {
-				return nil, nil, err
-			}
-			if len(q.Organization.SamlIdentityProvider.ExternalIdentities.Edges) == 1 {
-				samlIdent := q.Organization.SamlIdentityProvider.ExternalIdentities.Edges[0].Node.SamlIdentity
-				userEmail = samlIdent.NameId
-				setUserEmail := false
-
-				if userEmail != "" {
-					setUserEmail = true
-				}
-				for _, email := range samlIdent.Emails {
-					ok := isEmail(email.Value)
-					if !ok {
-						continue
-					}
-
-					if !setUserEmail {
-						userEmail = email.Value
-						setUserEmail = true
-					} else {
-						extraEmails = append(extraEmails, email.Value)
-					}
-				}
-			}
-			lastGraphQLRateLimit = &struct {
-				Limit     int
-				Remaining int
-				ResetAt   githubv4.DateTime
-			}{
-				Limit:     q.RateLimit.Limit,
-				Remaining: q.RateLimit.Remaining,
-				ResetAt:   q.RateLimit.ResetAt,
+			// Use cached SAML identity instead of per-user GraphQL query.
+			// Skip GetByID - we have the identity data we need from SAML cache.
+			ghUser = user
+			login := strings.ToLower(user.GetLogin())
+			key := orgSAMLKeyPrefix + orgName + ":" + login
+			if ident, ok := orgSAMLIdentities[key]; ok {
+				userEmail = ident.PrimaryEmail
+				extraEmails = ident.ExtraEmails
 			}
 
 		case samlStateEnterprise:
-			key := enterpriseSAMLKeyPrefix + strings.ToLower(ghUser.GetLogin())
+			// Use cached SAML email. Skip GetByID - we have email from consumed licenses.
+			ghUser = user
+			key := enterpriseSAMLKeyPrefix + strings.ToLower(user.GetLogin())
 			if samlEmail, ok := enterpriseSAMLEmails[key]; ok && isEmail(samlEmail) {
 				userEmail = samlEmail
 			}
 
 		case samlStateDisabled:
-			// no SAML enrichment
+			// No SAML - need to call GetByID to get email
+			var res *github.Response
+			ghUser, res, err = u.client.Users.GetByID(ctx, user.GetID())
+			if err != nil {
+				// This undocumented API can return 404 for some users. If this fails it means we won't get some of their details like email
+				if isNotFoundError(res) {
+					l.Warn("error fetching user by id", zap.Error(err), zap.Int64("user_id", user.GetID()))
+					ghUser = user
+				} else {
+					return nil, nil, wrapGitHubError(err, res, "github-connector: failed to get user by id")
+				}
+			}
+			userEmail = ghUser.GetEmail()
 		}
 
 		ur, err := userResource(ctx, ghUser, userEmail, extraEmails)
@@ -286,14 +293,6 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 		rv = append(rv, ur)
 	}
 	annotations.WithRateLimiting(restApiRateLimit)
-	if lastGraphQLRateLimit != nil && int64(lastGraphQLRateLimit.Remaining) < restApiRateLimit.Remaining {
-		graphqlRateLimit := &v2.RateLimitDescription{
-			Limit:     int64(lastGraphQLRateLimit.Limit),
-			Remaining: int64(lastGraphQLRateLimit.Remaining),
-			ResetAt:   timestamppb.New(lastGraphQLRateLimit.ResetAt.Time),
-		}
-		annotations.WithRateLimiting(graphqlRateLimit)
-	}
 
 	return rv, &resource.SyncOpResults{
 		NextPageToken: pageToken,
@@ -509,4 +508,116 @@ func loadEnterpriseSAMLEmails(ctx context.Context, ss sessions.SessionStore) (ma
 		return nil, fmt.Errorf("baton-github: error reading enterprise SAML mappings: %w", err)
 	}
 	return samlByLogin, nil
+}
+
+// fetchAndStoreOrgSAML pages through the org's SAML external identities via GraphQL,
+// aggregates the login-to-SAML-identity mappings, and writes them to the session store.
+// This avoids N+1 GraphQL queries when syncing users for orgs with SAML enabled.
+func (u *userResourceType) fetchAndStoreOrgSAML(ctx context.Context, ss sessions.SessionStore, orgName string) error {
+	l := ctxzap.Extract(ctx)
+	samlByLogin := make(map[string]SAMLIdentity)
+
+	var cursor *githubv4.String
+	for {
+		q := batchSAMLQuery{}
+		variables := map[string]interface{}{
+			"orgLoginName": githubv4.String(orgName),
+			"cursor":       cursor,
+		}
+		err := u.graphqlClient.Query(ctx, &q, variables)
+		if err != nil {
+			return fmt.Errorf("baton-github: error fetching org SAML identities for %s: %w", orgName, err)
+		}
+
+		for _, edge := range q.Organization.SamlIdentityProvider.ExternalIdentities.Edges {
+			if edge.Node.User.Login == "" {
+				continue
+			}
+			login := strings.ToLower(edge.Node.User.Login)
+			key := orgSAMLKeyPrefix + orgName + ":" + login
+
+			ident := SAMLIdentity{}
+			// Extract primary email from NameId or first email
+			if edge.Node.SamlIdentity.NameId != "" && isEmail(edge.Node.SamlIdentity.NameId) {
+				ident.PrimaryEmail = edge.Node.SamlIdentity.NameId
+			}
+			for _, email := range edge.Node.SamlIdentity.Emails {
+				if !isEmail(email.Value) {
+					continue
+				}
+				if ident.PrimaryEmail == "" {
+					ident.PrimaryEmail = email.Value
+				} else if email.Value != ident.PrimaryEmail {
+					ident.ExtraEmails = append(ident.ExtraEmails, email.Value)
+				}
+			}
+			if ident.PrimaryEmail != "" {
+				samlByLogin[key] = ident
+			}
+		}
+
+		if !q.Organization.SamlIdentityProvider.ExternalIdentities.PageInfo.HasNextPage {
+			break
+		}
+		cursor = &q.Organization.SamlIdentityProvider.ExternalIdentities.PageInfo.EndCursor
+	}
+
+	// Store identities in session
+	keyIndex := orgSAMLKeysIndexPrefix + orgName
+	keys := make([]string, 0, len(samlByLogin))
+
+	// Convert map to string values for SetManyJSON
+	stringMap := make(map[string]string, len(samlByLogin))
+	for k, v := range samlByLogin {
+		keys = append(keys, k)
+		// Serialize SAMLIdentity to JSON string for storage
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Errorf("baton-github: error serializing SAML identity: %w", err)
+		}
+		stringMap[k] = string(data)
+	}
+
+	if len(stringMap) > 0 {
+		if err := session.SetManyJSON(ctx, ss, stringMap); err != nil {
+			return fmt.Errorf("baton-github: error storing org SAML mappings: %w", err)
+		}
+	}
+	// Always write the key index
+	if err := session.SetJSON(ctx, ss, keyIndex, keys); err != nil {
+		return fmt.Errorf("baton-github: error storing org SAML key index: %w", err)
+	}
+
+	l.Debug("stored org SAML mappings in session", zap.String("org", orgName), zap.Int("count", len(samlByLogin)))
+	return nil
+}
+
+// loadOrgSAMLIdentities bulk-reads all org SAML mappings from the session store.
+// Returns a map of "org_saml:<org>:<login>" -> SAMLIdentity for local lookups.
+func loadOrgSAMLIdentities(ctx context.Context, ss sessions.SessionStore, orgName string) (map[string]SAMLIdentity, error) {
+	keyIndex := orgSAMLKeysIndexPrefix + orgName
+	keys, found, err := session.GetJSON[[]string](ctx, ss, keyIndex)
+	if err != nil {
+		return nil, fmt.Errorf("baton-github: error reading org SAML key index: %w", err)
+	}
+	if !found || len(keys) == 0 {
+		return nil, nil
+	}
+
+	stringMap, err := session.GetManyJSON[string](ctx, ss, keys)
+	if err != nil {
+		return nil, fmt.Errorf("baton-github: error reading org SAML mappings: %w", err)
+	}
+
+	// Deserialize JSON strings back to SAMLIdentity
+	result := make(map[string]SAMLIdentity, len(stringMap))
+	for k, v := range stringMap {
+		var ident SAMLIdentity
+		if err := json.Unmarshal([]byte(v), &ident); err != nil {
+			// Skip malformed entries
+			continue
+		}
+		result[k] = ident
+	}
+	return result, nil
 }
