@@ -395,7 +395,7 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			return nil, wrapGitHubError(er, resp, "github-connector: failed to add user to repository")
 		}
 	case resourceTypeTeam.Id:
-		team, resp, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
+		team, resp, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID)
 		if err != nil {
 			return nil, wrapGitHubError(err, resp, "github-connector: failed to get team")
 		}
@@ -453,7 +453,7 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 			return nil, wrapGitHubError(er, resp, "github-connector: failed to remove user from repository")
 		}
 	case resourceTypeTeam.Id:
-		team, resp, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
+		team, resp, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID)
 		if err != nil {
 			return nil, wrapGitHubError(err, resp, "github-connector: failed to get team")
 		}
