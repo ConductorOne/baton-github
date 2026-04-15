@@ -174,8 +174,8 @@
     },
     {
       "name": "direct-collaborators-only",
-      "displayName": "Sync only direct repository collaborators",
-      "description": "When enabled, only sync users with direct repository access (not team-based). Team-based access is discovered via grant expansion. Reduces API calls for large orgs.",
+      "displayName": "Optimize sync for large organizations",
+      "description": "Reduces API calls by using grant expansion for team-based repo access and skipping per-team detail fetches. Recommended for large orgs.",
       "boolField": {}
     }
   ],

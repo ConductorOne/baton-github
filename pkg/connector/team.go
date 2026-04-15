@@ -60,9 +60,10 @@ func teamResource(team *github.Team, orgID int64, parentResourceID *v2.ResourceI
 }
 
 type teamResourceType struct {
-	resourceType *v2.ResourceType
-	client       *github.Client
-	orgCache     *orgNameCache
+	resourceType            *v2.ResourceType
+	client                  *github.Client
+	orgCache                *orgNameCache
+	directCollaboratorsOnly bool
 }
 
 func (o *teamResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -107,10 +108,16 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	}
 
 	for _, team := range teams {
-		// Use team data directly from ListTeams() to avoid N+1 API calls.
-		// Note: members_count and repos_count won't be populated, but orgID
-		// is passed explicitly since we already have it from the parent resource.
-		tr, err := teamResource(team, orgID, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
+		teamData := team
+		if !o.directCollaboratorsOnly {
+			fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
+			if err != nil {
+				return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get team details")
+			}
+			teamData = fullTeam
+		}
+
+		tr, err := teamResource(teamData, orgID, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -369,10 +376,11 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 	return nil, nil
 }
 
-func teamBuilder(client *github.Client, orgCache *orgNameCache) *teamResourceType {
+func teamBuilder(client *github.Client, orgCache *orgNameCache, directCollaboratorsOnly bool) *teamResourceType {
 	return &teamResourceType{
-		resourceType: resourceTypeTeam,
-		client:       client,
-		orgCache:     orgCache,
+		resourceType:            resourceTypeTeam,
+		client:                  client,
+		orgCache:                orgCache,
+		directCollaboratorsOnly: directCollaboratorsOnly,
 	}
 }
