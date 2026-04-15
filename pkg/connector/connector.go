@@ -44,18 +44,18 @@ var (
 	resourceTypeOrg = &v2.ResourceType{
 		Id:          "org",
 		DisplayName: "Org",
-		Annotations: v1AnnotationsForResourceType("org"),
+		Annotations: skipEntitlementsAnnotations("org"),
 	}
 	resourceTypeTeam = &v2.ResourceType{
 		Id:          "team",
 		DisplayName: "Team",
 		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_GROUP},
-		Annotations: v1AnnotationsForResourceType("team"),
+		Annotations: skipEntitlementsAnnotations("team"),
 	}
 	resourceTypeRepository = &v2.ResourceType{
 		Id:          "repository",
 		DisplayName: "Repository",
-		Annotations: v1AnnotationsForResourceType("repository"),
+		Annotations: skipEntitlementsAnnotations("repository"),
 	}
 	resourceTypeUser = &v2.ResourceType{
 		Id:          "user",
@@ -83,13 +83,13 @@ var (
 		Id:          "org_role",
 		DisplayName: "Organization Role",
 		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_ROLE},
-		Annotations: v1AnnotationsForResourceType("org_role"),
+		Annotations: skipEntitlementsAnnotations("org_role"),
 	}
 	resourceTypeEnterpriseRole = &v2.ResourceType{
 		Id:          "enterprise_role",
 		DisplayName: "Enterprise Role",
 		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_ROLE},
-		Annotations: v1AnnotationsForResourceType("enterprise_role"),
+		Annotations: skipEntitlementsAnnotations("enterprise_role"),
 	}
 )
 
