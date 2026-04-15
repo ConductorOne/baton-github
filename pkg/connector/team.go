@@ -110,7 +110,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	for _, team := range teams {
 		teamData := team
 		if !o.directCollaboratorsOnly {
-			fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
+			fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck,nolintlint // TODO: migrate to GetTeamBySlug
 			if err != nil {
 				return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get team details")
 			}
