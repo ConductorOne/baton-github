@@ -85,6 +85,13 @@ func v1AnnotationsForResourceType(resourceTypeID string) annotations.Annotations
 	return annos
 }
 
+func skipEntitlementsAnnotations(resourceTypeID string) annotations.Annotations {
+	annos := v1AnnotationsForResourceType(resourceTypeID)
+	annos.Update(&v2.SkipEntitlements{})
+
+	return annos
+}
+
 // parseResourceToGitHub returns the upstream API ID by looking at the last 'part' of the resource ID.
 func parseResourceToGitHub(id *v2.ResourceId) (int64, error) {
 	idParts := strings.Split(id.Resource, ":")

@@ -126,14 +126,15 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 }
 
 func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ resourceSdk.SyncOpAttrs) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
+	return nil, nil, nil
+}
+
+func (o *repositoryResourceType) StaticEntitlements(_ context.Context, _ resourceSdk.SyncOpAttrs) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
 	rv := make([]*v2.Entitlement, 0, len(repoAccessLevels))
 	for _, level := range repoAccessLevels {
-		rv = append(rv, entitlement.NewPermissionEntitlement(resource, level,
-			entitlement.WithDisplayName(fmt.Sprintf("%s Repo %s", resource.DisplayName, titleCase(level))),
-			entitlement.WithDescription(fmt.Sprintf("Access to %s repository in GitHub", resource.DisplayName)),
-			entitlement.WithAnnotation(&v2.V1Identifier{
-				Id: fmt.Sprintf("repo:%s:role:%s", resource.Id.Resource, level),
-			}),
+		rv = append(rv, entitlement.NewPermissionEntitlement(nil, level,
+			entitlement.WithDisplayName(fmt.Sprintf("Repo %s", titleCase(level))),
+			entitlement.WithDescription(fmt.Sprintf("Access to repository in GitHub as %s", level)),
 			entitlement.WithGrantableTo(resourceTypeUser, resourceTypeTeam),
 		))
 	}
