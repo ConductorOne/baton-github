@@ -159,21 +159,22 @@ func (o *orgResourceType) Entitlements(
 	resource *v2.Resource,
 	_ resourceSdk.SyncOpAttrs,
 ) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
+	return nil, nil, nil
+}
+
+func (o *orgResourceType) StaticEntitlements(
+	_ context.Context,
+	_ resourceSdk.SyncOpAttrs,
+) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
 	rv := make([]*v2.Entitlement, 0, len(orgAccessLevels))
-	rv = append(rv, entitlement.NewAssignmentEntitlement(resource, orgRoleMember,
-		entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCase(orgRoleMember))),
-		entitlement.WithDescription(fmt.Sprintf("Access to %s org in GitHub", resource.DisplayName)),
-		entitlement.WithAnnotation(&v2.V1Identifier{
-			Id: fmt.Sprintf("org:%s:role:%s", resource.Id.Resource, orgRoleMember),
-		}),
+	rv = append(rv, entitlement.NewAssignmentEntitlement(nil, orgRoleMember,
+		entitlement.WithDisplayName("Org Member"),
+		entitlement.WithDescription("Access to org in GitHub as member"),
 		entitlement.WithGrantableTo(resourceTypeUser),
 	))
-	rv = append(rv, entitlement.NewPermissionEntitlement(resource, orgRoleAdmin,
-		entitlement.WithDisplayName(fmt.Sprintf("%s Org %s", resource.DisplayName, titleCase(orgRoleAdmin))),
-		entitlement.WithDescription(fmt.Sprintf("Access to %s org in GitHub", resource.DisplayName)),
-		entitlement.WithAnnotation(&v2.V1Identifier{
-			Id: fmt.Sprintf("org:%s:role:%s", resource.Id.Resource, orgRoleAdmin),
-		}),
+	rv = append(rv, entitlement.NewPermissionEntitlement(nil, orgRoleAdmin,
+		entitlement.WithDisplayName("Org Admin"),
+		entitlement.WithDescription("Access to org in GitHub as admin"),
 		entitlement.WithGrantableTo(resourceTypeUser),
 	))
 

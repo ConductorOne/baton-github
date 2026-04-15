@@ -117,13 +117,17 @@ func (o *orgRoleResourceType) Entitlements(
 	resource *v2.Resource,
 	_ resourceSdk.SyncOpAttrs,
 ) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
+	return nil, nil, nil
+}
+
+func (o *orgRoleResourceType) StaticEntitlements(
+	_ context.Context,
+	_ resourceSdk.SyncOpAttrs,
+) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
 	rv := make([]*v2.Entitlement, 0, 1)
-	rv = append(rv, entitlement.NewAssignmentEntitlement(resource, "assigned",
-		entitlement.WithDisplayName(resource.DisplayName),
-		entitlement.WithDescription(fmt.Sprintf("Assignment to %s role in GitHub", resource.DisplayName)),
-		entitlement.WithAnnotation(&v2.V1Identifier{
-			Id: fmt.Sprintf("org_role:%s", resource.Id.Resource),
-		}),
+	rv = append(rv, entitlement.NewAssignmentEntitlement(nil, "assigned",
+		entitlement.WithDisplayName("Role Assigned"),
+		entitlement.WithDescription("Assignment to role in GitHub"),
 		entitlement.WithGrantableTo(resourceTypeUser),
 	))
 
