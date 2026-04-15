@@ -30,12 +30,15 @@ var teamAccessLevels = []string{
 }
 
 // teamResource creates a new connector resource for a GitHub Team. It is possible that the team has a parent resource.
-func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+// orgID must be passed explicitly since ListTeams() doesn't return the full organization object.
+func teamResource(team *github.Team, orgID int64, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	profile := map[string]interface{}{
+		// Note: members_count and repos_count are only populated when fetching
+		// individual teams. We skip the per-team API call to avoid N+1 requests.
 		"members_count": team.GetMembersCount(),
 		"repos_count":   team.GetReposCount(),
 		// Store the org ID in the profile so that we can reference it when calculating grants
-		"orgID": team.GetOrganization().GetID(),
+		"orgID": orgID,
 	}
 
 	ret, err := rType.NewGroupResource(
@@ -57,9 +60,10 @@ func teamResource(team *github.Team, parentResourceID *v2.ResourceId) (*v2.Resou
 }
 
 type teamResourceType struct {
-	resourceType *v2.ResourceType
-	client       *github.Client
-	orgCache     *orgNameCache
+	resourceType            *v2.ResourceType
+	client                  *github.Client
+	orgCache                *orgNameCache
+	directCollaboratorsOnly bool
 }
 
 func (o *teamResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -104,12 +108,16 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	}
 
 	for _, team := range teams {
-		fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck // TODO: migrate to GetTeamBySlug
-		if err != nil {
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get team details")
+		teamData := team
+		if !o.directCollaboratorsOnly {
+			fullTeam, resp, err := o.client.Teams.GetTeamByID(ctx, orgID, team.GetID()) //nolint:staticcheck,nolintlint // TODO: migrate to GetTeamBySlug
+			if err != nil {
+				return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get team details")
+			}
+			teamData = fullTeam
 		}
 
-		tr, err := teamResource(fullTeam, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
+		tr, err := teamResource(teamData, orgID, &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: fmt.Sprintf("%d", orgID)})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -368,10 +376,11 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 	return nil, nil
 }
 
-func teamBuilder(client *github.Client, orgCache *orgNameCache) *teamResourceType {
+func teamBuilder(client *github.Client, orgCache *orgNameCache, directCollaboratorsOnly bool) *teamResourceType {
 	return &teamResourceType{
-		resourceType: resourceTypeTeam,
-		client:       client,
-		orgCache:     orgCache,
+		resourceType:            resourceTypeTeam,
+		client:                  client,
+		orgCache:                orgCache,
+		directCollaboratorsOnly: directCollaboratorsOnly,
 	}
 }

@@ -59,6 +59,20 @@ var (
 		field.WithDisplayName("Omit syncing archived repositories"),
 		field.WithDescription("Whether to skip syncing archived repositories or not"),
 	)
+	// directCollaboratorsOnly enables performance optimizations for large orgs:
+	// 1. Repo grants: ListCollaborators uses "direct" affiliation instead of "all",
+	//    so team-based users are discovered via grant expansion instead of pagination.
+	// 2. Org→repo expansion: adds expandable grants from org admin/member entitlements
+	//    to repo permissions based on the org's default_repository_permission setting.
+	// 3. Team sync: skips per-team GetTeamByID calls (members_count/repos_count become zero).
+	directCollaboratorsOnly = field.BoolField(
+		"direct-collaborators-only",
+		field.WithDisplayName("Optimize sync for large organizations"),
+		field.WithDescription(
+			"Reduces API calls by using grant expansion for team-based repo access "+
+				"and skipping per-team detail fetches. Recommended for large orgs.",
+		),
+	)
 	orgField = field.StringField(
 		"org",
 		field.WithDisplayName("Github App Organization"),
@@ -79,6 +93,7 @@ var Config = field.NewConfiguration(
 		orgField,
 		syncSecrets,
 		omitArchivedRepositories,
+		directCollaboratorsOnly,
 	},
 	field.WithConnectorDisplayName("GitHub v2"),
 	field.WithHelpUrl("/docs/baton/github-v2"),
@@ -88,14 +103,14 @@ var Config = field.NewConfiguration(
 			Name:        GithubPersonalAccessTokenGroup,
 			DisplayName: "Personal access token",
 			HelpText:    "Use a personal access token for authentication.",
-			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories},
+			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories, directCollaboratorsOnly},
 			Default:     true,
 		},
 		{
 			Name:        GithubAppGroup,
 			DisplayName: "GitHub app",
 			HelpText:    "Use a github app for authentication",
-			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgField, syncSecrets, omitArchivedRepositories},
+			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgField, syncSecrets, omitArchivedRepositories, directCollaboratorsOnly},
 			Default:     false,
 		},
 	}),

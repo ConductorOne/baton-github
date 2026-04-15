@@ -219,6 +219,11 @@ func (o *orgRoleResourceType) Grants(
 			rv = append(rv, grant)
 		}
 	case resourceTypeTeam.Id:
+		orgID, err := parseResourceToGitHub(resource.ParentResourceId)
+		if err != nil {
+			return nil, nil, err
+		}
+
 		listOpts := &github.ListOptions{
 			Page:    page,
 			PerPage: maxPageSize,
@@ -256,21 +261,21 @@ func (o *orgRoleResourceType) Grants(
 
 		// Create expandable grants for teams. To show inherited roles, we need to show the teams that have the role.
 		for _, team := range teams {
-			teamResource, err := teamResource(team, resource.ParentResourceId)
+			tr, err := teamResource(team, orgID, resource.ParentResourceId)
 			if err != nil {
 				return nil, nil, err
 			}
 			rv = append(rv, grant.NewGrant(
 				resource,
 				"assigned",
-				teamResource.Id,
+				tr.Id,
 				grant.WithAnnotation(&v2.V1Identifier{
 					Id: fmt.Sprintf("org-role-grant:%s:%d:%s", resource.Id.Resource, team.GetID(), "assigned"),
 				},
 					&v2.GrantExpandable{
 						EntitlementIds: []string{
-							entitlement.NewEntitlementID(teamResource, teamRoleMaintainer),
-							entitlement.NewEntitlementID(teamResource, teamRoleMember),
+							entitlement.NewEntitlementID(tr, teamRoleMaintainer),
+							entitlement.NewEntitlementID(tr, teamRoleMember),
 						},
 						Shallow: true,
 					},

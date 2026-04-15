@@ -25,10 +25,10 @@ func TestTeam(t *testing.T) {
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
-		client := teamBuilder(githubClient, cache)
+		client := teamBuilder(githubClient, cache, false)
 
 		organization, _ := organizationResource(ctx, githubOrganization, nil, false)
-		team, _ := teamResource(githubTeam, organization.Id)
+		team, _ := teamResource(githubTeam, githubOrganization.GetID(), organization.Id)
 		user, _ := userResource(ctx, githubUser, *githubUser.Email, nil)
 
 		entitlement := v2.Entitlement{

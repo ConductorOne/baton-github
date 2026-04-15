@@ -103,15 +103,16 @@ type GitHub struct {
 	orgCache                    *orgNameCache
 	syncSecrets                 bool
 	omitArchivedRepositories    bool
+	directCollaboratorsOnly     bool
 	enterprises                 []string
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
 	resourceSyncers := []connectorbuilder.ResourceSyncerV2{
 		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
-		teamBuilder(gh.client, gh.orgCache),
+		teamBuilder(gh.client, gh.orgCache, gh.directCollaboratorsOnly),
 		userBuilder(gh.client, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises),
-		repositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories),
+		repositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories, gh.directCollaboratorsOnly),
 		orgRoleBuilder(gh.client, gh.orgCache),
 		invitationBuilder(invitationBuilderParams{
 			client:   gh.client,
@@ -308,6 +309,7 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		orgCache:                 newOrgNameCache(ghClient),
 		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
+		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
 	}, nil
 }
 
@@ -388,6 +390,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		orgCache:                 newOrgNameCache(ghClient),
 		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
+		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
 	}
 	return gh, nil
 }
