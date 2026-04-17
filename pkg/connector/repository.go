@@ -39,6 +39,16 @@ var repoAccessLevels = []string{
 	repoPermissionAdmin,
 }
 
+// repoPermissionDisplayName maps GitHub API permission names to their
+// user-facing role names as shown in the GitHub UI.
+var repoPermissionDisplayName = map[string]string{
+	repoPermissionPull:     "Read",
+	repoPermissionTriage:   "Triage",
+	repoPermissionPush:     "Write",
+	repoPermissionMaintain: "Maintain",
+	repoPermissionAdmin:    "Admin",
+}
+
 // repositoryResource returns a new connector resource for a GitHub repository.
 func repositoryResource(ctx context.Context, repo *github.Repository, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	ret, err := resourceSdk.NewResource(
@@ -132,9 +142,10 @@ func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Re
 func (o *repositoryResourceType) StaticEntitlements(_ context.Context, _ resourceSdk.SyncOpAttrs) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
 	rv := make([]*v2.Entitlement, 0, len(repoAccessLevels))
 	for _, level := range repoAccessLevels {
+		displayName := repoPermissionDisplayName[level]
 		rv = append(rv, entitlement.NewPermissionEntitlement(nil, level,
-			entitlement.WithDisplayName(fmt.Sprintf("Repo %s", titleCase(level))),
-			entitlement.WithDescription(fmt.Sprintf("Access to repository in GitHub as %s", level)),
+			entitlement.WithDisplayName(fmt.Sprintf("Repo %s", displayName)),
+			entitlement.WithDescription(fmt.Sprintf("Access to repository in GitHub with %s role", displayName)),
 			entitlement.WithGrantableTo(resourceTypeUser, resourceTypeTeam),
 		))
 	}
