@@ -1,28 +1,29 @@
 <!-- This file is managed by baton-admin. DO NOT EDIT. -->
 ---
 name: c1-connector-docs
-description: Write connector documentation for ConductorOne following the established template structure. Use when creating or updating docs/connector.mdx in a connector repo, or reviewing connector documentation. Ensures consistency with the standardized connector doc format including capabilities tables, credential gathering, and cloud/self-hosted configuration tabs.
+description: Write connector documentation for C1 following the established template structure. Use when creating new connector docs in /baton/, updating existing connector pages, or reviewing connector documentation. Ensures consistency with the standardized connector doc format including capabilities tables, credential gathering, and cloud/self-hosted configuration tabs.
 ---
 
-# ConductorOne Connector Documentation
+# C1 Connector Documentation
 
-Write connector documentation as `docs/connector.mdx` in each connector repo, following ConductorOne's standardized template.
+Write connector documentation for the `/baton/` directory following C1's standardized template.
 
 ## When to Use This Skill
 
 Use this skill when:
-- Creating new connector documentation (`docs/connector.mdx`)
-- Updating the existing `docs/connector.mdx` in this repo
+- Creating new connector documentation
+- Updating existing connector docs
 - Reviewing connector documentation for consistency
 - Converting connector information into proper doc format
 
 ## File Format
 
-**Location:** `docs/connector.mdx` in the connector repo root.
+**Location:** Connector docs live in the connector's GitHub repository in the [C1 organization](https://github.com/ConductorOne), not in this docs repo. Search for the connector repo by name (e.g., `baton-okta`, `baton-salesforce`) to find the right repo.
 
-**Format:** Mintlify-compatible MDX (markdown + JSX components).
+**Naming:** The doc file should be named `docs.mdx` and placed in the root or a `docs/` directory of the connector repo, following the convention already established in that repo.
 
-The file is the source of truth for this connector's documentation. On release, it is published to the ConductorOne docs site at `conductorone.com/docs/baton/{connector-slug}`.
+**Naming convention:** Use lowercase, hyphenated names matching the GitHub repo name.
+- Example: `baton-boomi` repo → connector doc lives in `github.com/conductorone/baton-boomi`
 
 ## Information Checklist
 
@@ -69,11 +70,25 @@ Gather this information before writing:
 ---
 title: "Set up a [Connector Name] connector"
 og:title: "Set up a [Connector Name] connector"
-description: "ConductorOne provides identity governance and just-in-time provisioning for [App Name]. Integrate your [App Name] instance with ConductorOne to run user access reviews (UARs), enable just-in-time access requests, and automatically provision and deprovision access."
+description: "[See variants below]"
 og:description: "[Same as description]"
 sidebarTitle: "[Connector Name]"
 ---
 ```
+
+**`description` and `og:description` must always match.** Choose the correct variant based on whether the connector supports provisioning — check the Provision column of the capabilities table.
+
+**If the connector supports provisioning** (at least one resource has a checkmark in the Provision column):
+```
+"C1 provides identity governance and just-in-time provisioning for [App Name]. Integrate your [App Name] instance with C1 to run user access reviews (UARs), enable just-in-time access requests, and automatically provision and deprovision access."
+```
+
+**If the connector does not support provisioning** (no resources have a Provision checkmark):
+```
+"C1 provides identity governance for [App Name]. Integrate your [App Name] instance with C1 for unified visibility and governance over user access."
+```
+
+Use the connector's short product name (e.g., "Looker", not "Google Looker") in the description, even if the `sidebarTitle` uses the full parent-company-qualified name.
 
 ### Section Order
 
@@ -122,12 +137,12 @@ We recommend closely monitoring workflows that use this connector and contacting
 
 | Resource | Sync | Provision |
 | :--- | :--- | :--- |
-| Accounts | <Icon icon="square-check" iconType="solid" color="#65DE23"/> | <Icon icon="square-check" iconType="solid" color="#65DE23"/> |
-| Groups | <Icon icon="square-check" iconType="solid" color="#65DE23"/> | |
-| Roles | <Icon icon="square-check" iconType="solid" color="#65DE23"/> | |
+| Accounts | <Icon icon="square-check" iconType="solid" color="#c937ae"/> | <Icon icon="square-check" iconType="solid" color="#c937ae"/> |
+| Groups | <Icon icon="square-check" iconType="solid" color="#c937ae"/> | |
+| Roles | <Icon icon="square-check" iconType="solid" color="#c937ae"/> | |
 
 **Additional functionality:**
-The [App Name] connector supports [automatic account provisioning](/docs/product/admin/account-provisioning).
+The [App Name] connector supports [automatic account provisioning](/product/admin/account-provisioning).
 
 **Notes:**
 - [Important capability details]
@@ -135,17 +150,17 @@ The [App Name] connector supports [automatic account provisioning](/docs/product
 ```
 
 **Icon reference:**
-- Checkmark: `<Icon icon="square-check" iconType="solid" color="#65DE23"/>`
+- Checkmark: `<Icon icon="square-check" iconType="solid" color="#c937ae"/>`
 - Empty cell: Leave blank (no icon)
 
 ### Connector Actions Section (if applicable)
 
-Some connectors support custom actions that can be used in ConductorOne automations. Add this section after the Capabilities table if the connector supports actions.
+Some connectors support custom actions that can be used in C1 automations. Add this section after the Capabilities table if the connector supports actions.
 
 ```mdx
 ### Connector actions
 
-Connector actions are custom capabilities that extend ConductorOne automations with app-specific operations. You can use connector actions in the [Perform connector action](/product/admin/automations-steps-reference#perform-connector-action) automation step.
+Connector actions are custom capabilities that extend C1 automations with app-specific operations. You can use connector actions in the [Perform connector action](/product/admin/automations-steps-reference#perform-connector-action) automation step.
 
 | Action name | Additional fields | Description |
 |-------------|-------------------|-------------|
@@ -206,13 +221,13 @@ To configure the [App Name] connector, you need [specific permission level] perm
 
     1. Navigate to [location]
     2. Click **[Button]**
-    3. Enter a name: `ConductorOne`
+    3. Enter a name: `C1`
     4. Select the following scopes:
        - `scope:name` - [What this enables]
        - `scope:name` - [What this enables]
 
     <Warning>
-    The **scope:name** scope is used by ConductorOne when automatically provisioning access. **If you do not want ConductorOne to perform these tasks, do not grant this scope.**
+    The **scope:name** scope is used by C1 when automatically provisioning access. **If you do not want C1 to perform these tasks, do not grant this scope.**
     </Warning>
 
     5. Click **[Generate/Create]**
@@ -232,11 +247,11 @@ For more information, see [link to vendor docs].
 
 <Tabs>
   <Tab title="Cloud-hosted">
-    Follow these instructions to use a built-in, no-code connector hosted by ConductorOne.
+    Follow these instructions to use a built-in, no-code connector hosted by C1.
 
     <Steps>
       <Step>
-        In ConductorOne, navigate to **Integrations** > **Connectors** and click **Add connector**.
+        In C1, navigate to **Integrations** > **Connectors** and click **Add connector**.
       </Step>
 
       <Step>
@@ -246,15 +261,15 @@ For more information, see [link to vendor docs].
       <Step>
         Choose how to set up the new [App Name] connector:
 
-        - Add the connector to a currently unmanaged app (select from the list of apps that were discovered in your identity, SSO, or federation provider that aren't yet managed with ConductorOne)
+        - Add the connector to a currently unmanaged app (select from the list of apps that were discovered in your identity, SSO, or federation provider that aren't yet managed with C1)
         - Add the connector to a managed app (select from the list of existing managed apps)
         - Create a new managed app
       </Step>
 
       <Step>
-        Set the owner for this connector. You can manage the connector yourself, or choose someone else from the list of ConductorOne users. Setting multiple owners is allowed.
+        Set the owner for this connector. You can manage the connector yourself, or choose someone else from the list of C1 users. Setting multiple owners is allowed.
 
-        If you choose someone else, ConductorOne will notify the new connector owner by email that their help is needed to complete the setup process.
+        If you choose someone else, C1 will notify the new connector owner by email that their help is needed to complete the setup process.
       </Step>
 
       <Step>
@@ -281,19 +296,19 @@ For more information, see [link to vendor docs].
       </Step>
     </Steps>
 
-    **That's it!** Your [App Name] connector is now pulling access data into ConductorOne.
+    **Done.** Your [App Name] connector is now pulling access data into C1.
   </Tab>
 
   <Tab title="Self-hosted">
-    Follow these instructions to use the [App Name](https://github.com/ConductorOne/baton-[connector-name]) connector, hosted and run in your own environment.
+    Follow these instructions to use the [App Name](https://github.com/conductorone/baton-[connector-name]) connector, hosted and run in your own environment.
 
-    When running in service mode on Kubernetes, a self-hosted connector maintains an ongoing connection with ConductorOne, automatically syncing and uploading data at regular intervals. This data is immediately available in the ConductorOne UI for access reviews and access requests.
+    When running in service mode on Kubernetes, a self-hosted connector maintains an ongoing connection with C1, automatically syncing and uploading data at regular intervals. This data is immediately available in the C1 UI for access reviews and access requests.
 
     ### Step 1: Set up a new [App Name] connector
 
     <Steps>
       <Step>
-        In ConductorOne, navigate to **Integrations** > **Connectors** > **Add connector**.
+        In C1, navigate to **Integrations** > **Connectors** > **Add connector**.
       </Step>
 
       <Step>
@@ -303,15 +318,15 @@ For more information, see [link to vendor docs].
       <Step>
         Choose how to set up the new [App Name] connector:
 
-        - Add the connector to a currently unmanaged app (select from the list of apps that were discovered in your identity, SSO, or federation provider that aren't yet managed with ConductorOne)
+        - Add the connector to a currently unmanaged app (select from the list of apps that were discovered in your identity, SSO, or federation provider that aren't yet managed with C1)
         - Add the connector to a managed app (select from the list of existing managed apps)
         - Create a new managed app
       </Step>
 
       <Step>
-        Set the owner for this connector. You can manage the connector yourself, or choose someone else from the list of ConductorOne users. Setting multiple owners is allowed.
+        Set the owner for this connector. You can manage the connector yourself, or choose someone else from the list of C1 users. Setting multiple owners is allowed.
 
-        If you choose someone else, ConductorOne will notify the new connector owner by email that their help is needed to complete the setup process.
+        If you choose someone else, C1 will notify the new connector owner by email that their help is needed to complete the setup process.
       </Step>
 
       <Step>
@@ -343,15 +358,15 @@ For more information, see [link to vendor docs].
       name: baton-[connector-name]-secrets
     type: Opaque
     stringData:
-      # ConductorOne credentials
-      BATON_CLIENT_ID: <ConductorOne client ID>
-      BATON_CLIENT_SECRET: <ConductorOne client secret>
+      # C1 credentials
+      BATON_CLIENT_ID: <C1 client ID>
+      BATON_CLIENT_SECRET: <C1 client secret>
 
       # [App Name] credentials
       BATON_[APP]_[CREDENTIAL_1]: <Your [credential 1]>
       BATON_[APP]_[CREDENTIAL_2]: <Your [credential 2]>
 
-      # Optional: include if you want ConductorOne to provision access using this connector
+      # Optional: include if you want C1 to provision access using this connector
       BATON_PROVISIONING: true
     ```
 
@@ -394,15 +409,15 @@ For more information, see [link to vendor docs].
 
     <Steps>
       <Step>
-        Create a namespace in which to run ConductorOne connectors (if desired), then apply the secret config and deployment config files.
+        Create a namespace in which to run C1 connectors (if desired), then apply the secret config and deployment config files.
       </Step>
 
       <Step>
-        Check that the connector data uploaded correctly. In ConductorOne, click **Applications**. On the **Managed apps** tab, locate and click the name of the application you added the [App Name] connector to. [App Name] data should be found on the **Entitlements** and **Accounts** tabs.
+        Check that the connector data uploaded correctly. In C1, click **Applications**. On the **Managed apps** tab, locate and click the name of the application you added the [App Name] connector to. [App Name] data should be found on the **Entitlements** and **Accounts** tabs.
       </Step>
     </Steps>
 
-    **That's it!** Your [App Name] connector is now pulling access data into ConductorOne.
+    **Done.** Your [App Name] connector is now pulling access data into C1.
   </Tab>
 </Tabs>
 ```
@@ -450,8 +465,8 @@ Replace these consistently throughout:
 - File names in comments: `# baton-connector-name-secrets.yaml`
 
 ### Links
-- Product docs: `/docs/product/admin/provisioning`
-- GitHub repos: `https://github.com/ConductorOne/baton-[connector-name]`
+- Product docs: `/product/admin/provisioning` (never include `/docs/` — that produces a `/docs/docs/` double-prefix that 404s)
+- GitHub repos: `https://github.com/conductorone/baton-[connector-name]`
 - Always use full URLs for external links
 
 ---
@@ -462,7 +477,7 @@ Replace these consistently throughout:
 
 ```mdx
 <Warning>
-The **write::org** scope is used by ConductorOne when automatically provisioning and deprovisioning access. **If you do not want ConductorOne to perform these tasks, do not grant this scope.**
+The **write::org** scope is used by C1 when automatically provisioning and deprovisioning access. **If you do not want C1 to perform these tasks, do not grant this scope.**
 </Warning>
 ```
 
@@ -471,7 +486,7 @@ The **write::org** scope is used by ConductorOne when automatically provisioning
 Always end both tabs with:
 
 ```mdx
-**That's it!** Your [App Name] connector is now pulling access data into ConductorOne.
+**Done.** Your [App Name] connector is now pulling access data into C1.
 ```
 
 ### Multiple Authentication Options
@@ -517,6 +532,8 @@ Always end both tabs with:
 Before finalizing, verify:
 
 - [ ] Frontmatter is complete and properly formatted
+- [ ] `description` and `og:description` match each other
+- [ ] Description uses the provisioning variant only if at least one capability table row has a Provision checkmark; otherwise use the no-provisioning variant
 - [ ] All sections are in the correct order
 - [ ] Connector actions section included if `CAPABILITY_ACTIONS` is present in baton repo
 - [ ] Each `<Step>` contains only one primary action
