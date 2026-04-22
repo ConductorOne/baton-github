@@ -68,7 +68,17 @@ var (
 	resourceTypeInvitation = &v2.ResourceType{
 		Id:          "invitation",
 		DisplayName: "Invitation",
-		Traits:      []v2.ResourceType_Trait{},
+		// TRAIT_USER causes C1 uplift to create an AppUser for the pending
+		// invite so the identity is visible in admin views before acceptance.
+		// The invitation resource emits UserTrait_Status_STATUS_UNSPECIFIED
+		// (see invitation.go); uplift maps that to AppUserStatus_STATUS_
+		// UNSPECIFIED. Downstream consumers that only want accepted users
+		// (e.g., the IGA-1212 resume guard in c1) filter on
+		// AppUserStatus_STATUS_ENABLED — that value is only emitted by the
+		// user resource type (user.go), which lists accepted org members.
+		Traits: []v2.ResourceType_Trait{
+			v2.ResourceType_TRAIT_USER,
+		},
 		Annotations: v1AnnotationsForResourceType("invitation"),
 	}
 	resourceTypeApiToken = &v2.ResourceType{
