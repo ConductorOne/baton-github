@@ -131,7 +131,7 @@ func (i *invitationResourceType) CreateAccount(
 	annotations.Annotations,
 	error,
 ) {
-	params, err := getCreateUserParams(accountInfo)
+	params, err := getCreateUserParams(accountInfo, i.orgs)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("github-connectorv2: failed to get CreateUserParams: %w", err)
 	}
@@ -206,10 +206,15 @@ type createUserParams struct {
 	email *string
 }
 
-func getCreateUserParams(accountInfo *v2.AccountInfo) (*createUserParams, error) {
+func getCreateUserParams(accountInfo *v2.AccountInfo, configuredOrgs []string) (*createUserParams, error) {
 	pMap := accountInfo.Profile.AsMap()
-	org, ok := pMap["org"].(string)
-	if !ok || org == "" {
+
+	// Use org from account info profile if provided, otherwise fall back to the connector's configured org.
+	org, _ := pMap["org"].(string)
+	if org == "" && len(configuredOrgs) > 0 {
+		org = configuredOrgs[0]
+	}
+	if org == "" {
 		return nil, fmt.Errorf("org is required")
 	}
 
