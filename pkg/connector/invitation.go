@@ -295,7 +295,7 @@ func (i *invitationResourceType) lookupUser(ctx context.Context, login, email st
 		return nil, fmt.Errorf("github-connector: failed to search users by email: %w", err)
 	}
 	if len(result.Users) == 0 {
-		return nil, fmt.Errorf("github-connector: no user found with login %q or email %s", login, email)
+		return nil, fmt.Errorf("github-connector: no user found with login %q or email %q", login, email)
 	}
 	return userResource(ctx, result.Users[0], email, nil)
 }
