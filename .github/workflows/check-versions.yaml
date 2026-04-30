@@ -1,4 +1,4 @@
-# This file is managed by baton-admin. Do not edit.
+# This file is managed by baton-admin. DO NOT EDIT!!!
 name: Check versions
 on:
   pull_request:
