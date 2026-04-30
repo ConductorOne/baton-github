@@ -71,8 +71,12 @@ type C1File struct {
 	skipCleanup bool
 }
 
+// *C1File satisfies connectorstore.Writer (the connector-facing contract),
+// connectorstore.LatestFinishedSyncIDFetcher (narrow optional capability
+// added in PR #774), and dotc1z.C1ZStore (the internal sync-pipeline
+// contract asserted in c1file_store.go alongside the sub-store assertions).
 var (
-	_ connectorstore.InternalWriter              = (*C1File)(nil)
+	_ connectorstore.Writer                      = (*C1File)(nil)
 	_ connectorstore.LatestFinishedSyncIDFetcher = (*C1File)(nil)
 )
 
@@ -653,6 +657,50 @@ func (c *C1File) OutputFilepath() (string, error) {
 	}
 	return c.outputFilePath, nil
 }
+
+// CurrentDBSizeBytes returns the current total on-disk size of the underlying
+// uncompressed sqlite database, including the write-ahead log if present.
+// Used by operational tooling (e.g. the grant-expansion progress logger) to
+// observe c1z growth during long in-process writes without waiting for
+// saveC1z to land a new frame.
+//
+// The WAL file holds writes that have not yet been checkpointed into the main
+// database file; with journal_mode=WAL the main file may stay stable for long
+// stretches while the WAL grows into the hundreds of MB. Summing both gives a
+// representative "bytes written so far" figure during active expansion.
+//
+// This is the *uncompressed* size. The post-saveC1z c1z file size (compressed)
+// is smaller; for that, see the `c1z: saved` log line emitted by saveC1z.
+func (c *C1File) CurrentDBSizeBytes() (int64, error) {
+	if c.dbFilePath == "" {
+		return 0, fmt.Errorf("c1file: db file path is empty")
+	}
+	fi, err := os.Stat(c.dbFilePath)
+	if err != nil {
+		return 0, err
+	}
+	total := fi.Size()
+	// Add the WAL sidecar if it exists. `os.ErrNotExist` is expected (no WAL
+	// or journal_mode != WAL). Any *other* error — permission, EIO, stale
+	// handle, etc. — we surface: a silently-underreported WAL would defeat
+	// the growth-visibility purpose of this method (could hide hundreds of
+	// MB of pending writes).
+	switch wal, err := os.Stat(c.dbFilePath + "-wal"); {
+	case err == nil:
+		total += wal.Size()
+	case errors.Is(err, os.ErrNotExist):
+		// no WAL — fine.
+	default:
+		return 0, fmt.Errorf("c1file: stat wal sidecar: %w", err)
+	}
+	return total, nil
+}
+
+// Compile-time assertion that *C1File satisfies the DBSizeProvider capability
+// that ProgressLog.LogExpandProgress type-asserts against. Catches signature
+// drift (e.g. if someone adds a ctx parameter to CurrentDBSizeBytes) at
+// compile time instead of silently turning off the expand-log size fields.
+var _ connectorstore.DBSizeProvider = (*C1File)(nil)
 
 func (c *C1File) AttachFile(other *C1File, dbName string) (*C1FileAttached, error) {
 	_, err := c.db.Exec(`ATTACH DATABASE ? AS ?`, other.dbFilePath, dbName)
