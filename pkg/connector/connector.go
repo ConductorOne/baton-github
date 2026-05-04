@@ -96,17 +96,17 @@ var (
 )
 
 type GitHub struct {
-	orgs                        []string
-	client                      *github.Client
-	appClient                   *github.Client
-	customClient                *customclient.Client
-	instanceURL                 string
-	graphqlClient               *githubv4.Client
-	orgCache                    *orgNameCache
-	syncSecrets                 bool
-	omitArchivedRepositories    bool
-	directCollaboratorsOnly     bool
-	enterprises                 []string
+	orgs                     []string
+	client                   *github.Client
+	appClient                *github.Client
+	customClient             *customclient.Client
+	instanceURL              string
+	graphqlClient            *githubv4.Client
+	orgCache                 *orgNameCache
+	syncSecrets              bool
+	omitArchivedRepositories bool
+	directCollaboratorsOnly  bool
+	enterprises              []string
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
