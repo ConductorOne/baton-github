@@ -13,6 +13,7 @@ import (
 
 	"github.com/conductorone/baton-sdk/pkg/bid"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/conductorone/baton-sdk/pkg/healthcheck"
 	"github.com/conductorone/baton-sdk/pkg/synccompactor"
 	"golang.org/x/sync/semaphore"
@@ -34,18 +35,14 @@ import (
 	"github.com/conductorone/baton-sdk/internal/connector"
 )
 
-const (
-	// taskConcurrency configures how many tasks we run concurrently.
-	taskConcurrency = 3
-)
-
 type connectorRunner struct {
-	cw             types.ClientWrapper
-	oneShot        bool
-	tasks          tasks.Manager
-	debugFile      *os.File
-	debugFileMutex sync.Mutex
-	healthServer   *healthcheck.Server
+	cw              types.ClientWrapper
+	oneShot         bool
+	tasks           tasks.Manager
+	taskConcurrency int // concurrent task slots (>= 1)
+	debugFile       *os.File
+	debugFileMutex  sync.Mutex
+	healthServer    *healthcheck.Server
 }
 
 var ErrSigTerm = errors.New("context cancelled by process shutdown")
@@ -207,7 +204,11 @@ func (c *connectorRunner) backoff(_ context.Context, errCount int) time.Duration
 func (c *connectorRunner) run(ctx context.Context) error {
 	l := ctxzap.Extract(ctx)
 
-	sem := semaphore.NewWeighted(int64(taskConcurrency))
+	if !c.oneShot && c.taskConcurrency != field.TaskConcurrencySchemaDefault {
+		l.Info("runner: task concurrency", zap.Int("slots", c.taskConcurrency))
+	}
+
+	sem := semaphore.NewWeighted(int64(c.taskConcurrency))
 
 	waitDuration := time.Second * 0
 	errCount := 0
@@ -432,6 +433,8 @@ type runnerConfig struct {
 	healthCheckEnabled                    bool
 	healthCheckPort                       int
 	healthCheckBindAddress                string
+	taskConcurrency                       int // effective task slots after applying WithTaskConcurrency
+	taskConcurrencySet                    bool
 }
 
 func WithSessionStoreEnabled() Option {
@@ -656,6 +659,17 @@ func WithFullSyncDisabled() Option {
 func WithWorkerCount(workerCount int) Option {
 	return func(ctx context.Context, cfg *runnerConfig) error {
 		cfg.workerCount = workerCount
+		return nil
+	}
+}
+
+// WithTaskConcurrency sets how many Baton tasks may run concurrently in service mode.
+// n uses the same raw sentinels as sync workers: -1 for auto-detect, 0 for sequential,
+// and >0 for that many concurrent tasks.
+func WithTaskConcurrency(n int) Option {
+	return func(ctx context.Context, cfg *runnerConfig) error {
+		cfg.taskConcurrency = n
+		cfg.taskConcurrencySet = true
 		return nil
 	}
 }
@@ -892,6 +906,15 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 	if err != nil {
 		return nil, err
 	}
+	// From here on, any error path that hasn't flipped cwReady leaves the
+	// connector wrapper to be closed by the deferred guard so we don't leak
+	// its subprocess plugin / pooled resources.
+	cwReady := false
+	defer func() {
+		if !cwReady {
+			_ = cw.Close()
+		}
+	}()
 
 	resources := make([]*v2.Resource, 0, len(cfg.targetedSyncResourceIDs))
 	for _, resourceId := range cfg.targetedSyncResourceIDs {
@@ -903,6 +926,12 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 	}
 
 	runner.cw = cw
+
+	if cfg.taskConcurrencySet {
+		runner.taskConcurrency = cfg.taskConcurrency
+	} else {
+		runner.taskConcurrency = field.TaskConcurrencySchemaDefault
+	}
 
 	if cfg.onDemand {
 		if cfg.c1zPath == "" &&
@@ -988,9 +1017,14 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 		runner.tasks = tm
 
 		runner.oneShot = true
+		cwReady = true
 		return runner, nil
 	}
 
+	// At this point we are definitively in service / daemon mode: one-shot
+	// (cfg.onDemand) returned above, and Lambda mode never reaches
+	// NewConnectorRunner. Only this path sends a startup Hello to Conductor
+	// One — local / one-shot managers and Lambda intentionally do not.
 	tm, err := c1api.NewC1TaskManager(
 		ctx,
 		cfg.clientID,
@@ -1006,6 +1040,18 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 	if err != nil {
 		return nil, err
 	}
+
+	// Run the startup Hello handshake before handing control to the task loop.
+	// Bootstrap blocks (with exponential backoff up to 5 minutes) on transient
+	// failures and returns an error on ctx cancel or non-retryable responses
+	// like bad credentials.
+	cc, err := cw.C(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("runner: failed to get connector client for startup Hello: %w", err)
+	}
+	if err := tm.Bootstrap(ctx, cc); err != nil {
+		return nil, fmt.Errorf("runner: startup Hello failed: %w", err)
+	}
 	runner.tasks = tm
 
 	// Start health check server if enabled (only for daemon mode)
@@ -1017,11 +1063,11 @@ func NewConnectorRunner(ctx context.Context, c types.ConnectorServer, opts ...Op
 		}
 		healthServer := healthcheck.NewServer(healthCfg, cw.C)
 		if err := healthServer.Start(ctx); err != nil {
-			_ = cw.Close() // Clean up connector wrapper on failure
 			return nil, fmt.Errorf("failed to start health check server: %w", err)
 		}
 		runner.healthServer = healthServer
 	}
 
+	cwReady = true
 	return runner, nil
 }
