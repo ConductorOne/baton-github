@@ -395,7 +395,7 @@ For more information, see [link to vendor docs].
         spec:
           containers:
           - name: baton-[connector-name]
-            image: ghcr.io/conductorone/baton-[connector-name]:latest
+            image: public.ecr.aws/conductorone/baton-[connector-name]:latest
             imagePullPolicy: IfNotPresent
             env:
             - name: BATON_HOST_ID
