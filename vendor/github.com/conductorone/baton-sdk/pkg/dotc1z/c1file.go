@@ -25,7 +25,7 @@ import (
 	// and allocates a ton of memory.
 	_ "github.com/doug-martin/goqu/v9/dialect/sqlite3"
 
-	_ "github.com/glebarez/go-sqlite"
+	_ "modernc.org/sqlite"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	reader_v2 "github.com/conductorone/baton-sdk/pb/c1/reader/v2"
@@ -487,6 +487,15 @@ func (c *C1File) init(ctx context.Context) error {
 		l.Warn("c1file-init: WAL checkpoint after init failed", zap.Error(err))
 	}
 
+	// Optimize DB. Desired after running migrations to improve performance.
+	_, err = c.db.ExecContext(ctx, "PRAGMA optimize")
+	if err != nil {
+		return err
+	}
+	l.Debug("c1file-init: optimized database",
+		zap.String("db_file_path", c.dbFilePath),
+	)
+
 	if c.readOnly {
 		// Disable journaling in read only mode, since we're not writing to the database.
 		_, err = c.db.ExecContext(ctx, "PRAGMA journal_mode = OFF")
@@ -495,6 +504,20 @@ func (c *C1File) init(ctx context.Context) error {
 		}
 		// Disable synchronous writes in read only mode, since we're not writing to the database.
 		_, err = c.db.ExecContext(ctx, "PRAGMA synchronous = OFF")
+		if err != nil {
+			return err
+		}
+	} else {
+		// Use NORMAL synchronous mode instead of FULL (default).
+		// Normal is faster and only unsafe on old filesystems.
+		_, err = c.db.ExecContext(ctx, "PRAGMA synchronous = NORMAL")
+		if err != nil {
+			return err
+		}
+
+		// Use TRUNCATE journal mode instead of DELETE (default).
+		// User-specified pragmas such as journal_mode=WAL will override this.
+		_, err = c.db.ExecContext(ctx, "PRAGMA journal_mode = TRUNCATE")
 		if err != nil {
 			return err
 		}
@@ -601,15 +624,26 @@ func (c *C1File) Stats(ctx context.Context, syncType connectorstore.SyncType, sy
 		pageToken = resp.GetNextPageToken()
 	}
 	counts["resource_types"] = int64(len(rtStats))
+
+	// Pre-populate every known resource type with 0 so the result map
+	// always carries an entry per resource type, even if the sync has no
+	// rows of that type. The GROUP BY below only emits resource_type_ids
+	// that have at least one row.
 	for _, rt := range rtStats {
-		resourceCount, err := c.db.From(resources.Name()).
-			Where(goqu.C("resource_type_id").Eq(rt.GetId())).
-			Where(goqu.C("sync_id").Eq(syncId)).
-			CountContext(ctx)
-		if err != nil {
-			return nil, err
+		counts[rt.GetId()] = 0
+	}
+	resourceCounts, err := c.countBySyncAndResourceType(ctx, resources.Name(), syncId)
+	if err != nil {
+		return nil, err
+	}
+	for rtID, n := range resourceCounts {
+		// Only surface counts for resource types in the catalog —
+		// matches the prior per-type loop, which only wrote keys it
+		// iterated over. Stray resource_type_ids in the table (which
+		// shouldn't normally exist) are intentionally ignored here.
+		if _, known := counts[rtID]; known {
+			counts[rtID] = n
 		}
-		counts[rt.GetId()] = resourceCount
 	}
 
 	if syncType != connectorstore.SyncTypeResourcesOnly {
@@ -631,6 +665,55 @@ func (c *C1File) Stats(ctx context.Context, syncType connectorstore.SyncType, sy
 	}
 
 	return counts, nil
+}
+
+// countBySyncAndResourceType issues a single GROUP BY query that returns
+// per-resource-type row counts for a sync. It replaces what used to be
+// a per-resource-type loop of N COUNT(*) queries.
+//
+// We chose this over adding a (sync_id, resource_type_id) covering index
+// because grants tables can hold tens of millions of rows and the index
+// maintenance cost on every grant insert isn't worth a stats-call
+// speedup that's a small fraction of overall sync runtime. The single
+// GROUP BY collapses N round-trips through goqu/sql/driver into one
+// without changing the schema or insert hot path.
+//
+// The returned map only contains entries for resource_type_ids that
+// actually appear in the table. Callers that want zero-rows for missing
+// types must pre-populate them; this keeps the helper simple and
+// independent of the resource-type catalog.
+func (c *C1File) countBySyncAndResourceType(
+	ctx context.Context, tableName string, syncID string,
+) (map[string]int64, error) {
+	q := c.db.From(tableName).
+		Where(goqu.C("sync_id").Eq(syncID)).
+		Select(goqu.C("resource_type_id"), goqu.COUNT("*")).
+		GroupBy(goqu.C("resource_type_id"))
+
+	query, args, err := q.ToSQL()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := c.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]int64)
+	for rows.Next() {
+		var rtID string
+		var n int64
+		if err := rows.Scan(&rtID, &n); err != nil {
+			return nil, err
+		}
+		out[rtID] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // validateDb ensures that the database has been opened.
@@ -768,18 +851,25 @@ func (c *C1File) GrantStats(ctx context.Context, syncType connectorstore.SyncTyp
 		pageToken = resp.GetNextPageToken()
 	}
 
-	stats := make(map[string]int64)
+	stats := make(map[string]int64, len(allResourceTypes))
+	// Pre-populate zero counts for every known resource type so the
+	// caller always sees one entry per resource type, even when no
+	// grants exist for it in this sync.
+	for _, rt := range allResourceTypes {
+		stats[rt.GetId()] = 0
+	}
 
-	for _, resourceType := range allResourceTypes {
-		grantsCount, err := c.db.From(grants.Name()).
-			Where(goqu.C("sync_id").Eq(syncId)).
-			Where(goqu.C("resource_type_id").Eq(resourceType.GetId())).
-			CountContext(ctx)
-		if err != nil {
-			return nil, err
+	grantCounts, err := c.countBySyncAndResourceType(ctx, grants.Name(), syncId)
+	if err != nil {
+		return nil, err
+	}
+	for rtID, n := range grantCounts {
+		// Match prior per-type loop: only surface resource types that
+		// exist in the catalog. Stray resource_type_ids in the grants
+		// table (which shouldn't normally exist) are ignored.
+		if _, known := stats[rtID]; known {
+			stats[rtID] = n
 		}
-
-		stats[resourceType.GetId()] = grantsCount
 	}
 
 	return stats, nil
