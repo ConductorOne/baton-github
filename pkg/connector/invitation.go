@@ -4,13 +4,21 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// invitationTTL is how long a GitHub organization invitation remains valid
+// before it expires. GitHub org invitations expire 7 days after they are
+// sent and the API does not return an explicit expiration timestamp, so we
+// derive it from the invitation's created_at field.
+const invitationTTL = 7 * 24 * time.Hour
 
 func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, error) {
 	login := invitation.GetLogin()
@@ -156,8 +164,22 @@ func (i *invitationResourceType) CreateAccount(
 		return nil, nil, nil, fmt.Errorf("github-connectorv2: cannot create user resource: %w", err)
 	}
 	return &v2.CreateAccountResponse_SuccessResult{
-		Resource: r,
+		Resource:            r,
+		InvitationExpiresAt: invitationExpiresAt(invitation),
 	}, nil, annotations, nil
+}
+
+// invitationExpiresAt returns the wall-clock time at which the given GitHub
+// organization invitation will expire, or nil if the invitation does not
+// have a known creation time. GitHub does not return an explicit expiration
+// in the API response; org invitations always expire invitationTTL after
+// they are created.
+func invitationExpiresAt(invitation *github.Invitation) *timestamppb.Timestamp {
+	createdAt := invitation.GetCreatedAt()
+	if createdAt.IsZero() {
+		return nil
+	}
+	return timestamppb.New(createdAt.Add(invitationTTL))
 }
 
 func (i *invitationResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {
