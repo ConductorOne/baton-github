@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -12,25 +13,50 @@ import (
 	"github.com/google/go-github/v69/github"
 )
 
+const githubInvitationExpiryDuration = 7 * 24 * time.Hour
+
 func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, error) {
 	login := invitation.GetLogin()
 	if login == "" {
 		login = invitation.GetEmail()
 	}
 
+	profile := map[string]interface{}{
+		"login":   login,
+		"inviter": invitation.GetInviter().GetLogin(),
+		"role":    invitation.GetRole(),
+	}
+
+	createdAt := invitation.GetCreatedAt()
+	if !createdAt.IsZero() {
+		profile["created_at"] = createdAt.Time.Format(time.RFC3339)
+		expiresAt := createdAt.Add(githubInvitationExpiryDuration)
+		profile["expires_at"] = expiresAt.Format(time.RFC3339)
+	}
+
+	failedAt := invitation.GetFailedAt()
+	if !failedAt.IsZero() {
+		profile["failed_at"] = failedAt.Time.Format(time.RFC3339)
+	}
+	if reason := invitation.GetFailedReason(); reason != "" {
+		profile["failed_reason"] = reason
+	}
+
+	userTraitOpts := []resourceSdk.UserTraitOption{
+		resourceSdk.WithEmail(invitation.GetEmail(), true),
+		resourceSdk.WithUserProfile(profile),
+		resourceSdk.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED),
+		resourceSdk.WithUserLogin(login),
+	}
+	if !createdAt.IsZero() {
+		userTraitOpts = append(userTraitOpts, resourceSdk.WithCreatedAt(createdAt.Time))
+	}
+
 	ret, err := resourceSdk.NewUserResource(
 		login,
 		resourceTypeInvitation,
 		invitation.GetID(),
-		[]resourceSdk.UserTraitOption{
-			resourceSdk.WithEmail(invitation.GetEmail(), true),
-			resourceSdk.WithUserProfile(map[string]interface{}{
-				"login":   login,
-				"inviter": invitation.GetInviter().GetLogin(),
-			}),
-			resourceSdk.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED),
-			resourceSdk.WithUserLogin(login),
-		},
+		userTraitOpts,
 	)
 	if err != nil {
 		return nil, err
