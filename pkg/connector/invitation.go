@@ -7,20 +7,53 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/conductorone/baton-sdk/pkg/pagination"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 )
 
-func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, error) {
+const (
+	// Profile keys for invitation status metadata.
+	invitationProfileKeyStatus    = "invitation_status"
+	invitationProfileKeyExpiresAt = "invitation_expires_at"
+
+	// Values exposed via invitation_status.
+	invitationStatusPendingAcceptance = "invitation_pending_acceptance"
+	invitationStatusExpired           = "invitation_expired"
+
+	// Pagination bag states used to drive the two upstream listing endpoints.
+	invitationStatePending = "invitation:pending"
+	invitationStateFailed  = "invitation:failed"
+
+	// GitHub returns the literal string "expired" in failed_reason when an
+	// invitation has expired without being accepted.
+	githubInvitationFailedReasonExpired = "expired"
+
+	// Organization invitations expire 7 days after creation.
+	// https://github.blog/changelog/2020-02-05-self-expiring-repository-and-organization-invitations/
+	invitationLifetime = 7 * 24 * time.Hour
+)
+
+func invitationToUserResource(invitation *github.Invitation, status string) (*v2.Resource, error) {
 	login := invitation.GetLogin()
 	if login == "" {
 		login = invitation.GetEmail()
+	}
+
+	profile := map[string]interface{}{
+		"login":                    login,
+		"inviter":                  invitation.GetInviter().GetLogin(),
+		invitationProfileKeyStatus: status,
+	}
+	if expiresAt, ok := invitationExpiresAt(invitation, status); ok {
+		profile[invitationProfileKeyExpiresAt] = expiresAt.UTC().Format(time.RFC3339)
 	}
 
 	ret, err := resourceSdk.NewUserResource(
@@ -29,10 +62,7 @@ func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, erro
 		invitation.GetID(),
 		[]resourceSdk.UserTraitOption{
 			resourceSdk.WithEmail(invitation.GetEmail(), true),
-			resourceSdk.WithUserProfile(map[string]interface{}{
-				"login":   login,
-				"inviter": invitation.GetInviter().GetLogin(),
-			}),
+			resourceSdk.WithUserProfile(profile),
 			resourceSdk.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED),
 			resourceSdk.WithUserLogin(login),
 		},
@@ -41,6 +71,22 @@ func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, erro
 		return nil, err
 	}
 	return ret, nil
+}
+
+// invitationExpiresAt returns the moment the invitation expired (for already
+// expired invitations) or will expire (for pending invitations). GitHub does
+// not surface an expires_at field on the org invitation payload, so for
+// pending invitations we derive it from created_at + 7 days.
+func invitationExpiresAt(invitation *github.Invitation, status string) (time.Time, bool) {
+	if status == invitationStatusExpired {
+		if t := invitation.GetFailedAt(); !t.IsZero() {
+			return t.Time, true
+		}
+	}
+	if t := invitation.GetCreatedAt(); !t.IsZero() {
+		return t.Add(invitationLifetime), true
+	}
+	return time.Time{}, false
 }
 
 type invitationResourceType struct {
@@ -54,7 +100,6 @@ func (i *invitationResourceType) ResourceType(_ context.Context) *v2.ResourceTyp
 }
 
 func (i *invitationResourceType) List(ctx context.Context, parentID *v2.ResourceId, opts resourceSdk.SyncOpAttrs) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
-	var annotations annotations.Annotations
 	if parentID == nil {
 		return nil, &resourceSdk.SyncOpResults{}, nil
 	}
@@ -68,44 +113,106 @@ func (i *invitationResourceType) List(ctx context.Context, parentID *v2.Resource
 	if err != nil {
 		return nil, nil, err
 	}
-	invitations, resp, err := i.client.Organizations.ListPendingOrgInvitations(ctx, orgName, &github.ListOptions{
+
+	listOpts := &github.ListOptions{
 		Page:    page,
 		PerPage: opts.PageToken.Size,
-	})
-	if err != nil {
-		if isNotFoundError(resp) {
-			return nil, &resourceSdk.SyncOpResults{}, nil
+	}
+
+	var (
+		invitationResources []*v2.Resource
+		respAnnos           annotations.Annotations
+	)
+
+	switch bag.ResourceTypeID() {
+	case resourceTypeInvitation.Id:
+		// First call: fan out into the two listing states. Pending is pushed
+		// last so it is processed first; failed/expired runs after pending
+		// fully drains.
+		bag.Pop()
+		bag.Push(pagination.PageState{ResourceTypeID: invitationStateFailed})
+		bag.Push(pagination.PageState{ResourceTypeID: invitationStatePending})
+
+	case invitationStatePending:
+		invitations, resp, err := i.client.Organizations.ListPendingOrgInvitations(ctx, orgName, listOpts)
+		if err != nil {
+			if isNotFoundError(resp) {
+				if err := bag.Next(""); err != nil {
+					return nil, nil, err
+				}
+				break
+			}
+			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list pending org invitations")
 		}
-		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list pending org invitations")
-	}
 
-	restApiRateLimit, err := extractRateLimitData(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	nextPage, _, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pageToken, err := bag.NextToken(nextPage)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	invitationResources := make([]*v2.Resource, 0, len(invitations))
-	for _, invitation := range invitations {
-		ir, err := invitationToUserResource(invitation)
+		nextPage, annos, err := parseResp(resp)
 		if err != nil {
 			return nil, nil, err
 		}
-		invitationResources = append(invitationResources, ir)
+		respAnnos = annos
+
+		if err := bag.Next(nextPage); err != nil {
+			return nil, nil, err
+		}
+
+		invitationResources = make([]*v2.Resource, 0, len(invitations))
+		for _, invitation := range invitations {
+			ir, err := invitationToUserResource(invitation, invitationStatusPendingAcceptance)
+			if err != nil {
+				return nil, nil, err
+			}
+			invitationResources = append(invitationResources, ir)
+		}
+
+	case invitationStateFailed:
+		invitations, resp, err := i.client.Organizations.ListFailedOrgInvitations(ctx, orgName, listOpts)
+		if err != nil {
+			if isNotFoundError(resp) {
+				if err := bag.Next(""); err != nil {
+					return nil, nil, err
+				}
+				break
+			}
+			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list failed org invitations")
+		}
+
+		nextPage, annos, err := parseResp(resp)
+		if err != nil {
+			return nil, nil, err
+		}
+		respAnnos = annos
+
+		if err := bag.Next(nextPage); err != nil {
+			return nil, nil, err
+		}
+
+		invitationResources = make([]*v2.Resource, 0, len(invitations))
+		for _, invitation := range invitations {
+			// The failed_invitations endpoint includes failures other than
+			// expirations (e.g. user_was_inactive, unexpected_failure). Only
+			// surface invitations that explicitly expired.
+			if invitation.GetFailedReason() != githubInvitationFailedReasonExpired {
+				continue
+			}
+			ir, err := invitationToUserResource(invitation, invitationStatusExpired)
+			if err != nil {
+				return nil, nil, err
+			}
+			invitationResources = append(invitationResources, ir)
+		}
+
+	default:
+		return nil, nil, fmt.Errorf("github-connector: unexpected invitation page state %q", bag.ResourceTypeID())
 	}
-	annotations.WithRateLimiting(restApiRateLimit)
+
+	pageToken, err := bag.Marshal()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	return invitationResources, &resourceSdk.SyncOpResults{
 		NextPageToken: pageToken,
-		Annotations:   annotations,
+		Annotations:   respAnnos,
 	}, nil
 }
 
@@ -195,7 +302,7 @@ func (i *invitationResourceType) CreateAccount(
 	var annotations annotations.Annotations
 	annotations.WithRateLimiting(restApiRateLimit)
 
-	r, err := invitationToUserResource(invitation)
+	r, err := invitationToUserResource(invitation, invitationStatusPendingAcceptance)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("github-connectorv2: cannot create user resource: %w", err)
 	}
@@ -315,7 +422,7 @@ func (i *invitationResourceType) lookupPendingInvitation(ctx context.Context, or
 		}
 		for _, inv := range invitations {
 			if invitationMatches(inv, login, email) {
-				return invitationToUserResource(inv)
+				return invitationToUserResource(inv, invitationStatusPendingAcceptance)
 			}
 		}
 		if resp.NextPage == 0 {
