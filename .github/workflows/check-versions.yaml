@@ -37,12 +37,19 @@ jobs:
 
           mismatch=0
 
-          # Compare go-version
+          version_lt() {
+            [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ] && [ "$1" != "$2" ]
+          }
+
+          # Compare go-version. .versions.yaml is the managed minimum; go.mod
+          # may be higher when a connector's dependency graph requires it.
           expected_go=$(yq -r '.go-version' /tmp/base-versions.yaml)
           actual_go=$(awk '/^go [0-9]/{print $2}' go.mod)
-          if [ "$expected_go" != "$actual_go" ]; then
-            echo "::error::Go version mismatch: .versions.yaml expects ${expected_go}, but go.mod has ${actual_go}. Update versions from baton-admin first."
+          if version_lt "$actual_go" "$expected_go"; then
+            echo "::error::Go version too low: .versions.yaml requires at least ${expected_go}, but go.mod has ${actual_go}. Update versions from baton-admin first."
             mismatch=1
+          elif version_lt "$expected_go" "$actual_go"; then
+            echo "::warning::go.mod uses ${actual_go}, which is newer than .versions.yaml minimum ${expected_go}. baton-admin will sync the higher Go pin."
           else
             echo "Go version matches: ${expected_go}"
           fi
