@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	cfg "github.com/conductorone/baton-github/pkg/config"
@@ -256,6 +257,7 @@ func newGitHubClient(ctx context.Context, instanceURL string, ts oauth2.TokenSou
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
 	tc := oauth2.NewClient(ctx, ts)
+	wrapWithUnauthorizedRefresh(tc, ts)
 	gc := github.NewClient(tc)
 
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
@@ -349,7 +351,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 			privateKey: string(ghc.AppPrivatekeyPath),
 		},
 	)
-	ts := oauth2.ReuseTokenSource(
+	ts := newRefreshableTokenSource(
 		&oauth2.Token{
 			AccessToken: token.GetToken(),
 			Expiry:      token.GetExpiresAt().Time,
@@ -404,6 +406,7 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.T
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
 	tc := oauth2.NewClient(ctx, ts)
+	wrapWithUnauthorizedRefresh(tc, ts)
 
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
 	if instanceURL != "" && instanceURL != githubDotCom {
@@ -534,6 +537,108 @@ func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
 		AccessToken: token.GetToken(),
 		Expiry:      token.GetExpiresAt().Time,
 	}, nil
+}
+
+// refreshableTokenSource is like oauth2.ReuseTokenSource but exposes
+// Invalidate() so a 401 response can force a refresh on the next call even
+// when the cached token has not yet reached its stated expiry. GitHub App
+// installation tokens can become invalid before the 1h mark (e.g. app
+// reinstall, permission change), and without this the entire long-running
+// sync fails until the natural refresh window arrives.
+type refreshableTokenSource struct {
+	mu      sync.Mutex
+	cur     *oauth2.Token
+	refresh oauth2.TokenSource
+}
+
+func newRefreshableTokenSource(initial *oauth2.Token, refresh oauth2.TokenSource) *refreshableTokenSource {
+	return &refreshableTokenSource{cur: initial, refresh: refresh}
+}
+
+func (r *refreshableTokenSource) Token() (*oauth2.Token, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cur.Valid() {
+		return r.cur, nil
+	}
+	t, err := r.refresh.Token()
+	if err != nil {
+		return nil, err
+	}
+	r.cur = t
+	return t, nil
+}
+
+// Invalidate clears the cached token, forcing the next Token() call to
+// refresh. Safe to call from any goroutine.
+func (r *refreshableTokenSource) Invalidate(prev *oauth2.Token) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// Only invalidate if the cached token matches the one the caller saw fail.
+	// Otherwise we'd thrash when many in-flight requests all 401 on the same
+	// stale token and then race to clear an already-refreshed token.
+	if prev != nil && r.cur != nil && r.cur.AccessToken != prev.AccessToken {
+		return
+	}
+	r.cur = nil
+}
+
+// tokenInvalidator is implemented by token sources that allow forcing a
+// refresh on the next Token() call.
+type tokenInvalidator interface {
+	Invalidate(prev *oauth2.Token)
+	Token() (*oauth2.Token, error)
+}
+
+// unauthorizedRefreshTransport retries an idempotent request once after a 401
+// response, invalidating the cached token first so the retry uses a fresh one.
+type unauthorizedRefreshTransport struct {
+	base http.RoundTripper
+	src  tokenInvalidator
+}
+
+func (t *unauthorizedRefreshTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	prev, _ := t.src.Token()
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		return resp, err
+	}
+	if req.Body != nil && req.GetBody == nil {
+		return resp, nil
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	t.src.Invalidate(prev)
+	ctxzap.Extract(req.Context()).Info("github-connector: got 401, invalidating cached token and retrying once",
+		zap.String("http.method", req.Method),
+		zap.String("http.url_details.path", req.URL.Path),
+	)
+
+	retry := req.Clone(req.Context())
+	if req.GetBody != nil {
+		body, gErr := req.GetBody()
+		if gErr != nil {
+			// Can't rebuild the body — fall back to the original 401 response
+			// rather than fail the request outright; gErr is incidental.
+			return resp, nil //nolint:nilerr // see comment above
+		}
+		retry.Body = body
+	}
+	return t.base.RoundTrip(retry)
+}
+
+// wrapWithUnauthorizedRefresh wraps the http.Client's transport with retry
+// logic when the supplied TokenSource supports invalidation. PAT-based and
+// JWT-only token sources don't implement Invalidate, so they pass through
+// unchanged.
+func wrapWithUnauthorizedRefresh(c *http.Client, ts oauth2.TokenSource) {
+	inv, ok := ts.(tokenInvalidator)
+	if !ok {
+		return
+	}
+	c.Transport = &unauthorizedRefreshTransport{base: c.Transport, src: inv}
 }
 
 func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]string, error) {
