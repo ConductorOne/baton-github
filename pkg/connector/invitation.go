@@ -2,14 +2,19 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
+	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 )
 
 func invitationToUserResource(invitation *github.Invitation) (*v2.Resource, error) {
@@ -131,6 +136,8 @@ func (i *invitationResourceType) CreateAccount(
 	annotations.Annotations,
 	error,
 ) {
+	l := ctxzap.Extract(ctx)
+
 	params, err := getCreateUserParams(accountInfo)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("github-connectorv2: failed to get CreateUserParams: %w", err)
@@ -140,6 +147,43 @@ func (i *invitationResourceType) CreateAccount(
 		Email: params.email,
 	})
 	if err != nil {
+		if isAlreadyOrgMemberError(err, resp) {
+			memberResource, lookupErr := i.lookupUser(ctx, params.login, *params.email)
+			if lookupErr != nil {
+				l.Warn("failed to look up existing org member, returning AlreadyExistsResult without resource", zap.Error(lookupErr))
+				return &v2.CreateAccountResponse_AlreadyExistsResult{}, nil, nil, nil
+			}
+			return &v2.CreateAccountResponse_AlreadyExistsResult{Resource: memberResource}, nil, nil, nil
+		}
+		if isAlreadyInvitedError(err, resp) {
+			invitationResource, lookupErr := i.lookupPendingInvitation(ctx, params.org, params.login, *params.email)
+			if lookupErr != nil {
+				l.Warn("failed to look up existing invitation", zap.Error(lookupErr))
+			} else if invitationResource == nil {
+				l.Warn("pending invitation not found despite 'already invited' response from GitHub",
+					zap.String("org", params.org), zap.String("email", *params.email))
+			}
+			return &v2.CreateAccountResponse_ActionRequiredResult{
+				Resource: invitationResource,
+				Message:  "GitHub org invite already pending. User must accept the existing invitation.",
+			}, nil, nil, nil
+		}
+		if isEMUOrgError(err, resp) {
+			return nil, nil, nil, fmt.Errorf("github-connector: organization %s uses Enterprise Managed Users (EMU); accounts are provisioned by the IdP, not via org invitations", params.org)
+		}
+
+		// Check for expired/failed invitations as diagnostic context for unexpected failures.
+		failedInv, failedErr := i.lookupFailedInvitation(ctx, params.org, params.login, *params.email)
+		if failedErr != nil {
+			l.Warn("failed to check for expired invitations", zap.Error(failedErr))
+		}
+		if failedInv != nil {
+			l.Warn("previous invitation expired or failed",
+				zap.String("failed_reason", failedInv.GetFailedReason()),
+				zap.Time("failed_at", failedInv.GetFailedAt().Time),
+			)
+		}
+
 		return nil, nil, nil, wrapGitHubError(err, resp, "github-connector: failed to create org invitation")
 	}
 
@@ -155,8 +199,9 @@ func (i *invitationResourceType) CreateAccount(
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("github-connectorv2: cannot create user resource: %w", err)
 	}
-	return &v2.CreateAccountResponse_SuccessResult{
+	return &v2.CreateAccountResponse_ActionRequiredResult{
 		Resource: r,
+		Message:  "GitHub org invite sent. User must accept the invitation before team membership can be granted.",
 	}, nil, annotations, nil
 }
 
@@ -204,6 +249,7 @@ func (i *invitationResourceType) Delete(ctx context.Context, resourceId *v2.Reso
 type createUserParams struct {
 	org   string
 	email *string
+	login string // optional GitHub username
 }
 
 func getCreateUserParams(accountInfo *v2.AccountInfo) (*createUserParams, error) {
@@ -218,10 +264,138 @@ func getCreateUserParams(accountInfo *v2.AccountInfo) (*createUserParams, error)
 		return nil, fmt.Errorf("email is required")
 	}
 
+	login, _ := pMap["github_username"].(string)
+
 	return &createUserParams{
 		org:   org,
 		email: &e,
+		login: login,
 	}, nil
+}
+
+// lookupUser resolves a GitHub user resource. Tries login via Users.Get first
+// (works regardless of email privacy), then falls back to email search.
+func (i *invitationResourceType) lookupUser(ctx context.Context, login, email string) (*v2.Resource, error) {
+	l := ctxzap.Extract(ctx)
+	if login != "" {
+		ghUser, _, err := i.client.Users.Get(ctx, login)
+		if err == nil {
+			userEmail := ghUser.GetEmail()
+			if userEmail == "" {
+				userEmail = email
+			}
+			return userResource(ctx, ghUser, userEmail, nil)
+		}
+		l.Debug("user lookup by login failed, falling back to email search",
+			zap.String("login", login), zap.Error(err))
+	}
+
+	result, _, err := i.client.Search.Users(ctx, fmt.Sprintf(`"%s" in:email`, email), nil)
+	if err != nil {
+		return nil, fmt.Errorf("github-connector: failed to search users by email: %w", err)
+	}
+	if len(result.Users) == 0 {
+		return nil, fmt.Errorf("github-connector: no user found with login %q or email %q", login, email)
+	}
+	return userResource(ctx, result.Users[0], email, nil)
+}
+
+// maxLookupPages limits pagination in invitation lookups to avoid excessive
+// API calls and rate limit consumption for orgs with long invitation histories.
+const maxLookupPages = 5
+
+// lookupPendingInvitation searches pending org invitations matching by login or email.
+// Returns (nil, nil) if no matching invitation is found.
+func (i *invitationResourceType) lookupPendingInvitation(ctx context.Context, org, login, email string) (*v2.Resource, error) {
+	opts := &github.ListOptions{PerPage: 100}
+	for page := 0; page < maxLookupPages; page++ {
+		invitations, resp, err := i.client.Organizations.ListPendingOrgInvitations(ctx, org, opts)
+		if err != nil {
+			return nil, fmt.Errorf("github-connector: failed to list pending invitations: %w", err)
+		}
+		for _, inv := range invitations {
+			if invitationMatches(inv, login, email) {
+				return invitationToUserResource(inv)
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return nil, nil
+}
+
+// lookupFailedInvitation searches failed/expired org invitations matching by login or email.
+// Returns (nil, nil) if no matching invitation is found.
+func (i *invitationResourceType) lookupFailedInvitation(ctx context.Context, org, login, email string) (*github.Invitation, error) {
+	opts := &github.ListOptions{PerPage: 100}
+	for page := 0; page < maxLookupPages; page++ {
+		invitations, resp, err := i.client.Organizations.ListFailedOrgInvitations(ctx, org, opts)
+		if err != nil {
+			return nil, fmt.Errorf("github-connector: failed to list failed invitations: %w", err)
+		}
+		for _, inv := range invitations {
+			if invitationMatches(inv, login, email) {
+				return inv, nil
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return nil, nil
+}
+
+// invitationMatches returns true if the invitation matches the given login or email.
+func invitationMatches(inv *github.Invitation, login, email string) bool {
+	if login != "" && strings.EqualFold(inv.GetLogin(), login) {
+		return true
+	}
+	if email != "" && strings.EqualFold(inv.GetEmail(), email) {
+		return true
+	}
+	return false
+}
+
+func isAlreadyOrgMemberError(err error, resp *github.Response) bool {
+	return isGitHubValidationError(err, resp, "already a member", "already a part of")
+}
+
+func isAlreadyInvitedError(err error, resp *github.Response) bool {
+	return isGitHubValidationError(err, resp, "already invited", "already been invited")
+}
+
+func isEMUOrgError(err error, resp *github.Response) bool {
+	return isGitHubValidationError(err, resp, "managed by an enterprise", "enterprise managed")
+}
+
+// isGitHubValidationError returns true if the GitHub API response is a 422
+// and the error message contains any of the given substrings (case-insensitive).
+func isGitHubValidationError(err error, resp *github.Response, substrings ...string) bool {
+	if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	var ghErr *github.ErrorResponse
+	if !errors.As(err, &ghErr) {
+		return false
+	}
+	for _, sub := range substrings {
+		if containsLower(ghErr.Message, sub) {
+			return true
+		}
+		for _, e := range ghErr.Errors {
+			if containsLower(e.Message, sub) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsLower(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), substr)
 }
 
 type invitationBuilderParams struct {

@@ -68,6 +68,8 @@ var (
 	resourceTypeInvitation = &v2.ResourceType{
 		Id:          "invitation",
 		DisplayName: "Invitation",
+		// Invitations emit TRAIT_USER with UserTrait_Status_STATUS_UNSPECIFIED.
+		// Accepted members from user.go emit STATUS_ENABLED.
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_USER,
 		},
@@ -94,17 +96,17 @@ var (
 )
 
 type GitHub struct {
-	orgs                        []string
-	client                      *github.Client
-	appClient                   *github.Client
-	customClient                *customclient.Client
-	instanceURL                 string
-	graphqlClient               *githubv4.Client
-	orgCache                    *orgNameCache
-	syncSecrets                 bool
-	omitArchivedRepositories    bool
-	directCollaboratorsOnly     bool
-	enterprises                 []string
+	orgs                     []string
+	client                   *github.Client
+	appClient                *github.Client
+	customClient             *customclient.Client
+	instanceURL              string
+	graphqlClient            *githubv4.Client
+	orgCache                 *orgNameCache
+	syncSecrets              bool
+	omitArchivedRepositories bool
+	directCollaboratorsOnly  bool
+	enterprises              []string
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
@@ -156,6 +158,16 @@ func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 					},
 					Placeholder: "organization name",
 					Order:       2,
+				},
+				"github_username": {
+					DisplayName: "GitHub username",
+					Required:    false,
+					Description: "The user's GitHub username (optional, used to look up the user if email is private).",
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "octocat",
+					Order:       3,
 				},
 			},
 		},
