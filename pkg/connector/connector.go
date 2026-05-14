@@ -35,6 +35,11 @@ const githubDotCom = "https://github.com"
 // JWT token expires in 10 minutes, so we set it to 9 minutes to leave some buffer.
 const jwtExpiryTime = 9 * time.Minute
 
+// installationTokenRefreshBuffer is subtracted from GitHub's stated expiry so
+// we refresh well before any worker/GitHub clock skew can make a cached token
+// look valid when it isn't. oauth2's default 10s delta is too tight.
+const installationTokenRefreshBuffer = 10 * time.Minute
+
 var (
 	ValidAssetDomains     = []string{"avatars.githubusercontent.com"}
 	maxPageSize       int = 100 // maximum page size github supported.
@@ -364,7 +369,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	ts := oauth2.ReuseTokenSource(
 		&oauth2.Token{
 			AccessToken: token.GetToken(),
-			Expiry:      token.GetExpiresAt().Time,
+			Expiry:      bufferedInstallationTokenExpiry(token.GetExpiresAt().Time),
 		},
 		&appTokenRefresher{
 			ctx:            ctx,
@@ -544,8 +549,16 @@ func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
 	}
 	return &oauth2.Token{
 		AccessToken: token.GetToken(),
-		Expiry:      token.GetExpiresAt().Time,
+		Expiry:      bufferedInstallationTokenExpiry(token.GetExpiresAt().Time),
 	}, nil
+}
+
+// Zero stated expiry returns time.Now() so the next call refreshes.
+func bufferedInstallationTokenExpiry(stated time.Time) time.Time {
+	if stated.IsZero() {
+		return time.Now()
+	}
+	return stated.Add(-installationTokenRefreshBuffer)
 }
 
 func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]string, error) {
