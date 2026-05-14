@@ -619,6 +619,17 @@ func (t *unauthorizedRefreshTransport) RoundTrip(req *http.Request) (*http.Respo
 		return resp, nil
 	}
 
+	// Rebuild the request body before touching the 401 response so the
+	// GetBody-error path can return resp with a readable body.
+	var retryBody io.ReadCloser
+	if req.GetBody != nil {
+		body, gErr := req.GetBody()
+		if gErr != nil {
+			return resp, nil //nolint:nilerr // gErr is incidental; surface the 401
+		}
+		retryBody = body
+	}
+
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
 
@@ -629,14 +640,8 @@ func (t *unauthorizedRefreshTransport) RoundTrip(req *http.Request) (*http.Respo
 	)
 
 	retry := req.Clone(req.Context())
-	if req.GetBody != nil {
-		body, gErr := req.GetBody()
-		if gErr != nil {
-			// Can't rebuild the body — fall back to the original 401 response
-			// rather than fail the request outright; gErr is incidental.
-			return resp, nil //nolint:nilerr // see comment above
-		}
-		retry.Body = body
+	if retryBody != nil {
+		retry.Body = retryBody
 	}
 	return t.base.RoundTrip(retry)
 }

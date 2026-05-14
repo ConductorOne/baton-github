@@ -159,6 +159,37 @@ func TestUnauthorizedRefreshTransport_PassesThroughNon401(t *testing.T) {
 	require.Equal(t, 0, refresher.calls)
 }
 
+func TestUnauthorizedRefreshTransport_GetBodyErrorReturnsReadableResponse(t *testing.T) {
+	refresher := &stubRefresher{tokens: []string{"unused"}}
+	initial := &oauth2.Token{AccessToken: "initial", Expiry: time.Now().Add(time.Hour)}
+	src := newRefreshableTokenSource(initial, refresher)
+
+	var calls int32
+	base := rtFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&calls, 1)
+		return makeResp(http.StatusUnauthorized, "details about the 401"), nil
+	})
+	tr := &unauthorizedRefreshTransport{base: base, src: src}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://api.github.com/x", strings.NewReader("payload"))
+	require.NoError(t, err)
+	req.GetBody = func() (io.ReadCloser, error) {
+		return nil, errors.New("synthetic GetBody failure")
+	}
+
+	resp, err := tr.RoundTrip(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "must not retry when body cannot be rebuilt")
+
+	// Body must still be readable by the caller; the prior bug closed it.
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "details about the 401", string(body))
+	require.Equal(t, 0, refresher.calls, "token must not be invalidated when we couldn't retry")
+}
+
 func TestUnauthorizedRefreshTransport_DoesNotRetryWhenBodyCannotReplay(t *testing.T) {
 	refresher := &stubRefresher{tokens: []string{"unused"}}
 	initial := &oauth2.Token{AccessToken: "initial", Expiry: time.Now().Add(time.Hour)}
