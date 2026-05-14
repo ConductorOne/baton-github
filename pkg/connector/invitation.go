@@ -336,6 +336,12 @@ func (i *invitationResourceType) Delete(ctx context.Context, resourceId *v2.Reso
 		resp, err = i.client.Organizations.CancelInvite(ctx, org, invitationID)
 		if err == nil {
 			isRemoved = true
+			continue
+		}
+		if isNotFoundError(resp) {
+			// Invitation is already gone (expired or previously cancelled).
+			// Desired state is achieved, so treat as success.
+			isRemoved = true
 		}
 	}
 
