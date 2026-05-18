@@ -191,9 +191,11 @@ func (i *invitationResourceType) List(ctx context.Context, parentID *v2.Resource
 			// The failed_invitations endpoint includes failures other than
 			// expirations (e.g. user_was_inactive, unexpected_failure). Only
 			// surface invitations that explicitly expired.
-			if invitation.GetFailedReason() != githubInvitationFailedReasonExpired {
+			failedReason := strings.ToLower(invitation.GetFailedReason())
+			if !strings.Contains(failedReason, githubInvitationFailedReasonExpired) {
 				continue
 			}
+
 			ir, err := invitationToUserResource(invitation, invitationStatusExpired)
 			if err != nil {
 				return nil, nil, err
