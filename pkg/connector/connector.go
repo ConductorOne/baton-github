@@ -551,12 +551,8 @@ func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
 	}, nil
 }
 
-// refreshableTokenSource is like oauth2.ReuseTokenSource but exposes
-// Invalidate() so a 401 response can force a refresh on the next call even
-// when the cached token has not yet reached its stated expiry. GitHub App
-// installation tokens can become invalid before the 1h mark (e.g. app
-// reinstall, permission change), and without this the entire long-running
-// sync fails until the natural refresh window arrives.
+// refreshableTokenSource is an oauth2.TokenSource whose cache can be cleared
+// externally, so a 401 can force a refresh before the cached token's expiry.
 type refreshableTokenSource struct {
 	mu      sync.Mutex
 	cur     *oauth2.Token
@@ -581,29 +577,25 @@ func (r *refreshableTokenSource) Token() (*oauth2.Token, error) {
 	return t, nil
 }
 
-// Invalidate clears the cached token, forcing the next Token() call to
-// refresh. Safe to call from any goroutine.
+// Invalidate clears the cached token if it still matches prev. The match check
+// prevents concurrent 401s on the same stale token from triggering redundant
+// refreshes.
 func (r *refreshableTokenSource) Invalidate(prev *oauth2.Token) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	// Only invalidate if the cached token matches the one the caller saw fail.
-	// Otherwise we'd thrash when many in-flight requests all 401 on the same
-	// stale token and then race to clear an already-refreshed token.
 	if prev != nil && r.cur != nil && r.cur.AccessToken != prev.AccessToken {
 		return
 	}
 	r.cur = nil
 }
 
-// tokenInvalidator is implemented by token sources that allow forcing a
-// refresh on the next Token() call.
+// tokenInvalidator is a TokenSource whose cache can be cleared externally.
 type tokenInvalidator interface {
-	Invalidate(prev *oauth2.Token)
 	Token() (*oauth2.Token, error)
+	Invalidate(prev *oauth2.Token)
 }
 
-// unauthorizedRefreshTransport retries an idempotent request once after a 401
-// response, invalidating the cached token first so the retry uses a fresh one.
+// unauthorizedRefreshTransport retries a 401 response once with a refreshed token.
 type unauthorizedRefreshTransport struct {
 	base http.RoundTripper
 	src  tokenInvalidator
@@ -619,8 +611,8 @@ func (t *unauthorizedRefreshTransport) RoundTrip(req *http.Request) (*http.Respo
 		return resp, nil
 	}
 
-	// Rebuild the request body before touching the 401 response so the
-	// GetBody-error path can return resp with a readable body.
+	// Reproduce the body before draining the 401, so the GetBody-error path can
+	// return resp with a still-readable body.
 	var retryBody io.ReadCloser
 	if req.GetBody != nil {
 		body, gErr := req.GetBody()
@@ -646,16 +638,11 @@ func (t *unauthorizedRefreshTransport) RoundTrip(req *http.Request) (*http.Respo
 	return t.base.RoundTrip(retry)
 }
 
-// wrapWithUnauthorizedRefresh wraps the http.Client's transport with retry
-// logic when the supplied TokenSource supports invalidation. PAT-based and
-// JWT-only token sources don't implement Invalidate, so they pass through
-// unchanged.
+// wrapWithUnauthorizedRefresh adds the 401-retry layer if ts supports invalidation.
 func wrapWithUnauthorizedRefresh(c *http.Client, ts oauth2.TokenSource) {
-	inv, ok := ts.(tokenInvalidator)
-	if !ok {
-		return
+	if inv, ok := ts.(tokenInvalidator); ok {
+		c.Transport = &unauthorizedRefreshTransport{base: c.Transport, src: inv}
 	}
-	c.Transport = &unauthorizedRefreshTransport{base: c.Transport, src: inv}
 }
 
 func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]string, error) {
