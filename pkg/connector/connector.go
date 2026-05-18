@@ -35,6 +35,13 @@ const githubDotCom = "https://github.com"
 // JWT token expires in 10 minutes, so we set it to 9 minutes to leave some buffer.
 const jwtExpiryTime = 9 * time.Minute
 
+// installationTokenPropagationDelay pauses briefly after minting a GitHub App
+// installation token so it has time to propagate across GitHub's API tier.
+// GitHub staff have noted that freshly minted tokens may be rejected as invalid
+// by API servers for ~1-3s after issuance.
+// https://github.com/orgs/community/discussions/162975#discussioncomment-13603594
+const installationTokenPropagationDelay = 3 * time.Second
+
 var (
 	ValidAssetDomains     = []string{"avatars.githubusercontent.com"}
 	maxPageSize       int = 100 // maximum page size github supported.
@@ -499,6 +506,15 @@ func getInstallationToken(ctx context.Context, c *github.Client, id int64) (*git
 			zap.String("response_body", string(body)),
 		)
 		return nil, fmt.Errorf("github-connector: unexpected status %d creating installation token for installation %d: %s", resp.StatusCode, id, body)
+	}
+
+	l.Debug("github-connector: sleeping after installation token mint to allow propagation",
+		zap.Duration("delay", installationTokenPropagationDelay),
+	)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(installationTokenPropagationDelay):
 	}
 
 	return token, nil
