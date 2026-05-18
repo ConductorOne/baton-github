@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	cfg "github.com/conductorone/baton-github/pkg/config"
@@ -19,6 +20,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/cli"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/google/go-github/v69/github"
@@ -107,6 +109,8 @@ type GitHub struct {
 	omitArchivedRepositories bool
 	directCollaboratorsOnly  bool
 	enterprises              []string
+	// installationTokenSource is set in GitHub App mode; nil for PAT.
+	installationTokenSource *forceRefreshTokenSource
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
@@ -129,6 +133,12 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 
 	if len(gh.enterprises) > 0 {
 		resourceSyncers = append(resourceSyncers, enterpriseRoleBuilder(gh.client, gh.appClient, gh.customClient, gh.enterprises))
+	}
+	if gh.installationTokenSource == nil {
+		return resourceSyncers
+	}
+	for i, s := range resourceSyncers {
+		resourceSyncers[i] = wrapSyncerForRefresh(s, gh.installationTokenSource)
 	}
 	return resourceSyncers
 }
@@ -361,7 +371,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 			privateKey: string(ghc.AppPrivatekeyPath),
 		},
 	)
-	ts := oauth2.ReuseTokenSource(
+	ts := newForceRefreshTokenSource(
 		&oauth2.Token{
 			AccessToken: token.GetToken(),
 			Expiry:      token.GetExpiresAt().Time,
@@ -372,6 +382,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 			installationID: installation.GetID(),
 			jwtTokenSource: jwtts,
 		},
+		ctxzap.Extract(ctx),
 	)
 	// override the appClient with the reuseTokenSource.
 	appClient, err = newGitHubClient(ctx,
@@ -403,6 +414,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
+		installationTokenSource:  ts,
 	}
 	return gh, nil
 }
@@ -546,6 +558,176 @@ func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
 		AccessToken: token.GetToken(),
 		Expiry:      token.GetExpiresAt().Time,
 	}, nil
+}
+
+// forceRefreshTokenSource caches a token like oauth2.ReuseTokenSource but
+// exposes ForceRefreshNext so callers can require the next Token() call to
+// refresh, bypassing the expiry check.
+type forceRefreshTokenSource struct {
+	mu        sync.Mutex
+	cur       *oauth2.Token
+	refresh   oauth2.TokenSource
+	forceNext bool
+	logger    *zap.Logger
+}
+
+func newForceRefreshTokenSource(initial *oauth2.Token, refresh oauth2.TokenSource, logger *zap.Logger) *forceRefreshTokenSource {
+	return &forceRefreshTokenSource{cur: initial, refresh: refresh, logger: logger}
+}
+
+func (f *forceRefreshTokenSource) Token() (*oauth2.Token, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.forceNext && f.cur.Valid() {
+		return f.cur, nil
+	}
+	t, err := f.refresh.Token()
+	if err != nil {
+		return nil, err
+	}
+	f.cur = t
+	f.forceNext = false
+	if f.logger != nil {
+		f.logger.Debug("github-connector: minted fresh installation token (per-grpc refresh)")
+	}
+	return t, nil
+}
+
+func (f *forceRefreshTokenSource) ForceRefreshNext() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.forceNext = true
+}
+
+// Refresh-on-entry syncer wrappers. Each wrapper variant covers a distinct
+// combination of optional ResourceSyncer interfaces present on the github
+// connector's syncers, so runtime type assertions in baton-sdk still detect
+// capabilities correctly after wrapping.
+//
+// If new syncers add other optional-interface combinations (e.g.
+// ResourceCreator, AccountManagerLimited without a Deleter, CredentialManager),
+// add a corresponding variant and wire it into wrapSyncerForRefresh.
+
+type rsBase struct {
+	inner connectorbuilder.ResourceSyncerV2
+	src   *forceRefreshTokenSource
+}
+
+func (r *rsBase) ResourceType(ctx context.Context) *v2.ResourceType {
+	r.src.ForceRefreshNext()
+	return r.inner.ResourceType(ctx)
+}
+
+func (r *rsBase) List(ctx context.Context, parentResourceID *v2.ResourceId, opts resourceSdk.SyncOpAttrs) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
+	r.src.ForceRefreshNext()
+	return r.inner.List(ctx, parentResourceID, opts)
+}
+
+func (r *rsBase) Entitlements(ctx context.Context, resource *v2.Resource, opts resourceSdk.SyncOpAttrs) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
+	r.src.ForceRefreshNext()
+	return r.inner.Entitlements(ctx, resource, opts)
+}
+
+func (r *rsBase) Grants(ctx context.Context, resource *v2.Resource, opts resourceSdk.SyncOpAttrs) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
+	r.src.ForceRefreshNext()
+	return r.inner.Grants(ctx, resource, opts)
+}
+
+type rsStaticEnt struct {
+	rsBase
+	se connectorbuilder.StaticEntitlementSyncerV2
+}
+
+func (r *rsStaticEnt) StaticEntitlements(ctx context.Context, opts resourceSdk.SyncOpAttrs) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
+	r.src.ForceRefreshNext()
+	return r.se.StaticEntitlements(ctx, opts)
+}
+
+type rsProvisioning struct {
+	rsBase
+	prov connectorbuilder.ResourceProvisionerLimited
+}
+
+func (r *rsProvisioning) Grant(ctx context.Context, resource *v2.Resource, ent *v2.Entitlement) (annotations.Annotations, error) {
+	r.src.ForceRefreshNext()
+	return r.prov.Grant(ctx, resource, ent)
+}
+
+func (r *rsProvisioning) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+	r.src.ForceRefreshNext()
+	return r.prov.Revoke(ctx, grant)
+}
+
+type rsProvisioningStaticEnt struct {
+	rsProvisioning
+	se connectorbuilder.StaticEntitlementSyncerV2
+}
+
+func (r *rsProvisioningStaticEnt) StaticEntitlements(ctx context.Context, opts resourceSdk.SyncOpAttrs) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
+	r.src.ForceRefreshNext()
+	return r.se.StaticEntitlements(ctx, opts)
+}
+
+type rsDeleter struct {
+	rsBase
+	del connectorbuilder.ResourceDeleterLimited
+}
+
+func (r *rsDeleter) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {
+	r.src.ForceRefreshNext()
+	return r.del.Delete(ctx, resourceId)
+}
+
+type rsDeleterAccountMgr struct {
+	rsDeleter
+	acct connectorbuilder.AccountManagerLimited
+}
+
+func (r *rsDeleterAccountMgr) CreateAccount(
+	ctx context.Context,
+	info *v2.AccountInfo,
+	opts *v2.LocalCredentialOptions,
+) (connectorbuilder.CreateAccountResponse, []*v2.PlaintextData, annotations.Annotations, error) {
+	r.src.ForceRefreshNext()
+	return r.acct.CreateAccount(ctx, info, opts)
+}
+
+func (r *rsDeleterAccountMgr) CreateAccountCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {
+	r.src.ForceRefreshNext()
+	return r.acct.CreateAccountCapabilityDetails(ctx)
+}
+
+// wrapSyncerForRefresh picks the smallest wrapper variant whose method set
+// matches the optional interfaces actually present on inner. The variants
+// cover the combinations used by this connector today; see the comment on
+// rsBase for what to do when adding a new one.
+func wrapSyncerForRefresh(inner connectorbuilder.ResourceSyncerV2, src *forceRefreshTokenSource) connectorbuilder.ResourceSyncerV2 {
+	base := rsBase{inner: inner, src: src}
+	prov, isProv := inner.(connectorbuilder.ResourceProvisionerLimited)
+	se, isStaticEnt := inner.(connectorbuilder.StaticEntitlementSyncerV2)
+	del, isDel := inner.(connectorbuilder.ResourceDeleterLimited)
+	acct, isAcct := inner.(connectorbuilder.AccountManagerLimited)
+
+	switch {
+	case isProv && isStaticEnt:
+		return &rsProvisioningStaticEnt{
+			rsProvisioning: rsProvisioning{rsBase: base, prov: prov},
+			se:             se,
+		}
+	case isProv:
+		return &rsProvisioning{rsBase: base, prov: prov}
+	case isStaticEnt:
+		return &rsStaticEnt{rsBase: base, se: se}
+	case isDel && isAcct:
+		return &rsDeleterAccountMgr{
+			rsDeleter: rsDeleter{rsBase: base, del: del},
+			acct:      acct,
+		}
+	case isDel:
+		return &rsDeleter{rsBase: base, del: del}
+	default:
+		return &base
+	}
 }
 
 func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]string, error) {
