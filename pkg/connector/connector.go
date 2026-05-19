@@ -35,6 +35,16 @@ const githubDotCom = "https://github.com"
 // JWT token expires in 10 minutes, so we set it to 9 minutes to leave some buffer.
 const jwtExpiryTime = 9 * time.Minute
 
+const (
+	// GitHub's 2026 stateless S2S token rollout temporarily supports this
+	// per-request override on installation-token mint requests. If GitHub stops
+	// respecting the override, the header is ignored and normal rollout behavior
+	// applies.
+	// https://github.blog/changelog/2026-05-15-github-app-installation-tokens-per-request-override-header/
+	githubStatelessS2STokenHeader  = "X-GitHub-Stateless-S2S-Token"
+	githubStatelessS2STokenEnabled = "enabled"
+)
+
 var (
 	ValidAssetDomains     = []string{"avatars.githubusercontent.com"}
 	maxPageSize       int = 100 // maximum page size github supported.
@@ -482,7 +492,19 @@ func findInstallation(ctx context.Context, c *github.Client, orgName string) (*g
 
 func getInstallationToken(ctx context.Context, c *github.Client, id int64) (*github.InstallationToken, error) {
 	l := ctxzap.Extract(ctx)
-	token, resp, err := c.Apps.CreateInstallationToken(ctx, id, &github.InstallationTokenOptions{})
+	req, err := c.NewRequest("POST",
+		fmt.Sprintf("app/installations/%v/access_tokens", id),
+		&github.InstallationTokenOptions{},
+		func(req *http.Request) {
+			req.Header.Set(githubStatelessS2STokenHeader, githubStatelessS2STokenEnabled)
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("github-connector: failed to create installation token request for installation %d: %w", id, err)
+	}
+
+	token := new(github.InstallationToken)
+	resp, err := c.Do(ctx, req, token)
 	if err != nil {
 		l.Warn("failed to create GitHub App installation token",
 			zap.Int64("installation_id", id),
@@ -501,7 +523,15 @@ func getInstallationToken(ctx context.Context, c *github.Client, id int64) (*git
 		return nil, fmt.Errorf("github-connector: unexpected status %d creating installation token for installation %d: %s", resp.StatusCode, id, body)
 	}
 
+	l.Debug("created GitHub App installation token",
+		zap.Int64("installation_id", id),
+		zap.Bool("stateless_s2s_token", isStatelessInstallationToken(token.GetToken())),
+	)
 	return token, nil
+}
+
+func isStatelessInstallationToken(token string) bool {
+	return strings.HasPrefix(token, "ghs_") && strings.Count(strings.TrimPrefix(token, "ghs_"), ".") == 2
 }
 
 // appJWTTokenRefresher is used to refresh the app jwt token when it expires.
