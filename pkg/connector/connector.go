@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"bytes"
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
@@ -268,6 +269,9 @@ func newGitHubClient(ctx context.Context, instanceURL string, ts oauth2.TokenSou
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
 	tc := oauth2.NewClient(ctx, ts)
+	if oauthT, ok := tc.Transport.(*oauth2.Transport); ok {
+		oauthT.Base = &unauthorized401Logger{base: oauthT.Base}
+	}
 	gc := github.NewClient(tc)
 
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
@@ -546,6 +550,75 @@ func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
 		AccessToken: token.GetToken(),
 		Expiry:      token.GetExpiresAt().Time,
 	}, nil
+}
+
+// unauthorized401Logger is a diagnostic-only RoundTripper that emits a single
+// DEBUG line on every 401 response, capturing rate-limit headers, the GitHub
+// request id, the response body, and a fingerprint of the token in use. It
+// does not alter the response.
+type unauthorized401Logger struct {
+	base http.RoundTripper
+}
+
+var diagnostic401Headers = []string{
+	"X-Github-Request-Id",
+	"X-Ratelimit-Limit",
+	"X-Ratelimit-Remaining",
+	"X-Ratelimit-Reset",
+	"X-Ratelimit-Used",
+	"X-Ratelimit-Resource",
+	"Retry-After",
+}
+
+func (t *unauthorized401Logger) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt := t.base
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	resp, err := rt.RoundTrip(req)
+	if err != nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		return resp, err
+	}
+
+	var body []byte
+	if resp.Body != nil {
+		body, _ = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+	}
+
+	headers := make(map[string]string, len(diagnostic401Headers))
+	for _, h := range diagnostic401Headers {
+		if v := resp.Header.Get(h); v != "" {
+			headers[h] = v
+		}
+	}
+
+	ctxzap.Extract(req.Context()).Debug("github-connector: received 401 response",
+		zap.String("http.method", req.Method),
+		zap.String("http.url_details.path", req.URL.Path),
+		zap.String("http.url_details.query", req.URL.RawQuery),
+		zap.Any("response_headers", headers),
+		zap.String("response_body", string(body)),
+		zap.String("token_fingerprint", tokenFingerprint(req.Header.Get("Authorization"))),
+	)
+
+	return resp, err
+}
+
+// tokenFingerprint returns the first/last four characters of the bearer
+// portion of an Authorization header so log readers can tell whether the same
+// token is being used across requests without exposing the full secret.
+func tokenFingerprint(authHeader string) string {
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	tok := parts[1]
+	if len(tok) < 8 {
+		return ""
+	}
+	return tok[:4] + "..." + tok[len(tok)-4:]
 }
 
 func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]string, error) {
