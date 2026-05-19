@@ -361,7 +361,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 			privateKey: string(ghc.AppPrivatekeyPath),
 		},
 	)
-	ts := oauth2.ReuseTokenSource(
+	ts := newInvalidatableTokenSource(
 		&oauth2.Token{
 			AccessToken: token.GetToken(),
 			Expiry:      token.GetExpiresAt().Time,
@@ -382,11 +382,11 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		return nil, err
 	}
 
-	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
+	ghClient, err := newGitHubClientWithRetry(ctx, ghc.InstanceUrl, ts)
 	if err != nil {
 		return nil, err
 	}
-	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ts)
+	graphqlClient, err := newGitHubGraphqlClientWithRetry(ctx, ghc.InstanceUrl, ts)
 	if err != nil {
 		return nil, err
 	}
@@ -405,6 +405,67 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
 	}
 	return gh, nil
+}
+
+// newGitHubClientWithRetry creates a GitHub API client that automatically
+// retries once on 401 after refreshing the installation token. Used for
+// GitHub App authentication where tokens have a 1-hour TTL.
+func newGitHubClientWithRetry(ctx context.Context, instanceURL string, ts *invalidatableTokenSource) (*github.Client, error) {
+	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
+	if err != nil {
+		return nil, err
+	}
+
+	tc := &http.Client{
+		Transport: &retryOn401Transport{
+			base: &oauth2.Transport{
+				Base:   httpClient.Transport,
+				Source: ts,
+			},
+			ts: ts,
+		},
+	}
+	gc := github.NewClient(tc)
+
+	instanceURL = strings.TrimSuffix(instanceURL, "/")
+	if instanceURL != "" && instanceURL != githubDotCom {
+		return gc.WithEnterpriseURLs(instanceURL, instanceURL)
+	}
+
+	return gc, nil
+}
+
+// newGitHubGraphqlClientWithRetry creates a GitHub GraphQL client that
+// automatically retries once on 401 after refreshing the installation token.
+func newGitHubGraphqlClientWithRetry(ctx context.Context, instanceURL string, ts *invalidatableTokenSource) (*githubv4.Client, error) {
+	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
+	if err != nil {
+		return nil, err
+	}
+
+	tc := &http.Client{
+		Transport: &retryOn401Transport{
+			base: &oauth2.Transport{
+				Base:   httpClient.Transport,
+				Source: ts,
+			},
+			ts: ts,
+		},
+	}
+
+	instanceURL = strings.TrimSuffix(instanceURL, "/")
+	if instanceURL != "" && instanceURL != githubDotCom {
+		gqlURL, err := url.Parse(instanceURL)
+		if err != nil {
+			return nil, err
+		}
+
+		gqlURL.Path = "/api/graphql"
+
+		return githubv4.NewEnterpriseClient(gqlURL.String(), tc), nil
+	}
+
+	return githubv4.NewClient(tc), nil
 }
 
 func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
