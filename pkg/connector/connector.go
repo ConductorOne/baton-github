@@ -270,10 +270,7 @@ func newGitHubClient(ctx context.Context, instanceURL string, ts oauth2.TokenSou
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
 	tc := oauth2.NewClient(ctx, ts)
-	if oauthT, ok := tc.Transport.(*oauth2.Transport); ok {
-		oauthT.Base = &unauthorized401Logger{base: oauthT.Base}
-	}
-	wrapWithUnauthorizedRefresh(tc, ts)
+	wrap401Handlers(tc, ts)
 	gc := github.NewClient(tc)
 
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
@@ -422,10 +419,7 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.T
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
 	tc := oauth2.NewClient(ctx, ts)
-	if oauthT, ok := tc.Transport.(*oauth2.Transport); ok {
-		oauthT.Base = &unauthorized401Logger{base: oauthT.Base}
-	}
-	wrapWithUnauthorizedRefresh(tc, ts)
+	wrap401Handlers(tc, ts)
 
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
 	if instanceURL != "" && instanceURL != githubDotCom {
@@ -645,8 +639,13 @@ func (t *unauthorizedRefreshTransport) RoundTrip(req *http.Request) (*http.Respo
 	return t.base.RoundTrip(retry)
 }
 
-// wrapWithUnauthorizedRefresh adds the 401-retry layer if ts supports invalidation.
-func wrapWithUnauthorizedRefresh(c *http.Client, ts oauth2.TokenSource) {
+// wrap401Handlers attaches diagnostic logging beneath oauth2.Transport and the
+// 401-retry layer above it. The logger is installed unconditionally; the retry
+// only when ts supports invalidation (PAT and JWT-only sources don't).
+func wrap401Handlers(c *http.Client, ts oauth2.TokenSource) {
+	if oauthT, ok := c.Transport.(*oauth2.Transport); ok {
+		oauthT.Base = &unauthorized401Logger{base: oauthT.Base}
+	}
 	if inv, ok := ts.(tokenInvalidator); ok {
 		c.Transport = &unauthorizedRefreshTransport{base: c.Transport, src: inv}
 	}
