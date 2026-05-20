@@ -96,7 +96,7 @@ var (
 	resourceTypeLicense = &v2.ResourceType{
 		Id:          "license",
 		DisplayName: "License",
-		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_LICENSE},
+		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_LICENSE_PROFILE},
 		Annotations: skipEntitlementsAnnotations("license"),
 	}
 )

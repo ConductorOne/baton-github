@@ -140,13 +140,13 @@ func (l *licenseResourceType) Grants(
 }
 
 func licenseResource(enterprise string, purchasedSeats, consumedSeats int64, entitlementID string) (*v2.Resource, error) {
-	traitOpts := []resourceSdk.LicenseTraitOption{
+	traitOpts := []resourceSdk.LicenseProfileTraitOption{
 		resourceSdk.WithLicenseName(enterprise),
 		resourceSdk.WithLicenseSeats(purchasedSeats, consumedSeats),
 		resourceSdk.WithLicenseEntitlementIDs(entitlementID),
 	}
 
-	licenseTrait, err := resourceSdk.NewLicenseTrait(traitOpts...)
+	licenseTrait, err := resourceSdk.NewLicenseProfileTrait(traitOpts...)
 	if err != nil {
 		return nil, err
 	}
