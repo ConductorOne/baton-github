@@ -138,7 +138,6 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 			enterpriseRoleBuilder(gh.client, gh.appClient, gh.customClient, gh.enterprises),
 			licenseBuilder(gh.customClient, gh.enterprises),
 		)
-
 	}
 	return resourceSyncers
 }
