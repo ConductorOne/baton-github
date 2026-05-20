@@ -128,14 +128,16 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ resourceSdk.SyncOpAttrs) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
 	rv := make([]*v2.Entitlement, 0, len(repoAccessLevels))
 	for i, level := range repoAccessLevels {
-		rv = append(rv, entitlement.NewPermissionEntitlement(nil, level,
+		rv = append(rv, entitlement.NewPermissionEntitlement(
+			resource,
+			level,
 			entitlement.WithDisplayName(fmt.Sprintf("Repo %s", titleCase(level))),
 			entitlement.WithDescription(fmt.Sprintf("Access to repository in GitHub as %s", level)),
 			entitlement.WithGrantableTo(resourceTypeUser, resourceTypeTeam),
 			entitlement.WithAnnotation(&v2.EntitlementExclusionGroup{
 				ExclusionGroupId: "repository-permission-" + resource.GetId().GetResource(),
 				Order:            uint32(i),
-				IsDefault:        level == repoPermissionPull,
+				IsDefault:        level == repoPermissionPush,
 			}),
 		))
 	}
