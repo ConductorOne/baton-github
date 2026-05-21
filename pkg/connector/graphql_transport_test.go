@@ -83,16 +83,21 @@ func TestGraphQLStatusClassifyingTransport_PassesThrough2xx(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-func TestGraphQLStatusClassifyingTransport_PassesThroughNon429Client4xx(t *testing.T) {
-	cases := []int{
-		http.StatusUnauthorized,
-		http.StatusForbidden,
-		http.StatusNotFound,
+func TestGraphQLStatusClassifyingTransport_ClassifiesClient4xx(t *testing.T) {
+	cases := []struct {
+		httpStatus int
+		grpcCode   codes.Code
+	}{
+		{http.StatusBadRequest, codes.InvalidArgument},
+		{http.StatusUnauthorized, codes.Unauthenticated},
+		{http.StatusForbidden, codes.PermissionDenied},
+		{http.StatusNotFound, codes.NotFound},
+		{http.StatusConflict, codes.AlreadyExists},
 	}
-	for _, code := range cases {
-		t.Run(http.StatusText(code), func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(http.StatusText(tc.httpStatus), func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(code)
+				w.WriteHeader(tc.httpStatus)
 			}))
 			t.Cleanup(srv.Close)
 
@@ -105,13 +110,12 @@ func TestGraphQLStatusClassifyingTransport_PassesThroughNon429Client4xx(t *testi
 					graphqlHost: u.Host,
 				},
 			}
-			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/graphql", nil)
 			require.NoError(t, err)
-			resp, err := client.Do(req)
-			require.NoError(t, err)
-			require.NotNil(t, resp)
-			t.Cleanup(func() { _ = resp.Body.Close() })
-			require.Equal(t, code, resp.StatusCode)
+			resp, err := client.Do(req) //nolint:bodyclose // transport drains and returns nil resp on classification
+			require.Nil(t, resp)
+			require.Error(t, err)
+			require.Equal(t, tc.grpcCode, status.Code(err))
 		})
 	}
 }
