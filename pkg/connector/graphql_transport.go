@@ -10,28 +10,26 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// graphqlStatusClassifyingTransport converts non-2xx HTTP responses from the
-// configured GraphQL host into gRPC-classified errors using the SDK's
-// canonical status-to-code mapping (uhttp.GrpcCodeFromHTTPStatus). This
-// matches how uhttp.BaseHttpClient.Do classifies its own responses.
+// statusClassifyingTransport converts non-2xx HTTP responses into
+// gRPC-classified errors using the SDK's canonical status-to-code mapping
+// (uhttp.GrpcCodeFromHTTPStatus). This matches how uhttp.BaseHttpClient.Do
+// classifies its own responses.
 //
-// Without this, shurcooL/graphql surfaces non-200 responses as opaque
-// fmt.Errorf strings, which propagate as codes.Unknown and abort the sync on
-// a single transient blip — even when the underlying status (429, 5xx, 401,
-// 403, 404, ...) carries enough information for the SDK retry layer to do
-// the right thing.
-type graphqlStatusClassifyingTransport struct {
-	base        http.RoundTripper
-	graphqlHost string
+// It exists because shurcooL/graphql surfaces non-200 responses as opaque
+// fmt.Errorf strings, which otherwise propagate as codes.Unknown and abort
+// the sync on a single transient blip — even when the underlying status
+// (429, 5xx, 401, 403, 404, ...) carries enough information for the SDK
+// retry layer to do the right thing. The REST path doesn't need this because
+// go-github exposes structured response/error types that wrapGitHubError
+// already classifies at the call site.
+type statusClassifyingTransport struct {
+	base http.RoundTripper
 }
 
-func (t *graphqlStatusClassifyingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (t *statusClassifyingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
 	if err != nil || resp == nil {
 		return resp, err
-	}
-	if req.URL.Host != t.graphqlHost {
-		return resp, nil
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return resp, nil

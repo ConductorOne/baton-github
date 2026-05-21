@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strconv"
 	"testing"
 	"time"
@@ -15,7 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestGraphQLStatusClassifyingTransport_ClassifiesUnavailable(t *testing.T) {
+func TestStatusClassifyingTransport_ClassifiesUnavailable(t *testing.T) {
 	cases := []struct {
 		name       string
 		statusCode int
@@ -36,14 +35,8 @@ func TestGraphQLStatusClassifyingTransport_ClassifiesUnavailable(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			u, err := url.Parse(srv.URL)
-			require.NoError(t, err)
-
 			client := &http.Client{
-				Transport: &graphqlStatusClassifyingTransport{
-					base:        http.DefaultTransport,
-					graphqlHost: u.Host,
-				},
+				Transport: &statusClassifyingTransport{base: http.DefaultTransport},
 			}
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/graphql", nil)
 			require.NoError(t, err)
@@ -58,21 +51,15 @@ func TestGraphQLStatusClassifyingTransport_ClassifiesUnavailable(t *testing.T) {
 	}
 }
 
-func TestGraphQLStatusClassifyingTransport_PassesThrough2xx(t *testing.T) {
+func TestStatusClassifyingTransport_PassesThrough2xx(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"data":{}}`))
 	}))
 	t.Cleanup(srv.Close)
 
-	u, err := url.Parse(srv.URL)
-	require.NoError(t, err)
-
 	client := &http.Client{
-		Transport: &graphqlStatusClassifyingTransport{
-			base:        http.DefaultTransport,
-			graphqlHost: u.Host,
-		},
+		Transport: &statusClassifyingTransport{base: http.DefaultTransport},
 	}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
 	require.NoError(t, err)
@@ -83,7 +70,7 @@ func TestGraphQLStatusClassifyingTransport_PassesThrough2xx(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-func TestGraphQLStatusClassifyingTransport_ClassifiesClient4xx(t *testing.T) {
+func TestStatusClassifyingTransport_ClassifiesClient4xx(t *testing.T) {
 	cases := []struct {
 		httpStatus int
 		grpcCode   codes.Code
@@ -101,14 +88,8 @@ func TestGraphQLStatusClassifyingTransport_ClassifiesClient4xx(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			u, err := url.Parse(srv.URL)
-			require.NoError(t, err)
-
 			client := &http.Client{
-				Transport: &graphqlStatusClassifyingTransport{
-					base:        http.DefaultTransport,
-					graphqlHost: u.Host,
-				},
+				Transport: &statusClassifyingTransport{base: http.DefaultTransport},
 			}
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/graphql", nil)
 			require.NoError(t, err)
@@ -120,7 +101,7 @@ func TestGraphQLStatusClassifyingTransport_ClassifiesClient4xx(t *testing.T) {
 	}
 }
 
-func TestGraphQLStatusClassifyingTransport_Attaches429RateLimitDetails(t *testing.T) {
+func TestStatusClassifyingTransport_Attaches429RateLimitDetails(t *testing.T) {
 	resetAt := time.Now().Add(45 * time.Second).Truncate(time.Second)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-RateLimit-Limit", "5000")
@@ -131,14 +112,8 @@ func TestGraphQLStatusClassifyingTransport_Attaches429RateLimitDetails(t *testin
 	}))
 	t.Cleanup(srv.Close)
 
-	u, err := url.Parse(srv.URL)
-	require.NoError(t, err)
-
 	client := &http.Client{
-		Transport: &graphqlStatusClassifyingTransport{
-			base:        http.DefaultTransport,
-			graphqlHost: u.Host,
-		},
+		Transport: &statusClassifyingTransport{base: http.DefaultTransport},
 	}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/graphql", nil)
 	require.NoError(t, err)
@@ -161,46 +136,18 @@ func TestGraphQLStatusClassifyingTransport_Attaches429RateLimitDetails(t *testin
 	require.Equal(t, resetAt.Unix(), found.GetResetAt().AsTime().Unix())
 }
 
-func TestGraphQLStatusClassifyingTransport_PassesThroughNonMatchingHost(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte("unavailable"))
-	}))
-	t.Cleanup(srv.Close)
-
-	client := &http.Client{
-		Transport: &graphqlStatusClassifyingTransport{
-			base:        http.DefaultTransport,
-			graphqlHost: "some-other-host.invalid",
-		},
-	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
-	require.NoError(t, err)
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
-}
-
-// TestGraphQLStatusClassifyingTransport_UsesSDKStatusMapping locks in alignment
+// TestStatusClassifyingTransport_UsesSDKStatusMapping locks in alignment
 // with uhttp.GrpcCodeFromHTTPStatus. 501 is the canary: the SDK maps
 // Not Implemented to codes.Unimplemented, so a regression to a hardcoded
 // codes.Unavailable for 5xx would flip this assertion.
-func TestGraphQLStatusClassifyingTransport_UsesSDKStatusMapping(t *testing.T) {
+func TestStatusClassifyingTransport_UsesSDKStatusMapping(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotImplemented)
 	}))
 	t.Cleanup(srv.Close)
 
-	u, err := url.Parse(srv.URL)
-	require.NoError(t, err)
-
 	client := &http.Client{
-		Transport: &graphqlStatusClassifyingTransport{
-			base:        http.DefaultTransport,
-			graphqlHost: u.Host,
-		},
+		Transport: &statusClassifyingTransport{base: http.DefaultTransport},
 	}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/graphql", nil)
 	require.NoError(t, err)
