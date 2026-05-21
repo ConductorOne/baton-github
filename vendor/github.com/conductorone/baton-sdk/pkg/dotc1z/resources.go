@@ -24,7 +24,8 @@ create table if not exists %s (
 	parent_resource_id text,
     data blob not null,
     sync_id text not null,
-    discovered_at datetime not null
+    discovered_at datetime not null,
+    source_cache_key text not null default ''
 );
 create index if not exists %s on %s (resource_type_id);
 create index if not exists %s on %s (parent_resource_type_id, parent_resource_id);
@@ -54,8 +55,8 @@ func (r *resourcesTable) Schema() (string, []interface{}) {
 	}
 }
 
-func (r *resourcesTable) Migrations(ctx context.Context, db *goqu.Database) error {
-	return nil
+func (r *resourcesTable) Migrations(ctx context.Context, db *goqu.Database) (bool, error) {
+	return sourceCacheColumnMigration(ctx, db, r.Name(), fmt.Sprintf("idx_resources_sync_source_cache_key_v%s", r.Version()))
 }
 
 func (c *C1File) ListResources(ctx context.Context, request *v2.ResourcesServiceListResourcesRequest) (*v2.ResourcesServiceListResourcesResponse, error) {

@@ -116,11 +116,11 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 		userBuilder(gh.client, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises),
 		repositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories, gh.directCollaboratorsOnly),
 		orgRoleBuilder(gh.client, gh.orgCache),
-		invitationBuilder(invitationBuilderParams{
-			client:   gh.client,
-			orgCache: gh.orgCache,
-			orgs:     gh.orgs,
-		}),
+		// invitationBuilder(invitationBuilderParams{
+		// 	client:   gh.client,
+		// 	orgCache: gh.orgCache,
+		// 	orgs:     gh.orgs,
+		// }),
 	}
 
 	if gh.syncSecrets {
@@ -230,7 +230,9 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 				zap.Error(err))
 		}
 	}
-	return nil, nil
+	return annotations.New(&v2.SourceCacheCapability{
+		Mode: v2.SourceCacheCapability_MODE_READ_WRITE,
+	}), nil
 }
 
 func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annotations, error) {
@@ -255,7 +257,9 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 		}
 	}
 
-	return nil, nil
+	return annotations.New(&v2.SourceCacheCapability{
+		Mode: v2.SourceCacheCapability_MODE_READ_WRITE,
+	}), nil
 }
 
 // newGitHubClient returns a new GitHub API client authenticated with an access token via oauth2.

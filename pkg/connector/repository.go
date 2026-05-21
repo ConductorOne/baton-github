@@ -11,6 +11,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/session"
+	"github.com/conductorone/baton-sdk/pkg/sourcecache"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -85,14 +86,27 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 		return nil, nil, err
 	}
 
-	listOpts := &github.RepositoryListByOrgOptions{
-		ListOptions: github.ListOptions{
-			Page:    page,
-			PerPage: maxPageSize,
-		},
+	ctx, cacheState, err := prepareSourceCache(ctx, opts, sourcecache.RowKindResources,
+		"repositories.list", parentID.Resource, orgName, fmt.Sprintf("page=%d", page), fmt.Sprintf("per_page=%d", maxPageSize),
+		fmt.Sprintf("omit_archived=%t", o.omitArchivedRepositories),
+	)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	repos, resp, err := o.client.Repositories.ListByOrg(ctx, orgName, listOpts)
+	var repos []*github.Repository
+	resp, err := conditionalGitHubGet(ctx, o.client, githubPath("orgs", orgName, "repos"), githubListValues(page, maxPageSize), cacheState, &repos)
+	if isSourceCacheNotModified(resp, err) {
+		pageToken, err := bag.NextToken(nextGitHubPageAfterReplay(page))
+		if err != nil {
+			return nil, nil, err
+		}
+		replayAnnos, err := sourceCacheReplayAnnotations(cacheState)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken, Annotations: replayAnnos}, nil
+	}
 	if err != nil {
 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list repositories")
 	}
@@ -117,6 +131,10 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 			return nil, nil, err
 		}
 		rv = append(rv, rr)
+	}
+	reqAnnos, err = addSourceCacheKeyAnnotation(reqAnnos, cacheState, resp, len(rv))
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return rv, &resourceSdk.SyncOpResults{
@@ -213,14 +231,31 @@ func (o *repositoryResourceType) Grants(
 		if o.directCollaboratorsOnly {
 			affiliation = "direct"
 		}
-		listOpts := &github.ListCollaboratorsOptions{
-			Affiliation: affiliation,
-			ListOptions: github.ListOptions{
-				Page:    page,
-				PerPage: maxPageSize,
-			},
+		ctx, cacheState, err := prepareSourceCache(ctx, opts, sourcecache.RowKindGrants,
+			"repositories.collaborators", resource.ParentResourceId.Resource, orgName, resource.Id.Resource, resource.DisplayName,
+			"affiliation="+affiliation, fmt.Sprintf("page=%d", page), fmt.Sprintf("per_page=%d", maxPageSize),
+		)
+		if err != nil {
+			return nil, nil, err
 		}
-		users, resp, err := o.client.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, listOpts)
+		var users []*github.User
+		query := githubListValues(page, maxPageSize)
+		query.Set("affiliation", affiliation)
+		resp, err := conditionalGitHubGet(ctx, o.client, githubPath("repos", orgName, resource.DisplayName, "collaborators"), query, cacheState, &users)
+		if isSourceCacheNotModified(resp, err) {
+			if err := bag.Next(nextGitHubPageAfterReplay(page)); err != nil {
+				return nil, nil, err
+			}
+			pageToken, err := bag.Marshal()
+			if err != nil {
+				return nil, nil, err
+			}
+			replayAnnos, err := sourceCacheReplayAnnotations(cacheState)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken, Annotations: replayAnnos}, nil
+		}
 		if err != nil {
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
 				l.Debug("insufficient access to list collaborators, skipping",
@@ -269,6 +304,10 @@ func (o *repositoryResourceType) Grants(
 				rv = append(rv, grant)
 			}
 		}
+		reqAnnos, err = addSourceCacheKeyAnnotation(reqAnnos, cacheState, resp, len(rv))
+		if err != nil {
+			return nil, nil, err
+		}
 
 	case resourceTypeTeam.Id:
 		orgID, err := parseResourceToGitHub(resource.ParentResourceId)
@@ -276,11 +315,29 @@ func (o *repositoryResourceType) Grants(
 			return nil, nil, err
 		}
 
-		listOpts := &github.ListOptions{
-			Page:    page,
-			PerPage: maxPageSize,
+		ctx, cacheState, err := prepareSourceCache(ctx, opts, sourcecache.RowKindGrants,
+			"repositories.teams", resource.ParentResourceId.Resource, orgName, resource.Id.Resource, resource.DisplayName,
+			fmt.Sprintf("page=%d", page), fmt.Sprintf("per_page=%d", maxPageSize),
+		)
+		if err != nil {
+			return nil, nil, err
 		}
-		teams, resp, err := o.client.Repositories.ListTeams(ctx, orgName, resource.DisplayName, listOpts)
+		var teams []*github.Team
+		resp, err := conditionalGitHubGet(ctx, o.client, githubPath("repos", orgName, resource.DisplayName, "teams"), githubListValues(page, maxPageSize), cacheState, &teams)
+		if isSourceCacheNotModified(resp, err) {
+			if err := bag.Next(nextGitHubPageAfterReplay(page)); err != nil {
+				return nil, nil, err
+			}
+			pageToken, err := bag.Marshal()
+			if err != nil {
+				return nil, nil, err
+			}
+			replayAnnos, err := sourceCacheReplayAnnotations(cacheState)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken, Annotations: replayAnnos}, nil
+		}
 		if err != nil {
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
 				l.Debug("insufficient access to list teams for repository, skipping",
@@ -337,6 +394,10 @@ func (o *repositoryResourceType) Grants(
 					},
 				)))
 			}
+		}
+		reqAnnos, err = addSourceCacheKeyAnnotation(reqAnnos, cacheState, resp, len(rv))
+		if err != nil {
+			return nil, nil, err
 		}
 	default:
 		return nil, nil, fmt.Errorf("unexpected resource type while fetching grants for repo")

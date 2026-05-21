@@ -28,6 +28,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/bid"
 	ratelimit2 "github.com/conductorone/baton-sdk/pkg/ratelimit"
 	"github.com/conductorone/baton-sdk/pkg/session"
+	"github.com/conductorone/baton-sdk/pkg/sourcecache"
 	"github.com/conductorone/baton-sdk/pkg/types"
 	"github.com/conductorone/baton-sdk/pkg/types/sessions"
 	"github.com/conductorone/baton-sdk/pkg/ugrpc"
@@ -55,17 +56,28 @@ type connectorClient struct {
 	connectorV2.ActionServiceClient
 
 	sessionStoreSetter sessions.SetSessionStore // this is the session store server
+	sourceCacheSetter  sourcecache.SetLookup
 }
 
 var _ sessions.SetSessionStore = (*connectorClient)(nil)
+var _ sourcecache.SetLookup = (*connectorClient)(nil)
 var _ SetSessionStoreSetter = (*connectorClient)(nil)
+var _ SetSourceCacheSetter = (*connectorClient)(nil)
 
 type SetSessionStoreSetter interface {
 	SetSessionStoreSetter(setsessionStoreSetter sessions.SetSessionStore)
 }
 
+type SetSourceCacheSetter interface {
+	SetSourceCacheSetter(sourceCacheSetter sourcecache.SetLookup)
+}
+
 func (c *connectorClient) SetSessionStoreSetter(sessionStoreSetter sessions.SetSessionStore) {
 	c.sessionStoreSetter = sessionStoreSetter
+}
+
+func (c *connectorClient) SetSourceCacheSetter(sourceCacheSetter sourcecache.SetLookup) {
+	c.sourceCacheSetter = sourceCacheSetter
 }
 
 func (c *connectorClient) SetSessionStore(ctx context.Context, store sessions.SessionStore) {
@@ -75,6 +87,14 @@ func (c *connectorClient) SetSessionStore(ctx context.Context, store sessions.Se
 		return
 	}
 	c.sessionStoreSetter.SetSessionStore(ctx, store)
+}
+
+func (c *connectorClient) SetSourceCache(ctx context.Context, lookup sourcecache.Lookup) {
+	if c.sourceCacheSetter == nil {
+		ctxzap.Extract(ctx).Debug("connectorClient's source cache setter is nil")
+		return
+	}
+	c.sourceCacheSetter.SetSourceCache(ctx, lookup)
 }
 
 var ErrConnectorNotImplemented = errors.New("client does not implement connector connectorV2")
@@ -99,7 +119,8 @@ type wrapper struct {
 
 	now func() time.Time
 
-	SessionServer sessions.SetSessionStore
+	SessionServer     sessions.SetSessionStore
+	SourceCacheServer sourcecache.SetLookup
 }
 
 type Option func(ctx context.Context, w *wrapper) error
@@ -186,6 +207,9 @@ func NewWrapper(ctx context.Context, server interface{}, opts ...Option) (*wrapp
 	w := &wrapper{
 		server: connectorServer,
 		now:    time.Now,
+	}
+	if sourceCacheServer, ok := connectorServer.(sourcecache.SetLookup); ok {
+		w.SourceCacheServer = sourceCacheServer
 	}
 
 	for _, o := range opts {
@@ -431,6 +455,7 @@ func (cw *wrapper) C(ctx context.Context) (types.ConnectorClient, error) {
 	cw.conn = conn
 	client := NewConnectorClient(ctx, cw.conn)
 	client.SetSessionStoreSetter(cw.SessionServer)
+	client.SetSourceCacheSetter(cw.SourceCacheServer)
 	cw.client = client
 
 	return client, nil

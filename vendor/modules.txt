@@ -165,7 +165,7 @@ github.com/cenkalti/backoff/v5
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/conductorone/baton-sdk v0.9.15
+# github.com/conductorone/baton-sdk v0.9.15 => ../baton-sdk
 ## explicit; go 1.25.2
 github.com/conductorone/baton-sdk/internal/connector
 github.com/conductorone/baton-sdk/pb/c1/c1z/v1
@@ -206,6 +206,7 @@ github.com/conductorone/baton-sdk/pkg/ratelimit
 github.com/conductorone/baton-sdk/pkg/retry
 github.com/conductorone/baton-sdk/pkg/sdk
 github.com/conductorone/baton-sdk/pkg/session
+github.com/conductorone/baton-sdk/pkg/sourcecache
 github.com/conductorone/baton-sdk/pkg/sync
 github.com/conductorone/baton-sdk/pkg/sync/expand
 github.com/conductorone/baton-sdk/pkg/sync/expand/scc
@@ -852,3 +853,4 @@ modernc.org/memory
 modernc.org/sqlite
 modernc.org/sqlite/lib
 modernc.org/sqlite/vtab
+# github.com/conductorone/baton-sdk => ../baton-sdk

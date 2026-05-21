@@ -10,6 +10,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/sourcecache"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -54,7 +55,7 @@ func organizationResource(
 		&v2.ChildResourceType{ResourceTypeId: resourceTypeTeam.Id},
 		&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
 		&v2.ChildResourceType{ResourceTypeId: resourceTypeOrgRole.Id},
-		&v2.ChildResourceType{ResourceTypeId: resourceTypeInvitation.Id},
+		// &v2.ChildResourceType{ResourceTypeId: resourceTypeInvitation.Id},
 	}
 	if syncSecrets {
 		annotations = append(annotations, &v2.ChildResourceType{ResourceTypeId: resourceTypeApiToken.Id})
@@ -218,14 +219,32 @@ func (o *orgResourceType) Grants(
 		if err != nil {
 			return nil, nil, err
 		}
-		listOpts := github.ListMembersOptions{
-			Role: rId,
-			ListOptions: github.ListOptions{
-				Page:    page,
-				PerPage: maxPageSize,
-			},
+		ctx, cacheState, err := prepareSourceCache(ctx, opts, sourcecache.RowKindGrants,
+			"orgs.members", resource.Id.Resource, orgName, "role="+rId,
+			fmt.Sprintf("page=%d", page), fmt.Sprintf("per_page=%d", maxPageSize),
+		)
+		if err != nil {
+			return nil, nil, err
 		}
-		users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &listOpts)
+
+		var users []*github.User
+		query := githubListValues(page, maxPageSize)
+		query.Set("role", rId)
+		resp, err := conditionalGitHubGet(ctx, o.client, githubPath("orgs", orgName, "members"), query, cacheState, &users)
+		if isSourceCacheNotModified(resp, err) {
+			if err := bag.Next(nextGitHubPageAfterReplay(page)); err != nil {
+				return nil, nil, err
+			}
+			pageToken, err = bag.Marshal()
+			if err != nil {
+				return nil, nil, err
+			}
+			replayAnnos, err := sourceCacheReplayAnnotations(cacheState)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken, Annotations: replayAnnos}, nil
+		}
 		if err != nil {
 			if isNotFoundError(resp) {
 				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
@@ -254,6 +273,10 @@ func (o *orgResourceType) Grants(
 				rv = append(rv, o.orgRoleGrant(orgRoleMember, resource, ur.Id, user.GetID()))
 			}
 			rv = append(rv, o.orgRoleGrant(rId, resource, ur.Id, user.GetID()))
+		}
+		reqAnnos, err = addSourceCacheKeyAnnotation(reqAnnos, cacheState, resp, len(rv))
+		if err != nil {
+			return nil, nil, err
 		}
 	default:
 		ctxzap.Extract(ctx).Warn("Unknown GitHub Role Name",

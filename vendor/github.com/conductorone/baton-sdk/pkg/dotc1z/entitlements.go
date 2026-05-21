@@ -22,7 +22,8 @@ create table if not exists %s (
     external_id text not null,
     data blob not null,
     sync_id text not null,
-    discovered_at datetime not null
+    discovered_at datetime not null,
+    source_cache_key text not null default ''
 );
 create index if not exists %s on %s (resource_type_id, resource_id);
 create unique index if not exists %s on %s (external_id, sync_id);`
@@ -49,8 +50,8 @@ func (r *entitlementsTable) Schema() (string, []interface{}) {
 	}
 }
 
-func (r *entitlementsTable) Migrations(ctx context.Context, db *goqu.Database) error {
-	return nil
+func (r *entitlementsTable) Migrations(ctx context.Context, db *goqu.Database) (bool, error) {
+	return sourceCacheColumnMigration(ctx, db, r.Name(), fmt.Sprintf("idx_entitlements_sync_source_cache_key_v%s", r.Version()))
 }
 
 func (c *C1File) ListEntitlements(ctx context.Context, request *v2.EntitlementsServiceListEntitlementsRequest) (*v2.EntitlementsServiceListEntitlementsResponse, error) {

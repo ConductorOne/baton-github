@@ -10,6 +10,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/sourcecache"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -171,11 +172,29 @@ func (o *orgRoleResourceType) Grants(
 			ResourceTypeID: resourceTypeTeam.Id,
 		})
 	case resourceTypeUser.Id:
-		listOpts := &github.ListOptions{
-			Page:    page,
-			PerPage: maxPageSize,
+		ctx, cacheState, err := prepareSourceCache(ctx, opts, sourcecache.RowKindGrants,
+			"org_roles.users", resource.ParentResourceId.Resource, orgName, fmt.Sprintf("role_id=%d", roleID),
+			fmt.Sprintf("page=%d", page), fmt.Sprintf("per_page=%d", maxPageSize),
+		)
+		if err != nil {
+			return nil, nil, err
 		}
-		users, resp, err := o.client.Organizations.ListUsersAssignedToOrgRole(ctx, orgName, roleID, listOpts)
+		var users []*github.User
+		resp, err := conditionalGitHubGet(ctx, o.client, githubPath("orgs", orgName, "organization-roles", fmt.Sprintf("%d", roleID), "users"), githubListValues(page, maxPageSize), cacheState, &users)
+		if isSourceCacheNotModified(resp, err) {
+			if err := bag.Next(nextGitHubPageAfterReplay(page)); err != nil {
+				return nil, nil, err
+			}
+			pageToken, err := bag.Marshal()
+			if err != nil {
+				return nil, nil, err
+			}
+			replayAnnos, err := sourceCacheReplayAnnotations(cacheState)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken, Annotations: replayAnnos}, nil
+		}
 		if err != nil {
 			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
 				l := ctxzap.Extract(ctx)
@@ -222,17 +241,39 @@ func (o *orgRoleResourceType) Grants(
 			grant.Principal = userResource
 			rv = append(rv, grant)
 		}
+		reqAnnos, err = addSourceCacheKeyAnnotation(reqAnnos, cacheState, resp, len(rv))
+		if err != nil {
+			return nil, nil, err
+		}
 	case resourceTypeTeam.Id:
 		orgID, err := parseResourceToGitHub(resource.ParentResourceId)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		listOpts := &github.ListOptions{
-			Page:    page,
-			PerPage: maxPageSize,
+		ctx, cacheState, err := prepareSourceCache(ctx, opts, sourcecache.RowKindGrants,
+			"org_roles.teams", resource.ParentResourceId.Resource, orgName, fmt.Sprintf("role_id=%d", roleID),
+			fmt.Sprintf("page=%d", page), fmt.Sprintf("per_page=%d", maxPageSize),
+		)
+		if err != nil {
+			return nil, nil, err
 		}
-		teams, resp, err := o.client.Organizations.ListTeamsAssignedToOrgRole(ctx, orgName, roleID, listOpts)
+		var teams []*github.Team
+		resp, err := conditionalGitHubGet(ctx, o.client, githubPath("orgs", orgName, "organization-roles", fmt.Sprintf("%d", roleID), "teams"), githubListValues(page, maxPageSize), cacheState, &teams)
+		if isSourceCacheNotModified(resp, err) {
+			if err := bag.Next(nextGitHubPageAfterReplay(page)); err != nil {
+				return nil, nil, err
+			}
+			pageToken, err := bag.Marshal()
+			if err != nil {
+				return nil, nil, err
+			}
+			replayAnnos, err := sourceCacheReplayAnnotations(cacheState)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, &resourceSdk.SyncOpResults{NextPageToken: pageToken, Annotations: replayAnnos}, nil
+		}
 		if err != nil {
 			// Handle permission errors without erroring out. Some customers may not want to give us permissions to get org roles and members.
 			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
@@ -285,6 +326,10 @@ func (o *orgRoleResourceType) Grants(
 					},
 				),
 			))
+		}
+		reqAnnos, err = addSourceCacheKeyAnnotation(reqAnnos, cacheState, resp, len(rv))
+		if err != nil {
+			return nil, nil, err
 		}
 	default:
 		return nil, nil, fmt.Errorf("unexpected resource type while fetching grants for org role")

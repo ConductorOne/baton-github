@@ -20,6 +20,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/conductorone/baton-sdk/pkg/bid"
 	"github.com/conductorone/baton-sdk/pkg/dotc1z"
+	"github.com/conductorone/baton-sdk/pkg/sourcecache"
 	"github.com/conductorone/baton-sdk/pkg/sync/expand"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	batonGrant "github.com/conductorone/baton-sdk/pkg/types/grant"
@@ -115,9 +116,14 @@ type syncer struct {
 	c1zManager                          manager.Manager
 	c1zPath                             string
 	externalResourceC1ZPath             string
+	sourceCacheC1ZPath                  string
 	externalResourceEntitlementIdFilter string
 	store                               dotc1z.C1ZStore
 	externalResourceReader              connectorstore.Reader
+	sourceCacheReferenceStore           dotc1z.C1ZStore
+	sourceCacheLookup                   sourcecache.Lookup
+	sourceCacheEnabled                  bool
+	sourceCacheStats                    sourceCacheStats
 	connector                           types.ConnectorClient
 	state                               State
 	runDuration                         time.Duration
@@ -142,7 +148,40 @@ type syncer struct {
 	syncResourceTypes                   []string
 	previousSyncMu                      native_sync.Mutex
 	previousSyncIDPtr                   atomic.Pointer[string]
+	sourceCachePreviousSyncID           string
 	workerCount                         int // If 0, sequential sync is used. If > 0, parallel sync is used.
+}
+
+type sourceCacheStats struct {
+	lookupHits     atomic.Int64
+	lookupMisses   atomic.Int64
+	lookupErrors   atomic.Int64
+	replayPages    atomic.Int64
+	replayRows     atomic.Int64
+	writePages     atomic.Int64
+	writeRows      atomic.Int64
+	byResourceType native_sync.Map
+}
+
+type preparedSourceCache struct {
+	enabled bool
+	key     string
+}
+
+type sourceCacheSessionStore struct {
+	sessions.SessionStore
+	lookup sourcecache.Lookup
+	stats  *sourceCacheStats
+}
+
+type sourceCacheCounters struct {
+	lookupHits   atomic.Int64
+	lookupMisses atomic.Int64
+	lookupErrors atomic.Int64
+	replayPages  atomic.Int64
+	replayRows   atomic.Int64
+	writePages   atomic.Int64
+	writeRows    atomic.Int64
 }
 
 var _ Syncer = (*syncer)(nil)
@@ -319,6 +358,372 @@ func (s *syncer) getActiveSyncID() string {
 	return ""
 }
 
+type syncerSourceCacheLookup struct {
+	store  dotc1z.C1ZStore
+	syncID string
+	stats  *sourceCacheStats
+}
+
+func (l syncerSourceCacheLookup) LookupPreviousSourceCache(ctx context.Context, rowKind sourcecache.RowKind, scopeHashHex string) (sourcecache.Entry, bool, error) {
+	if l.store == nil || l.syncID == "" {
+		ctxzap.Extract(ctx).Info("🌮 source cache lookup skipped",
+			zap.String("row_kind", string(rowKind)),
+			zap.String("scope_hash", scopeHashHex),
+			zap.String("previous_sync_id", l.syncID),
+		)
+		return sourcecache.Entry{}, false, nil
+	}
+	entry, ok, err := l.store.SourceCache().LookupPreviousSourceCache(ctx, rowKind, l.syncID, scopeHashHex)
+	if err != nil {
+		ctxzap.Extract(ctx).Info("🌮 source cache lookup error",
+			zap.String("row_kind", string(rowKind)),
+			zap.String("scope_hash", scopeHashHex),
+			zap.String("previous_sync_id", l.syncID),
+			zap.Error(err),
+		)
+		return sourcecache.Entry{}, false, err
+	}
+	if ok {
+		ctxzap.Extract(ctx).Info("🌮 source cache lookup hit",
+			zap.String("row_kind", string(rowKind)),
+			zap.String("scope_hash", scopeHashHex),
+			zap.String("previous_sync_id", l.syncID),
+		)
+	} else {
+		ctxzap.Extract(ctx).Info("🌮 source cache lookup miss",
+			zap.String("row_kind", string(rowKind)),
+			zap.String("scope_hash", scopeHashHex),
+			zap.String("previous_sync_id", l.syncID),
+		)
+	}
+	return entry, ok, nil
+}
+
+func (s *syncer) configureSourceCache(ctx context.Context, resp *v2.ConnectorServiceValidateResponse) error {
+	s.sourceCacheLookup = sourcecache.NoopLookup{}
+
+	respAnnos := annotations.Annotations(resp.GetAnnotations())
+	capability := &v2.SourceCacheCapability{}
+	ok, err := respAnnos.Pick(capability)
+	if err != nil {
+		return err
+	}
+	if !ok || capability.GetMode() != v2.SourceCacheCapability_MODE_READ_WRITE {
+		s.sourceCacheEnabled = false
+		ctxzap.Extract(ctx).Info("🌮 source cache disabled")
+		return s.setConnectorSourceCache(ctx, s.sourceCacheLookup)
+	}
+	s.sourceCacheEnabled = true
+
+	previousStore := s.store
+	if s.sourceCacheC1ZPath != "" {
+		previousStore, err = dotc1z.NewC1ZFile(ctx, s.sourceCacheC1ZPath, dotc1z.WithReadOnly(true), dotc1z.WithTmpDir(s.tmpDir))
+		if err != nil {
+			return fmt.Errorf("error loading source cache c1z file: %w", err)
+		}
+		s.sourceCacheReferenceStore = previousStore
+	}
+
+	run, err := previousStore.SyncMeta().LatestFullSync(ctx)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		ctxzap.Extract(ctx).Info("🌮 source cache enabled without previous full sync")
+		return s.setConnectorSourceCache(ctx, s.sourceCacheLookup)
+	}
+
+	s.sourceCachePreviousSyncID = run.ID
+	s.sourceCacheLookup = syncerSourceCacheLookup{store: previousStore, syncID: run.ID, stats: &s.sourceCacheStats}
+	ctxzap.Extract(ctx).Info("🌮 source cache enabled",
+		zap.String("previous_sync_id", run.ID),
+		zap.Bool("external_c1z", s.sourceCacheC1ZPath != ""),
+	)
+	return s.setConnectorSourceCache(ctx, s.sourceCacheLookup)
+}
+
+func (s *syncer) setConnectorSourceCache(ctx context.Context, lookup sourcecache.Lookup) error {
+	if setter, ok := s.connector.(sourcecache.SetLookup); ok {
+		setter.SetSourceCache(ctx, lookup)
+	}
+	s.refreshSessionStore(ctx)
+	return nil
+}
+
+func (s *syncer) refreshSessionStore(ctx context.Context) {
+	if s.setSessionStore == nil || s.store == nil {
+		return
+	}
+	store, ok := s.store.(sessions.SessionStore)
+	if !ok {
+		return
+	}
+	if s.sourceCacheLookup != nil {
+		store = sourceCacheSessionStore{
+			SessionStore: store,
+			lookup:       s.sourceCacheLookup,
+			stats:        &s.sourceCacheStats,
+		}
+	}
+	s.setSessionStore.SetSessionStore(ctx, store)
+}
+
+func (s sourceCacheSessionStore) Get(ctx context.Context, key string, opt ...sessions.SessionStoreOption) ([]byte, bool, error) {
+	rowKind, scopeHash, resourceType, ok, err := sourcecache.ParseSessionLookupKey(key)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		return s.SessionStore.Get(ctx, key, opt...)
+	}
+	if s.lookup == nil {
+		return nil, false, nil
+	}
+	entry, found, err := s.lookup.LookupPreviousSourceCache(ctx, rowKind, scopeHash)
+	switch {
+	case err != nil:
+		if s.stats != nil {
+			s.stats.addLookupError(resourceType)
+		}
+		return nil, false, err
+	case !found:
+		if s.stats != nil {
+			s.stats.addLookupMiss(resourceType)
+		}
+		return nil, false, err
+	default:
+		if s.stats != nil {
+			s.stats.addLookupHit(resourceType)
+		}
+	}
+	data, err := sourcecache.EncodeEntry(entry)
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
+func (s sourceCacheSessionStore) GetMany(ctx context.Context, keys []string, opt ...sessions.SessionStoreOption) (map[string][]byte, []string, error) {
+	result := make(map[string][]byte)
+	regularKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		_, _, _, ok, err := sourcecache.ParseSessionLookupKey(key)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			regularKeys = append(regularKeys, key)
+			continue
+		}
+		data, found, err := s.Get(ctx, key, opt...)
+		if err != nil {
+			return nil, nil, err
+		}
+		if found {
+			result[key] = data
+		}
+	}
+	var unprocessed []string
+	if len(regularKeys) > 0 {
+		regularResult, regularUnprocessed, err := s.SessionStore.GetMany(ctx, regularKeys, opt...)
+		if err != nil {
+			return nil, nil, err
+		}
+		for key, data := range regularResult {
+			result[key] = data
+		}
+		unprocessed = regularUnprocessed
+	}
+	return result, unprocessed, nil
+}
+
+func (s *sourceCacheStats) bucket(resourceType string) *sourceCacheCounters {
+	if resourceType == "" {
+		resourceType = "(unknown)"
+	}
+	actual, _ := s.byResourceType.LoadOrStore(resourceType, &sourceCacheCounters{})
+	return actual.(*sourceCacheCounters)
+}
+
+func (s *sourceCacheStats) addLookupHit(resourceType string) {
+	s.lookupHits.Add(1)
+	s.bucket(resourceType).lookupHits.Add(1)
+}
+
+func (s *sourceCacheStats) addLookupMiss(resourceType string) {
+	s.lookupMisses.Add(1)
+	s.bucket(resourceType).lookupMisses.Add(1)
+}
+
+func (s *sourceCacheStats) addLookupError(resourceType string) {
+	s.lookupErrors.Add(1)
+	s.bucket(resourceType).lookupErrors.Add(1)
+}
+
+func (s *sourceCacheStats) addReplay(resourceType string, rows int64) {
+	s.replayPages.Add(1)
+	s.replayRows.Add(rows)
+	bucket := s.bucket(resourceType)
+	bucket.replayPages.Add(1)
+	bucket.replayRows.Add(rows)
+}
+
+func (s *sourceCacheStats) addWritePage(resourceType string) {
+	s.writePages.Add(1)
+	s.bucket(resourceType).writePages.Add(1)
+}
+
+func (s *sourceCacheStats) addWriteRows(resourceType string, rows int) {
+	s.writeRows.Add(int64(rows))
+	s.bucket(resourceType).writeRows.Add(int64(rows))
+}
+
+func (s *syncer) sourceCacheReference() (dotc1z.C1ZStore, string, bool) {
+	if !s.sourceCacheEnabled || s.sourceCachePreviousSyncID == "" {
+		return nil, "", false
+	}
+	if s.sourceCacheReferenceStore != nil {
+		return s.sourceCacheReferenceStore, s.sourceCachePreviousSyncID, true
+	}
+	return s.store, s.sourceCachePreviousSyncID, true
+}
+
+func (s *syncer) handleSourceCacheReplay(ctx context.Context, rowKind sourcecache.RowKind, resourceType string, annos annotations.Annotations) (bool, error) {
+	if !s.sourceCacheEnabled {
+		return false, nil
+	}
+	replay := &v2.SourceCacheReplay{}
+	ok, err := annos.Pick(replay)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	key := replay.GetKey()
+	if _, _, err := sourcecache.ParseKey(key); err != nil {
+		ctxzap.Extract(ctx).Info("🌮 source cache replay invalid",
+			zap.String("row_kind", string(rowKind)),
+			zap.Error(err),
+		)
+		return true, err
+	}
+	refStore, previousSyncID, ok := s.sourceCacheReference()
+	if !ok {
+		ctxzap.Extract(ctx).Info("🌮 source cache replay miss",
+			zap.String("row_kind", string(rowKind)),
+			zap.String("sync_id", s.syncID),
+		)
+		return true, errors.New("source cache replay requested but no previous source cache reference is available")
+	}
+	discoveredAt := time.Now()
+	rows, err := s.store.SourceCache().ReplaySourceCacheRows(ctx, refStore, rowKind, previousSyncID, s.syncID, key, discoveredAt)
+	if err != nil {
+		ctxzap.Extract(ctx).Info("🌮 source cache replay error",
+			zap.String("row_kind", string(rowKind)),
+			zap.String("previous_sync_id", previousSyncID),
+			zap.String("sync_id", s.syncID),
+			zap.Error(err),
+		)
+		return true, err
+	}
+	if err := s.store.SourceCache().ReplaySourceCacheEntry(ctx, refStore, rowKind, previousSyncID, s.syncID, key, discoveredAt); err != nil {
+		ctxzap.Extract(ctx).Info("🌮 source cache replay entry error",
+			zap.String("row_kind", string(rowKind)),
+			zap.String("previous_sync_id", previousSyncID),
+			zap.String("sync_id", s.syncID),
+			zap.Error(err),
+		)
+		return true, err
+	}
+	ctxzap.Extract(ctx).Info("🌮 source cache replay hit",
+		zap.String("row_kind", string(rowKind)),
+		zap.String("resource_type_id", resourceType),
+		zap.String("previous_sync_id", previousSyncID),
+		zap.String("sync_id", s.syncID),
+		zap.Int64("rows_replayed", rows),
+	)
+	s.sourceCacheStats.addReplay(resourceType, rows)
+	return true, nil
+}
+
+func (s *syncer) prepareSourceCache(ctx context.Context, rowKind sourcecache.RowKind, resourceType string, annos annotations.Annotations) (preparedSourceCache, error) {
+	if !s.sourceCacheEnabled {
+		return preparedSourceCache{}, nil
+	}
+	keyAnno := &v2.SourceCacheKey{}
+	ok, err := annos.Pick(keyAnno)
+	if err != nil {
+		return preparedSourceCache{}, err
+	}
+	if !ok {
+		return preparedSourceCache{}, nil
+	}
+	key := keyAnno.GetKey()
+	scopeHash, etag, err := sourcecache.ParseKey(key)
+	if err != nil {
+		ctxzap.Extract(ctx).Info("🌮 source cache write invalid",
+			zap.String("row_kind", string(rowKind)),
+			zap.String("sync_id", s.syncID),
+			zap.Error(err),
+		)
+		return preparedSourceCache{}, err
+	}
+	if err := s.store.SourceCache().PutSourceCacheEntry(ctx, rowKind, s.syncID, scopeHash, key, etag, time.Now()); err != nil {
+		ctxzap.Extract(ctx).Info("🌮 source cache write error",
+			zap.String("row_kind", string(rowKind)),
+			zap.String("sync_id", s.syncID),
+			zap.String("scope_hash", scopeHash),
+			zap.Error(err),
+		)
+		return preparedSourceCache{}, err
+	}
+	ctxzap.Extract(ctx).Info("🌮 source cache write",
+		zap.String("row_kind", string(rowKind)),
+		zap.String("resource_type_id", resourceType),
+		zap.String("sync_id", s.syncID),
+		zap.String("scope_hash", scopeHash),
+	)
+	s.sourceCacheStats.addWritePage(resourceType)
+	return preparedSourceCache{enabled: true, key: key}, nil
+}
+
+func (s *syncer) addSourceCacheWriteRows(prepared preparedSourceCache, resourceType string, rows int) {
+	if prepared.enabled {
+		s.sourceCacheStats.addWriteRows(resourceType, rows)
+	}
+}
+
+func (s *syncer) logSourceCacheStats(ctx context.Context) {
+	if !s.sourceCacheEnabled {
+		return
+	}
+	ctxzap.Extract(ctx).Info("🌮 source cache sync stats",
+		zap.Int64("lookup_hit_pages", s.sourceCacheStats.lookupHits.Load()),
+		zap.Int64("lookup_miss_pages", s.sourceCacheStats.lookupMisses.Load()),
+		zap.Int64("lookup_error_pages", s.sourceCacheStats.lookupErrors.Load()),
+		zap.Int64("replay_hit_pages", s.sourceCacheStats.replayPages.Load()),
+		zap.Int64("replay_rows", s.sourceCacheStats.replayRows.Load()),
+		zap.Int64("write_pages", s.sourceCacheStats.writePages.Load()),
+		zap.Int64("write_rows", s.sourceCacheStats.writeRows.Load()),
+	)
+	s.sourceCacheStats.byResourceType.Range(func(key, value any) bool {
+		resourceType := key.(string)
+		stats := value.(*sourceCacheCounters)
+		ctxzap.Extract(ctx).Info("🌮 source cache sync stats by resource type",
+			zap.String("resource_type_id", resourceType),
+			zap.Int64("lookup_hit_pages", stats.lookupHits.Load()),
+			zap.Int64("lookup_miss_pages", stats.lookupMisses.Load()),
+			zap.Int64("lookup_error_pages", stats.lookupErrors.Load()),
+			zap.Int64("replay_hit_pages", stats.replayPages.Load()),
+			zap.Int64("replay_rows", stats.replayRows.Load()),
+			zap.Int64("write_pages", stats.writePages.Load()),
+			zap.Int64("write_rows", stats.writeRows.Load()),
+		)
+		return true
+	})
+}
+
 // Sync starts the syncing process. The sync process is driven by the action stack that is part of the state object.
 // For each page of data that is required to be fetched from the connector, a new action is pushed on to the stack. Once
 // an action is completed, it is popped off of the queue. Before processing each action, we checkpoint the state object
@@ -364,6 +769,9 @@ func (s *syncer) Sync(ctx context.Context) error {
 			}
 			s.injectSyncIDAnnotation = supportsActiveSyncId.Check(sdkVersion)
 		}
+	}
+	if err := s.configureSourceCache(ctx, resp); err != nil {
+		return err
 	}
 
 	syncResourceTypeMap := make(map[string]bool)
@@ -489,6 +897,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 	}
 
 	l.Info("Sync complete.")
+	s.logSourceCacheStats(ctx)
 
 	_, err = s.connector.Cleanup(ctx, v2.ConnectorServiceCleanupRequest_builder{
 		ActiveSyncId: s.getActiveSyncID(),
@@ -848,6 +1257,19 @@ func (s *syncer) syncResources(ctx context.Context, action *Action) error {
 	if err != nil {
 		return err
 	}
+	respAnnos := annotations.Annotations(resp.GetAnnotations())
+	replayed, err := s.handleSourceCacheReplay(ctx, sourcecache.RowKindResources, action.ResourceTypeID, respAnnos)
+	if err != nil {
+		return err
+	}
+	if replayed {
+		s.handleProgress(ctx, action, 0)
+		return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken())
+	}
+	preparedSourceCache, err := s.prepareSourceCache(ctx, sourcecache.RowKindResources, action.ResourceTypeID, respAnnos)
+	if err != nil {
+		return err
+	}
 
 	bulkPutResoruces := []*v2.Resource{}
 	for _, r := range resp.GetList() {
@@ -894,10 +1316,15 @@ func (s *syncer) syncResources(ctx context.Context, action *Action) error {
 	}
 
 	if len(bulkPutResoruces) > 0 {
-		err = s.store.PutResources(ctx, bulkPutResoruces...)
+		if preparedSourceCache.enabled {
+			err = s.store.SourceCache().PutResources(ctx, preparedSourceCache.key, bulkPutResoruces...)
+		} else {
+			err = s.store.PutResources(ctx, bulkPutResoruces...)
+		}
 		if err != nil {
 			return err
 		}
+		s.addSourceCacheWriteRows(preparedSourceCache, action.ResourceTypeID, len(bulkPutResoruces))
 	}
 
 	s.handleProgress(ctx, action, len(resp.GetList()))
@@ -1117,10 +1544,28 @@ func (s *syncer) syncEntitlementsForResource(ctx context.Context, action *Action
 	if err != nil {
 		return err
 	}
-	err = s.store.PutEntitlements(ctx, resp.GetList()...)
+	respAnnos := annotations.Annotations(resp.GetAnnotations())
+	replayed, err := s.handleSourceCacheReplay(ctx, sourcecache.RowKindEntitlements, resourceID.GetResourceType(), respAnnos)
 	if err != nil {
 		return err
 	}
+	if replayed {
+		s.handleProgress(ctx, action, 0)
+		return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken())
+	}
+	preparedSourceCache, err := s.prepareSourceCache(ctx, sourcecache.RowKindEntitlements, resourceID.GetResourceType(), respAnnos)
+	if err != nil {
+		return err
+	}
+	if preparedSourceCache.enabled {
+		err = s.store.SourceCache().PutEntitlements(ctx, preparedSourceCache.key, resp.GetList()...)
+	} else {
+		err = s.store.PutEntitlements(ctx, resp.GetList()...)
+	}
+	if err != nil {
+		return err
+	}
+	s.addSourceCacheWriteRows(preparedSourceCache, resourceID.GetResourceType(), len(resp.GetList()))
 
 	s.handleProgress(ctx, action, len(resp.GetList()))
 	if resp.GetNextPageToken() == "" {
@@ -1179,6 +1624,20 @@ func (s *syncer) syncStaticEntitlementsForResourceType(ctx context.Context, acti
 		return err
 	}
 
+	respAnnos := annotations.Annotations(resp.GetAnnotations())
+	replayed, err := s.handleSourceCacheReplay(ctx, sourcecache.RowKindEntitlements, action.ResourceTypeID, respAnnos)
+	if err != nil {
+		return err
+	}
+	if replayed {
+		s.handleProgress(ctx, action, 0)
+		return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken())
+	}
+	preparedSourceCache, err := s.prepareSourceCache(ctx, sourcecache.RowKindEntitlements, action.ResourceTypeID, respAnnos)
+	if err != nil {
+		return err
+	}
+
 	for _, ent := range resp.GetList() {
 		resourcePageToken := ""
 		for {
@@ -1191,6 +1650,15 @@ func (s *syncer) syncStaticEntitlementsForResourceType(ctx context.Context, acti
 			if err != nil {
 				return err
 			}
+
+			annos := annotations.Annotations(ent.GetAnnotations())
+			exclusionGroup := &v2.EntitlementExclusionGroup{}
+			hasExclusionGroup, err := annos.Pick(exclusionGroup)
+			if err != nil {
+				return err
+			}
+			baseExclusionGroupID := exclusionGroup.GetExclusionGroupId()
+
 			entitlements := []*v2.Entitlement{}
 			for _, resource := range resourcesResp.GetList() {
 				displayName := ent.GetDisplayName()
@@ -1202,21 +1670,31 @@ func (s *syncer) syncStaticEntitlementsForResourceType(ctx context.Context, acti
 					description = resource.GetDescription()
 				}
 
+				if hasExclusionGroup && exclusionGroup.GetScopeToResource() {
+					exclusionGroup.SetExclusionGroupId(baseExclusionGroupID + "-" + resource.GetId().GetResource())
+					annos.Update(exclusionGroup)
+				}
+
 				entitlements = append(entitlements, &v2.Entitlement{
 					Resource:    resource,
 					Id:          entitlement.NewEntitlementID(resource, ent.GetSlug()),
 					DisplayName: displayName,
 					Description: description,
 					GrantableTo: ent.GetGrantableTo(),
-					Annotations: ent.GetAnnotations(),
+					Annotations: annos,
 					Slug:        ent.GetSlug(),
 					Purpose:     ent.GetPurpose(),
 				})
 			}
-			err = s.store.PutEntitlements(ctx, entitlements...)
+			if preparedSourceCache.enabled {
+				err = s.store.SourceCache().PutEntitlements(ctx, preparedSourceCache.key, entitlements...)
+			} else {
+				err = s.store.PutEntitlements(ctx, entitlements...)
+			}
 			if err != nil {
 				return err
 			}
+			s.addSourceCacheWriteRows(preparedSourceCache, action.ResourceTypeID, len(entitlements))
 			resourcePageToken = resourcesResp.GetNextPageToken()
 			if resourcePageToken == "" {
 				break
@@ -1702,12 +2180,14 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 	var grants []*v2.Grant
 
 	resourceAnnos := annotations.Annotations(resource.GetAnnotations())
-	prevSyncID, prevEtag, err = s.fetchResourceForPreviousSync(ctx, resourceID)
-	if err != nil {
-		return err
+	if !s.sourceCacheEnabled {
+		prevSyncID, prevEtag, err = s.fetchResourceForPreviousSync(ctx, resourceID)
+		if err != nil {
+			return err
+		}
+		resourceAnnos.Update(prevEtag)
+		resource.SetAnnotations(resourceAnnos)
 	}
-	resourceAnnos.Update(prevEtag)
-	resource.SetAnnotations(resourceAnnos)
 
 	resp, err := s.connector.ListGrants(ctx, v2.GrantsServiceListGrantsRequest_builder{
 		Resource:     resource,
@@ -1717,12 +2197,27 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 	if err != nil {
 		return err
 	}
+	respAnnos := annotations.Annotations(resp.GetAnnotations())
+	replayed, err := s.handleSourceCacheReplay(ctx, sourcecache.RowKindGrants, resourceID.GetResourceType(), respAnnos)
+	if err != nil {
+		return err
+	}
+	if replayed {
+		s.handleProgress(ctx, action, 0)
+		return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken())
+	}
+	preparedSourceCache, err := s.prepareSourceCache(ctx, sourcecache.RowKindGrants, resourceID.GetResourceType(), respAnnos)
+	if err != nil {
+		return err
+	}
 
 	// Fetch any etagged grants for this resource
 	var etaggedGrants []*v2.Grant
-	etaggedGrants, etagMatch, err = s.fetchEtaggedGrantsForResource(ctx, resource, prevEtag, prevSyncID, resp)
-	if err != nil {
-		return err
+	if !s.sourceCacheEnabled {
+		etaggedGrants, etagMatch, err = s.fetchEtaggedGrantsForResource(ctx, resource, prevEtag, prevSyncID, resp)
+		if err != nil {
+			return err
+		}
 	}
 	grants = append(grants, etaggedGrants...)
 
@@ -1731,7 +2226,6 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 
 	l := ctxzap.Extract(ctx)
 	resourcesToInsertMap := make(map[string]*v2.Resource, 0)
-	respAnnos := annotations.Annotations(resp.GetAnnotations())
 	insertResourceGrants := respAnnos.Contains(&v2.InsertResourceGrants{})
 
 	// Stamp InsertResourceGrants per-grant so the slim-blob writer's
@@ -1816,10 +2310,15 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 		}
 	}
 
-	err = s.store.PutGrants(ctx, grants...)
+	if preparedSourceCache.enabled {
+		err = s.store.SourceCache().PutGrants(ctx, preparedSourceCache.key, grants...)
+	} else {
+		err = s.store.PutGrants(ctx, grants...)
+	}
 	if err != nil {
 		return err
 	}
+	s.addSourceCacheWriteRows(preparedSourceCache, resourceID.GetResourceType(), len(grants))
 
 	s.handleProgress(ctx, action, len(grants))
 
@@ -1827,11 +2326,13 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 	// Otherwise, we should use the etag from the response if provided.
 	var updatedETag *v2.ETag
 
-	if etagMatch {
+	switch {
+	case s.sourceCacheEnabled:
+		updatedETag = nil
+	case etagMatch:
 		updatedETag = prevEtag
-	} else {
+	default:
 		newETag := &v2.ETag{}
-		respAnnos := annotations.Annotations(resp.GetAnnotations())
 		ok, err := respAnnos.Pick(newETag)
 		if err != nil {
 			return err
@@ -2592,10 +3093,8 @@ func (s *syncer) loadStore(ctx context.Context) error {
 		return err
 	}
 
-	if s.setSessionStore != nil {
-		s.setSessionStore.SetSessionStore(ctx, store)
-	}
 	s.store = store
+	s.refreshSessionStore(ctx)
 
 	// Now that s.store is populated, wire the expand progress log's size
 	// provider. NewSyncer could not do this when the caller used
@@ -2637,6 +3136,12 @@ func (s *syncer) Close(ctx context.Context) error {
 	if s.externalResourceReader != nil {
 		if err := s.externalResourceReader.Close(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("error closing external resource reader: %w", err))
+		}
+	}
+
+	if s.sourceCacheReferenceStore != nil {
+		if err := s.sourceCacheReferenceStore.Close(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("error closing source cache reference store: %w", err))
 		}
 	}
 
@@ -2723,6 +3228,12 @@ func WithSkipFullSync() SyncOpt {
 func WithExternalResourceC1ZPath(path string) SyncOpt {
 	return func(s *syncer) {
 		s.externalResourceC1ZPath = path
+	}
+}
+
+func WithSourceCacheC1ZPath(path string) SyncOpt {
+	return func(s *syncer) {
+		s.sourceCacheC1ZPath = path
 	}
 }
 

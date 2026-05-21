@@ -33,7 +33,8 @@ create table if not exists %s (
     needs_expansion integer not null default 0, -- 1 if grant should be processed during expansion.
     data blob not null,
     sync_id text not null,
-    discovered_at datetime not null
+    discovered_at datetime not null,
+    source_cache_key text not null default ''
 );
 create index if not exists %s on %s (resource_type_id, resource_id);
 create index if not exists %s on %s (principal_resource_type_id, principal_resource_id);
@@ -76,19 +77,19 @@ func isAlreadyExistsError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "duplicate column name")
 }
 
-func (r *grantsTable) Migrations(ctx context.Context, db *goqu.Database) error {
+func (r *grantsTable) Migrations(ctx context.Context, db *goqu.Database) (bool, error) {
 	// Add expansion column if missing (for older files).
 	if _, err := db.ExecContext(ctx, fmt.Sprintf(
 		"alter table %s add column expansion blob", r.Name(),
 	)); err != nil && !isAlreadyExistsError(err) {
-		return err
+		return false, err
 	}
 
 	// Add needs_expansion column if missing.
 	if _, err := db.ExecContext(ctx, fmt.Sprintf(
 		"alter table %s add column needs_expansion integer not null default 0", r.Name(),
 	)); err != nil && !isAlreadyExistsError(err) {
-		return err
+		return false, err
 	}
 
 	// Create partial index for efficient queries on expandable grants.
@@ -97,7 +98,7 @@ func (r *grantsTable) Migrations(ctx context.Context, db *goqu.Database) error {
 		fmt.Sprintf("idx_grants_sync_expansion_v%s", r.Version()),
 		r.Name(),
 	)); err != nil {
-		return err
+		return false, err
 	}
 
 	// Create partial index for grants needing expansion processing.
@@ -109,12 +110,13 @@ func (r *grantsTable) Migrations(ctx context.Context, db *goqu.Database) error {
 		fmt.Sprintf("idx_grants_sync_needs_expansion_v%s", r.Version()),
 		r.Name(),
 	)); err != nil {
-		return err
+		return false, err
 	}
 
 	// Backfill expansion column from stored grant bytes.
-	if err := backfillGrantExpansionColumn(ctx, db, r.Name()); err != nil {
-		return err
+	backfilled, err := backfillGrantExpansionColumn(ctx, db, r.Name())
+	if err != nil {
+		return false, err
 	}
 
 	// Create index on entitlement_id, sync_id, and grant id.
@@ -123,10 +125,15 @@ func (r *grantsTable) Migrations(ctx context.Context, db *goqu.Database) error {
 		fmt.Sprintf("idx_grants_entitlement_sync_grant_v%s", r.Version()),
 		r.Name(),
 	)); err != nil {
-		return err
+		return false, err
 	}
 
-	return nil
+	sourceCacheMigrated, err := sourceCacheColumnMigration(ctx, db, r.Name(), fmt.Sprintf("idx_grants_sync_source_cache_key_v%s", r.Version()))
+	if err != nil {
+		return false, err
+	}
+
+	return backfilled || sourceCacheMigrated, nil
 }
 
 func (c *C1File) ListGrants(ctx context.Context, request *v2.GrantsServiceListGrantsRequest) (*v2.GrantsServiceListGrantsResponse, error) {
@@ -456,6 +463,17 @@ func (c *C1File) upsertGrants(ctx context.Context, opts grantUpsertOptions, bulk
 	return nil
 }
 
+func (c *C1File) upsertGrantsWithSourceCacheKey(ctx context.Context, sourceCacheKey string, bulkGrants ...*v2.Grant) error {
+	if c.readOnly {
+		return ErrReadOnly
+	}
+	if err := upsertGrantsInternalWithSourceCacheKey(ctx, c, grantUpsertModeReplace, sourceCacheKey, bulkGrants...); err != nil {
+		return err
+	}
+	c.dbUpdated = true
+	return nil
+}
+
 func baseGrantRecord(grant *v2.Grant) goqu.Record {
 	return goqu.Record{
 		"resource_type_id":           grant.GetEntitlement().GetResource().GetId().GetResourceType(),
@@ -494,9 +512,15 @@ func unsafeForSlim(grant *v2.Grant) bool {
 	return annos.ContainsAny(unsafeForSlimSentinels...)
 }
 
-func grantExtractFields(c *C1File, mode grantUpsertMode) func(grant *v2.Grant) (goqu.Record, error) {
+func grantExtractFields(c *C1File, mode grantUpsertMode, includeSourceCacheKey bool, sourceCacheKey string) func(grant *v2.Grant) (goqu.Record, error) {
+	if mode == grantUpsertModePreserveExpansion {
+		sourceCacheKey = ""
+	}
 	return func(grant *v2.Grant) (goqu.Record, error) {
 		rec := baseGrantRecord(grant)
+		if includeSourceCacheKey {
+			rec["source_cache_key"] = sourceCacheKey
+		}
 		isUnsafe := unsafeForSlim(grant)
 		slim := c.v2GrantsWriter && !isUnsafe
 		// No request ctx threaded through prepareConnectorObjectRows.
@@ -576,6 +600,16 @@ func upsertGrantsInternal(
 	mode grantUpsertMode,
 	msgs ...*v2.Grant,
 ) error {
+	return upsertGrantsInternalWithSourceCacheKey(ctx, c, mode, "", msgs...)
+}
+
+func upsertGrantsInternalWithSourceCacheKey(
+	ctx context.Context,
+	c *C1File,
+	mode grantUpsertMode,
+	sourceCacheKey string,
+	msgs ...*v2.Grant,
+) error {
 	if len(msgs) == 0 {
 		return nil
 	}
@@ -587,7 +621,8 @@ func upsertGrantsInternal(
 		return err
 	}
 
-	rows, err := prepareConnectorObjectRows(c, msgs, grantExtractFields(c, mode))
+	includeSourceCacheKey := sourceCacheTableHasRowColumn(ctx, c, grants.Name())
+	rows, err := prepareConnectorObjectRows(c, ctx, grants.Name(), sourceCacheKey, msgs, grantExtractFields(c, mode, includeSourceCacheKey, sourceCacheKey))
 	if err != nil {
 		return err
 	}
@@ -651,7 +686,7 @@ func extractAndStripExpansion(grant *v2.Grant) ([]byte, bool) {
 	return data, true
 }
 
-func backfillGrantExpansionColumn(ctx context.Context, db *goqu.Database, tableName string) error {
+func backfillGrantExpansionColumn(ctx context.Context, db *goqu.Database, tableName string) (bool, error) {
 	// Backfill grants only for syncs that have not yet been processed.
 	// The grants_backfilled flag is the single source of truth for whether
 	// this migration work still needs to run for a sync.
@@ -670,25 +705,25 @@ func backfillGrantExpansionColumn(ctx context.Context, db *goqu.Database, tableN
 		`SELECT sync_id FROM %s WHERE grants_backfilled = 0`, syncRuns.Name(),
 	))
 	if err != nil {
-		return err
+		return false, err
 	}
 	var pendingSyncIDs []any
 	for syncRows.Next() {
 		var sid string
 		if err := syncRows.Scan(&sid); err != nil {
 			_ = syncRows.Close()
-			return err
+			return false, err
 		}
 		pendingSyncIDs = append(pendingSyncIDs, sid)
 	}
 	if err := syncRows.Err(); err != nil {
 		_ = syncRows.Close()
-		return err
+		return false, err
 	}
 	_ = syncRows.Close()
 
 	if len(pendingSyncIDs) == 0 {
-		return nil
+		return false, nil
 	}
 
 	placeholders := strings.Repeat("?,", len(pendingSyncIDs))
@@ -710,7 +745,7 @@ func backfillGrantExpansionColumn(ctx context.Context, db *goqu.Database, tableN
 			tableName, placeholders,
 		), args...)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		type row struct {
@@ -722,13 +757,13 @@ func backfillGrantExpansionColumn(ctx context.Context, db *goqu.Database, tableN
 			var r row
 			if err := rows.Scan(&r.id, &r.data); err != nil {
 				_ = rows.Close()
-				return err
+				return false, err
 			}
 			batch = append(batch, r)
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
-			return err
+			return false, err
 		}
 		_ = rows.Close()
 
@@ -752,7 +787,7 @@ func backfillGrantExpansionColumn(ctx context.Context, db *goqu.Database, tableN
 		for _, r := range batch {
 			g := &v2.Grant{}
 			if err := proto.Unmarshal(r.data, g); err != nil {
-				return err
+				return false, err
 			}
 
 			expansionBytes, needsExpansion := extractAndStripExpansion(g)
@@ -764,7 +799,7 @@ func backfillGrantExpansionColumn(ctx context.Context, db *goqu.Database, tableN
 
 			newData, err := proto.Marshal(g)
 			if err != nil {
-				return err
+				return false, err
 			}
 			expandableRows = append(expandableRows, expandableRow{
 				id:             r.id,
@@ -776,7 +811,7 @@ func backfillGrantExpansionColumn(ctx context.Context, db *goqu.Database, tableN
 
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		// Batch-mark non-expandable grants with the sentinel in one statement.
@@ -787,7 +822,7 @@ func backfillGrantExpansionColumn(ctx context.Context, db *goqu.Database, tableN
 				`UPDATE %s SET expansion=X'' WHERE id IN (%s)`, tableName, sp,
 			), sentinelIDs...); err != nil {
 				_ = tx.Rollback()
-				return err
+				return false, err
 			}
 		}
 
@@ -798,33 +833,33 @@ func backfillGrantExpansionColumn(ctx context.Context, db *goqu.Database, tableN
 			))
 			if err != nil {
 				_ = tx.Rollback()
-				return err
+				return false, err
 			}
 			for _, er := range expandableRows {
 				if _, err := fullStmt.ExecContext(ctx, er.expansionBytes, er.needsExpansion, er.data, er.id); err != nil {
 					_ = fullStmt.Close()
 					_ = tx.Rollback()
-					return err
+					return false, err
 				}
 			}
 			_ = fullStmt.Close()
 		}
 
 		if err := tx.Commit(); err != nil {
-			return err
+			return false, err
 		}
 	}
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	// Convert empty-blob sentinels back to NULL.
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
 		`UPDATE %s SET expansion = NULL WHERE expansion = X''`, tableName,
 	)); err != nil {
 		_ = tx.Rollback()
-		return err
+		return false, err
 	}
 	// Mark all not-yet-processed syncs as backfilled so migration work only runs once.
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
@@ -832,13 +867,13 @@ func backfillGrantExpansionColumn(ctx context.Context, db *goqu.Database, tableN
 		syncRuns.Name(),
 	)); err != nil {
 		_ = tx.Rollback()
-		return err
+		return false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return false, err
 	}
 
-	return nil
+	return true, nil
 }
 
 func executeGrantChunkedUpsert(
@@ -847,6 +882,7 @@ func executeGrantChunkedUpsert(
 	mode grantUpsertMode,
 ) error {
 	tableName := grants.Name()
+	includeSourceCacheKey := sourceCacheTableHasRowColumn(ctx, c, tableName)
 	// Expansion column update logic built conditionally in Go so the query planner
 	// sees simple expressions instead of parameterized CASE branches.
 	var expansionExpr goqu.Expression
@@ -876,6 +912,9 @@ func executeGrantChunkedUpsert(
 			"data":            goqu.I("EXCLUDED.data"),
 			"expansion":       expansionExpr,
 			"needs_expansion": needsExpansionExpr,
+		}
+		if includeSourceCacheKey {
+			update["source_cache_key"] = goqu.I("EXCLUDED.source_cache_key")
 		}
 		if mode == grantUpsertModeIfNewer {
 			update["discovered_at"] = goqu.I("EXCLUDED.discovered_at")

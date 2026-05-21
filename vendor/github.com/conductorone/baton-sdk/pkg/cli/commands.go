@@ -385,6 +385,15 @@ func MakeMainCommand[T field.Configurable](
 			opts = append(opts, connectorrunner.WithExternalResourceC1Z(externalResourceC1ZPath))
 		}
 
+		if v.GetString("source-cache-c1z") != "" {
+			sourceCacheC1ZPath := v.GetString("source-cache-c1z")
+			_, err := os.Open(sourceCacheC1ZPath)
+			if err != nil {
+				return fmt.Errorf("the specified source cache c1z file does not exist: %s", sourceCacheC1ZPath)
+			}
+			opts = append(opts, connectorrunner.WithSourceCacheC1Z(sourceCacheC1ZPath))
+		}
+
 		if v.GetString("external-resource-entitlement-id-filter") != "" {
 			externalResourceEntitlementIdFilter := v.GetString("external-resource-entitlement-id-filter")
 			opts = append(opts, connectorrunner.WithExternalResourceEntitlementFilter(externalResourceEntitlementIdFilter))
