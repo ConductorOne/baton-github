@@ -408,27 +408,30 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 }
 
 func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
+	instanceURL = strings.TrimSuffix(instanceURL, "/")
+
+	var enterpriseGqlURL string
+	if instanceURL != "" && instanceURL != githubDotCom {
+		parsed, err := url.Parse(instanceURL)
+		if err != nil {
+			return nil, err
+		}
+		parsed.Path = "/api/graphql"
+		enterpriseGqlURL = parsed.String()
+	}
+
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
 		return nil, err
 	}
+	httpClient.Transport = &statusClassifyingTransport{base: httpClient.Transport}
 
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
-
 	tc := oauth2.NewClient(ctx, ts)
 
-	instanceURL = strings.TrimSuffix(instanceURL, "/")
-	if instanceURL != "" && instanceURL != githubDotCom {
-		gqlURL, err := url.Parse(instanceURL)
-		if err != nil {
-			return nil, err
-		}
-
-		gqlURL.Path = "/api/graphql"
-
-		return githubv4.NewEnterpriseClient(gqlURL.String(), tc), nil
+	if enterpriseGqlURL != "" {
+		return githubv4.NewEnterpriseClient(enterpriseGqlURL, tc), nil
 	}
-
 	return githubv4.NewClient(tc), nil
 }
 
