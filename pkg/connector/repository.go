@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
@@ -548,13 +549,17 @@ var listCollaboratorsBackoffs = []time.Duration{
 	3 * time.Second,
 }
 
+// sleepFn is the indirection used by listCollaboratorsWithRetry to wait between
+// retries. Tests replace it with an immediate-fire channel to avoid real wall
+// time. Reassignment is not safe under t.Parallel.
+var sleepFn = time.After
+
 func listCollaboratorsWithRetry(
 	ctx context.Context,
 	client *github.Client,
 	org, repo string,
 	opts *github.ListCollaboratorsOptions,
 ) ([]*github.User, *github.Response, error) {
-	l := ctxzap.Extract(ctx)
 	var (
 		users []*github.User
 		resp  *github.Response
@@ -570,7 +575,7 @@ func listCollaboratorsWithRetry(
 		}
 		base := listCollaboratorsBackoffs[attempt]
 		jitter := time.Duration(rand.Int64N(int64(base/2))) - base/4
-		l.Debug("retrying ListCollaborators after transient HTTP/2 error",
+		ctxzap.Extract(ctx).Debug("retrying ListCollaborators after transient HTTP/2 error",
 			zap.String("org", org),
 			zap.String("repo", repo),
 			zap.Int("attempt", attempt+1),
@@ -579,8 +584,10 @@ func listCollaboratorsWithRetry(
 		)
 		select {
 		case <-ctx.Done():
-			return users, resp, err
-		case <-time.After(base + jitter):
+			// Surface cancellation as the primary signal but preserve the
+			// transient error for log attribution.
+			return nil, nil, errors.Join(ctx.Err(), err)
+		case <-sleepFn(base + jitter):
 		}
 	}
 	return users, resp, err
