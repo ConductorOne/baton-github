@@ -3,9 +3,11 @@ package connector
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -220,7 +222,7 @@ func (o *repositoryResourceType) Grants(
 				PerPage: maxPageSize,
 			},
 		}
-		users, resp, err := o.client.Repositories.ListCollaborators(ctx, orgName, resource.DisplayName, listOpts)
+		users, resp, err := listCollaboratorsWithRetry(ctx, o.client, orgName, resource.DisplayName, listOpts)
 		if err != nil {
 			if resp != nil && resp.StatusCode == http.StatusForbidden {
 				l.Debug("insufficient access to list collaborators, skipping",
@@ -533,6 +535,55 @@ func repositoryBuilder(client *github.Client, orgCache *orgNameCache, omitArchiv
 		omitArchivedRepositories: omitArchivedRepositories,
 		directCollaboratorsOnly:  directCollaboratorsOnly,
 	}
+}
+
+// listCollaboratorsBackoffs is the per-attempt base delay before retrying a
+// transient HTTP/2 failure on /repos/{org}/{repo}/collaborators. Three attempts
+// total; jitter of ±25% is added at call time. See inc-814: GitHub stalls on
+// large paginated collaborator responses produce response-header timeouts that
+// previously aborted the entire GRANT_EXPANSION activity for a repo.
+var listCollaboratorsBackoffs = []time.Duration{
+	250 * time.Millisecond,
+	1 * time.Second,
+	3 * time.Second,
+}
+
+func listCollaboratorsWithRetry(
+	ctx context.Context,
+	client *github.Client,
+	org, repo string,
+	opts *github.ListCollaboratorsOptions,
+) ([]*github.User, *github.Response, error) {
+	l := ctxzap.Extract(ctx)
+	var (
+		users []*github.User
+		resp  *github.Response
+		err   error
+	)
+	for attempt := 0; attempt < len(listCollaboratorsBackoffs); attempt++ {
+		users, resp, err = client.Repositories.ListCollaborators(ctx, org, repo, opts)
+		if err == nil || !isRetryableHTTP2Error(err) {
+			return users, resp, err
+		}
+		if attempt == len(listCollaboratorsBackoffs)-1 {
+			break
+		}
+		base := listCollaboratorsBackoffs[attempt]
+		jitter := time.Duration(rand.Int64N(int64(base/2))) - base/4
+		l.Debug("retrying ListCollaborators after transient HTTP/2 error",
+			zap.String("org", org),
+			zap.String("repo", repo),
+			zap.Int("attempt", attempt+1),
+			zap.Duration("backoff", base+jitter),
+			zap.Error(err),
+		)
+		select {
+		case <-ctx.Done():
+			return users, resp, err
+		case <-time.After(base + jitter):
+		}
+	}
+	return users, resp, err
 }
 
 func skipGrantsForResourceType(bag *pagination.Bag) (string, error) {

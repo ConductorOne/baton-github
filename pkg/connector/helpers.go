@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -309,6 +310,33 @@ func isTemporarilyUnavailable(resp *github.Response) bool {
 	return resp.StatusCode == http.StatusServiceUnavailable ||
 		resp.StatusCode == http.StatusBadGateway ||
 		resp.StatusCode == http.StatusGatewayTimeout
+}
+
+// isRetryableHTTP2Error reports whether err is an HTTP/2 client-side transient
+// failure that warrants a per-call retry. These surface when GitHub stalls on a
+// large paginated response (response-header timeout) or gracefully shuts down a
+// stream mid-request (GOAWAY without GetBody). See inc-814 for context.
+func isRetryableHTTP2Error(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Context cancellation/expiry of the parent caller is never retryable —
+	// the retry would just hit the same dead deadline.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "http2: timeout awaiting response headers") {
+		return true
+	}
+	if strings.Contains(msg, "http2: Transport received Server's graceful shutdown GOAWAY") {
+		return true
+	}
+	var nerr net.Error
+	if errors.As(err, &nerr) && nerr.Timeout() {
+		return true
+	}
+	return false
 }
 
 // gitHubErrorMessage extracts a human-readable error message from a GitHub API error.
