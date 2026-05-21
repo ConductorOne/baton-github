@@ -95,9 +95,15 @@ type scriptedRT struct {
 	steps []scriptedStep
 }
 
+// scriptedStep describes one round-trip outcome. When err != nil it is
+// returned as the transport error; otherwise the RT constructs a response
+// from statusCode and body. We hold raw fields instead of a pre-constructed
+// *http.Response so the response body lifetime is owned by the RoundTrip
+// call, which keeps the bodyclose linter happy.
 type scriptedStep struct {
-	err  error          // if non-nil, returned as the RoundTrip error
-	resp *http.Response // otherwise this response is returned
+	err        error
+	statusCode int
+	body       string
 }
 
 func (r *scriptedRT) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -109,22 +115,18 @@ func (r *scriptedRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	if step.err != nil {
 		return nil, step.err
 	}
-	return step.resp, nil
+	return &http.Response{
+		StatusCode: step.statusCode,
+		Body:       io.NopCloser(strings.NewReader(step.body)),
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
 }
 
 func (r *scriptedRT) callCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.calls
-}
-
-func okEmptyResponse(req *http.Request) *http.Response {
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(strings.NewReader(`[]`)),
-		Header:     make(http.Header),
-		Request:    req,
-	}
 }
 
 // installImmediateSleep swaps sleepFn so retry backoffs don't burn wall time.
@@ -148,7 +150,7 @@ func newScriptedClient(t *testing.T, steps ...scriptedStep) (*github.Client, *sc
 
 func TestListCollaboratorsWithRetry_SuccessFirstAttempt(t *testing.T) {
 	installImmediateSleep(t)
-	client, rt := newScriptedClient(t, scriptedStep{resp: okEmptyResponse(&http.Request{})})
+	client, rt := newScriptedClient(t, scriptedStep{statusCode: http.StatusOK, body: `[]`})
 
 	_, _, err := listCollaboratorsWithRetry(t.Context(), client, "org", "repo", &github.ListCollaboratorsOptions{})
 	require.NoError(t, err)
@@ -159,7 +161,7 @@ func TestListCollaboratorsWithRetry_RetriesThenSucceeds(t *testing.T) {
 	installImmediateSleep(t)
 	client, rt := newScriptedClient(t,
 		scriptedStep{err: errors.New(hdrTimeoutMsg)},
-		scriptedStep{resp: okEmptyResponse(&http.Request{})},
+		scriptedStep{statusCode: http.StatusOK, body: `[]`},
 	)
 
 	_, _, err := listCollaboratorsWithRetry(t.Context(), client, "org", "repo", &github.ListCollaboratorsOptions{})

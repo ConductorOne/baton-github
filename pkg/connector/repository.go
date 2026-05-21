@@ -574,6 +574,7 @@ func listCollaboratorsWithRetry(
 			break
 		}
 		base := listCollaboratorsBackoffs[attempt]
+		//nolint:gosec // G404: math/rand/v2 is appropriate here; jitter is non-security-sensitive.
 		jitter := time.Duration(rand.Int64N(int64(base/2))) - base/4
 		ctxzap.Extract(ctx).Debug("retrying ListCollaborators after transient HTTP/2 error",
 			zap.String("org", org),
