@@ -6,15 +6,16 @@ import (
 	"net/http"
 
 	"github.com/conductorone/baton-sdk/pkg/ratelimit"
-	"google.golang.org/grpc/codes"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"google.golang.org/grpc/status"
 )
 
 // graphqlStatusClassifyingTransport converts HTTP 429 and 5xx responses from
-// the configured GraphQL host into gRPC-classified errors (codes.Unavailable)
-// so baton-sdk's retry layer treats them as retryable. shurcooL/graphql
-// surfaces non-200 responses as opaque fmt.Errorf strings, which otherwise
-// propagate as codes.Unknown and abort the sync on a single transient blip.
+// the configured GraphQL host into gRPC-classified errors using the same
+// status-to-code mapping the SDK applies to its own HTTP responses
+// (uhttp.GrpcCodeFromHTTPStatus). Without this, shurcooL/graphql surfaces
+// non-200 responses as opaque fmt.Errorf strings, which propagate as
+// codes.Unknown and abort the sync on a single transient blip.
 type graphqlStatusClassifyingTransport struct {
 	base        http.RoundTripper
 	graphqlHost string
@@ -44,7 +45,7 @@ func (t *graphqlStatusClassifyingTransport) RoundTrip(req *http.Request) (*http.
 	if len(body) > 0 {
 		msg += ": " + string(body)
 	}
-	st := status.New(codes.Unavailable, msg)
+	st := status.New(uhttp.GrpcCodeFromHTTPStatus(resp.StatusCode), msg)
 	if rlDesc != nil {
 		if withDetails, err := st.WithDetails(rlDesc); err == nil {
 			st = withDetails

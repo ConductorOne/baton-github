@@ -178,3 +178,30 @@ func TestGraphQLStatusClassifyingTransport_PassesThroughNonMatchingHost(t *testi
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
+
+// TestGraphQLStatusClassifyingTransport_UsesSDKStatusMapping locks in alignment
+// with uhttp.GrpcCodeFromHTTPStatus. 501 is the canary: the SDK maps
+// Not Implemented to codes.Unimplemented, so a regression to a hardcoded
+// codes.Unavailable for 5xx would flip this assertion.
+func TestGraphQLStatusClassifyingTransport_UsesSDKStatusMapping(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotImplemented)
+	}))
+	t.Cleanup(srv.Close)
+
+	u, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+
+	client := &http.Client{
+		Transport: &graphqlStatusClassifyingTransport{
+			base:        http.DefaultTransport,
+			graphqlHost: u.Host,
+		},
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/graphql", nil)
+	require.NoError(t, err)
+	resp, err := client.Do(req) //nolint:bodyclose // transport drains and returns nil resp on classification
+	require.Nil(t, resp)
+	require.Error(t, err)
+	require.Equal(t, codes.Unimplemented, status.Code(err))
+}
