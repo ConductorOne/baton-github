@@ -110,8 +110,10 @@ func TestInvitationListPagination(t *testing.T) {
 		},
 	}
 
-	// failedPage1 mixes an actually-expired invitation with one whose
-	// failed_reason is something else; only the expired one should be kept.
+	// failed_reason values match real GitHub output: a free-form sentence,
+	// not an enum. The keep-cases use the actual string observed on
+	// api.github.com plus a casing variant; the drop-cases use values seen
+	// for failures that aren't expirations.
 	failedPage1 := []*github.Invitation{
 		{
 			ID:           github.Ptr(int64(2001)),
@@ -119,7 +121,7 @@ func TestInvitationListPagination(t *testing.T) {
 			Inviter:      &github.User{Login: github.Ptr("admin")},
 			CreatedAt:    &github.Timestamp{Time: pendingCreated1},
 			FailedAt:     &github.Timestamp{Time: expiredFailedAt1},
-			FailedReason: github.Ptr("expired"),
+			FailedReason: github.Ptr("Invitation expired. User did not accept this invite for 7 days"),
 		},
 		{
 			ID:           github.Ptr(int64(2002)),
@@ -137,7 +139,8 @@ func TestInvitationListPagination(t *testing.T) {
 			Inviter:      &github.User{Login: github.Ptr("admin")},
 			CreatedAt:    &github.Timestamp{Time: pendingCreated2},
 			FailedAt:     &github.Timestamp{Time: expiredFailedAt2},
-			FailedReason: github.Ptr("expired"),
+			// Uppercase variant locks in case-insensitive matching.
+			FailedReason: github.Ptr("INVITATION EXPIRED"),
 		},
 		{
 			ID:           github.Ptr(int64(2004)),

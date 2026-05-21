@@ -32,8 +32,10 @@ const (
 	invitationStatePending = "invitation:pending"
 	invitationStateFailed  = "invitation:failed"
 
-	// GitHub returns the literal string "expired" in failed_reason when an
-	// invitation has expired without being accepted.
+	// GitHub's failed_reason is a free-form sentence, not an enum, so we
+	// substring-match (case-insensitive) for this token to detect
+	// expiration. Observed format on api.github.com today:
+	//   "Invitation expired. User did not accept this invite for 7 days"
 	githubInvitationFailedReasonExpired = "expired"
 
 	// Organization invitations expire 7 days after creation.
@@ -186,13 +188,18 @@ func (i *invitationResourceType) List(ctx context.Context, parentID *v2.Resource
 			return nil, nil, err
 		}
 
+		l := ctxzap.Extract(ctx)
 		invitationResources = make([]*v2.Resource, 0, len(invitations))
 		for _, invitation := range invitations {
 			// The failed_invitations endpoint includes failures other than
 			// expirations (e.g. user_was_inactive, unexpected_failure). Only
 			// surface invitations that explicitly expired.
-			failedReason := strings.ToLower(invitation.GetFailedReason())
-			if !strings.Contains(failedReason, githubInvitationFailedReasonExpired) {
+			failedReason := invitation.GetFailedReason()
+			if !strings.Contains(strings.ToLower(failedReason), githubInvitationFailedReasonExpired) {
+				l.Debug("skipping non-expired failed invitation",
+					zap.Int64("invitation_id", invitation.GetID()),
+					zap.String("failed_reason", failedReason),
+				)
 				continue
 			}
 
