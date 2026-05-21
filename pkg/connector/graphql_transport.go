@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/conductorone/baton-sdk/pkg/ratelimit"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -30,6 +31,7 @@ func (t *graphqlStatusClassifyingTransport) RoundTrip(req *http.Request) (*http.
 	if !shouldClassifyGraphQLStatus(resp.StatusCode) {
 		return resp, nil
 	}
+	rlDesc, _ := ratelimit.ExtractRateLimitData(resp.StatusCode, &resp.Header)
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	_ = resp.Body.Close()
 	msg := fmt.Sprintf("%s %s: HTTP %d", req.Method, req.URL.Path, resp.StatusCode)
@@ -42,7 +44,13 @@ func (t *graphqlStatusClassifyingTransport) RoundTrip(req *http.Request) (*http.
 	if len(body) > 0 {
 		msg += ": " + string(body)
 	}
-	return nil, status.Error(codes.Unavailable, msg)
+	st := status.New(codes.Unavailable, msg)
+	if rlDesc != nil {
+		if withDetails, err := st.WithDetails(rlDesc); err == nil {
+			st = withDetails
+		}
+	}
+	return nil, st.Err()
 }
 
 func shouldClassifyGraphQLStatus(code int) bool {
