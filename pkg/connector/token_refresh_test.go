@@ -166,10 +166,20 @@ func newGetRequest(t *testing.T) *http.Request {
 	return req
 }
 
+// closeBody closes resp.Body if resp is non-nil. Used by tests that exercise
+// the transport directly and need to satisfy bodyclose.
+func closeBody(t *testing.T, resp *http.Response) {
+	t.Helper()
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+}
+
 func TestTokenRefreshTransport_PassesThrough200(t *testing.T) {
 	transport, rt, _, src := newTransportFixture(t, rtStep{statusCode: http.StatusOK, body: `{}`})
 
 	resp, err := transport.RoundTrip(newGetRequest(t))
+	defer closeBody(t, resp)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, 1, rt.callCount())
@@ -183,6 +193,7 @@ func TestTokenRefreshTransport_RetriesOn401ThenSucceeds(t *testing.T) {
 	)
 
 	resp, err := transport.RoundTrip(newGetRequest(t))
+	defer closeBody(t, resp)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, 2, rt.callCount(), "exactly one retry after 401")
@@ -199,6 +210,7 @@ func TestTokenRefreshTransport_PersistentUnauthRetriesOnceThenSurfaces(t *testin
 	)
 
 	resp, err := transport.RoundTrip(newGetRequest(t))
+	defer closeBody(t, resp)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	require.Equal(t, 2, rt.callCount(), "exactly one retry — no infinite loop")
@@ -209,7 +221,8 @@ func TestTokenRefreshTransport_TransportErrorPassesThrough(t *testing.T) {
 	wantErr := errors.New("dial tcp: connection refused")
 	transport, rt, _, src := newTransportFixture(t, rtStep{err: wantErr})
 
-	_, err := transport.RoundTrip(newGetRequest(t))
+	resp, err := transport.RoundTrip(newGetRequest(t))
+	defer closeBody(t, resp)
 	require.ErrorIs(t, err, wantErr)
 	require.Equal(t, 1, rt.callCount(), "transport-level errors are not retried")
 	require.Equal(t, 0, src.callCount())
@@ -224,6 +237,7 @@ func TestTokenRefreshTransport_NoRetryWithBodyAndNoGetBody(t *testing.T) {
 	req.GetBody = nil // explicitly: no rewind capability
 
 	resp, err := transport.RoundTrip(req)
+	defer closeBody(t, resp)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "non-rewindable 401 must surface untouched")
 	require.Equal(t, 1, rt.callCount(), "non-rewindable bodies must not be retried")
@@ -241,6 +255,7 @@ func TestTokenRefreshTransport_NoRetryWhenGetBodyFails(t *testing.T) {
 	}
 
 	resp, err := transport.RoundTrip(req)
+	defer closeBody(t, resp)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	require.Equal(t, 1, rt.callCount(), "GetBody failure must not trigger a retry")
