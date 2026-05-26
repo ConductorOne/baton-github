@@ -282,6 +282,8 @@ If you're using a personal access token to set up the connector:
     1. **Optional.** If you want to sync only specific GitHub organizations, enter the organizations' names in the **Orgs** field. If you do not specify specific organizations, C1 will sync all organizations.
 
     1. **Optional.** If you do not want to include archived repos in syncs, click to enable **Omit archived repositories**.
+
+    1. **Optional.** If your GitHub organization has thousands of repositories or members, click to enable **Optimize sync for large organizations**. See [Optimize sync for large organizations](#optimize-sync-for-large-organizations) for what changes when this option is enabled.
 </Step>
 <Step>
 If you're using a GitHub app to set up the connector:
@@ -297,6 +299,8 @@ If you're using a GitHub app to set up the connector:
    1. **Optional.** Click to enable **Sync secrets**. [Synced secrets](/product/admin/inventory) are displayed on the **Inventory** page.
 
    1. **Optional.** If you do not want to include archived repos in syncs, click to enable **Omit archived repositories**.
+
+   1. **Optional.** If your GitHub organization has thousands of repositories or members, click to enable **Optimize sync for large organizations**. See [Optimize sync for large organizations](#optimize-sync-for-large-organizations) for what changes when this option is enabled.
 </Step>
 <Step>
 Click **Save**.
@@ -388,6 +392,10 @@ stringData:
 
   # Optional: include if you do not want to sync archived repos
   BATON_OMIT_ARCHIVED_REPOSITORIES: true
+
+  # Optional: enable for orgs with thousands of repos or members to reduce sync time.
+  # See "Optimize sync for large organizations" below for trade-offs.
+  BATON_DIRECT_COLLABORATORS_ONLY: true
 ```
 
 See the connector's README or run `--help` to see all available configuration flags and environment variables.
@@ -439,6 +447,17 @@ Check that the connector data uploaded correctly. In C1, click **Apps**. On the 
 **Done.** Your GitHub connector is now pulling access data into C1.
 </Tab>
 </Tabs>
+
+## Optimize sync for large organizations
+
+By default, the connector fetches the full collaborator list for every repository, including users whose access comes from team membership. For organizations with thousands of repositories and members, this can make syncs slow and run up against GitHub API rate limits.
+
+Enabling **Optimize sync for large organizations** (env var: `BATON_DIRECT_COLLABORATORS_ONLY`) changes how the connector discovers repository access:
+
+- **Direct collaborators only.** GitHub is asked only for users with direct repository access. Team-based access is reconstructed from team membership, which the connector already syncs separately.
+- **Skips per-team detail calls.** The `members_count` and `repos_count` profile fields are not synced for team resources.
+
+**Enable this option if** your GitHub organization has thousands of repositories or thousands of members and you want faster syncs and fewer API calls. Repository access data in C1 is equivalent — only the way grants are sourced (direct vs. team-expanded) differs.
 
 ## Troubleshooting
 
