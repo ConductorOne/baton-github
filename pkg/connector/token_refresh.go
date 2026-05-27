@@ -132,6 +132,15 @@ func newGitHubAppHTTPClient(ctx context.Context, rts *refreshableTokenSource) (*
 // newGitHubAppClients constructs the REST and GraphQL clients used by the
 // GitHub App install-token path, sharing the layered httpClient so the
 // 401-refresh middleware applies to both surfaces.
+//
+// The GraphQL client gets an extra statusClassifyingTransport layered on top of
+// the shared transport: shurcooL/githubv4 surfaces non-2xx responses as opaque
+// strings, so without it transient errors (429, 5xx) would reach the SDK as
+// codes.Unknown and abort the sync instead of being retried. It must sit above
+// the 401-retry layer so tokenRefreshTransport still observes a raw 401 and can
+// retry it; only a non-2xx that survives the retry is converted to a classified
+// error. The REST client doesn't need this — go-github exposes structured
+// errors that wrapGitHubError classifies at the call site.
 func newGitHubAppClients(instanceURL string, httpClient *http.Client) (*github.Client, *githubv4.Client, error) {
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
 
@@ -144,6 +153,11 @@ func newGitHubAppClients(instanceURL string, httpClient *http.Client) (*github.C
 		}
 	}
 
+	gqlHTTPClient := &http.Client{
+		Timeout:   httpClient.Timeout,
+		Transport: &statusClassifyingTransport{base: httpClient.Transport},
+	}
+
 	var gqlClient *githubv4.Client
 	if instanceURL != "" && instanceURL != githubDotCom {
 		gqlURL, err := url.Parse(instanceURL)
@@ -151,9 +165,9 @@ func newGitHubAppClients(instanceURL string, httpClient *http.Client) (*github.C
 			return nil, nil, err
 		}
 		gqlURL.Path = "/api/graphql"
-		gqlClient = githubv4.NewEnterpriseClient(gqlURL.String(), httpClient)
+		gqlClient = githubv4.NewEnterpriseClient(gqlURL.String(), gqlHTTPClient)
 	} else {
-		gqlClient = githubv4.NewClient(httpClient)
+		gqlClient = githubv4.NewClient(gqlHTTPClient)
 	}
 	return gc, gqlClient, nil
 }
