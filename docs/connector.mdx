@@ -423,7 +423,7 @@ spec:
     spec:
       containers:
       - name: baton-github
-        image: ghcr.io/conductorone/baton-github:latest
+        image: public.ecr.aws/conductorone/baton-github:latest
         imagePullPolicy: IfNotPresent
         env:
         - name: BATON_HOST_ID
@@ -468,4 +468,3 @@ If you see this error during sync, it most commonly means the GitHub App is miss
 This permission is required because the connector queries GitHub's GraphQL API to check whether your organization has SAML/SSO configured. GitHub restricts this data to apps with organization admin read access. Without it, the sync will fail.
 
 **To fix:** Go to your GitHub App settings, then navigate to **Permissions** > **Organization permissions** > **Administration** and set it to **Read-only**.
-
