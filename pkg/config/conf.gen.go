@@ -14,6 +14,7 @@ type Github struct {
 	SyncSecrets bool `mapstructure:"sync-secrets"`
 	OmitArchivedRepositories bool `mapstructure:"omit-archived-repositories"`
 	DirectCollaboratorsOnly bool `mapstructure:"direct-collaborators-only"`
+	EnableHttpEtagCache bool `mapstructure:"enable-http-etag-cache"`
 }
 
 func (c *Github) findFieldByTag(tagValue string) (any, bool) {

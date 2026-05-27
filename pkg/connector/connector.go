@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +109,18 @@ type GitHub struct {
 	omitArchivedRepositories bool
 	directCollaboratorsOnly  bool
 	enterprises              []string
+	// etagTransports holds references to any ETagTransport instances installed
+	// by newETagWrap, kept so Close can emit a sync-end stats summary.
+	etagTransports []*customclient.ETagTransport
+}
+
+// Close implements connectorbuilder.closeWithContext: emits the ETag-cache hit
+// rate so operators can see whether the cache is doing useful work.
+func (gh *GitHub) Close(ctx context.Context) error {
+	for _, t := range gh.etagTransports {
+		t.LogStats(ctx)
+	}
+	return nil
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
@@ -258,11 +272,18 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 	return nil, nil
 }
 
-// newGitHubClient returns a new GitHub API client authenticated with an access token via oauth2.
-func newGitHubClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*github.Client, error) {
+// newGitHubClient returns a new GitHub API client authenticated with an access
+// token via oauth2. wrapTransport is an optional hook (may be nil) for stacking
+// additional http.RoundTrippers (e.g., ETag conditional-request caching)
+// underneath the oauth2 transport.
+func newGitHubClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource, wrapTransport func(http.RoundTripper) http.RoundTripper) (*github.Client, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
 		return nil, err
+	}
+
+	if wrapTransport != nil {
+		httpClient.Transport = wrapTransport(httpClient.Transport)
 	}
 
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
@@ -299,15 +320,55 @@ func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.Conne
 	return cb, nil, nil
 }
 
+// etagCacheMaxMBEnv lets operators tune the in-process cache size without
+// re-deploying. A 5,000-repo customer with ~100 KB collaborator-list responses
+// can easily exceed the default 100 MiB and benefit from raising this.
+const etagCacheMaxMBEnv = "BATON_GITHUB_HTTP_CACHE_MAX_MB"
+
+// newETagWrap returns a wrapTransport hook that installs an ETagTransport when
+// the opt-in is enabled, or nil to pass through. scope distinguishes cache
+// entries between different installations/PATs sharing a process. The returned
+// hook appends each constructed transport to the provided sink slice so the
+// connector can later report stats on Close.
+func newETagWrap(ctx context.Context, enabled bool, scope string, sink *[]*customclient.ETagTransport) func(http.RoundTripper) http.RoundTripper {
+	if !enabled {
+		return nil
+	}
+	l := ctxzap.Extract(ctx)
+	maxMB := 0
+	if v := os.Getenv(etagCacheMaxMBEnv); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxMB = n
+		} else {
+			l.Warn("baton-github: ignoring invalid "+etagCacheMaxMBEnv,
+				zap.String("value", v))
+		}
+	}
+	return func(next http.RoundTripper) http.RoundTripper {
+		t, err := customclient.NewETagTransport(next, maxMB, scope)
+		if err != nil {
+			l.Warn("baton-github: http-etag-cache disabled (init failed)", zap.Error(err))
+			return next
+		}
+		l.Info("baton-github: http-etag-cache enabled", zap.Int("max_mb", maxMB))
+		if sink != nil {
+			*sink = append(*sink, t)
+		}
+		return t
+	}
+}
+
 func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: ghc.Token},
 	)
-	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
+	var etagTransports []*customclient.ETagTransport
+	wrap := newETagWrap(ctx, ghc.EnableHttpEtagCache, "pat:"+ghc.Token, &etagTransports)
+	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts, wrap)
 	if err != nil {
 		return nil, err
 	}
-	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ts)
+	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ts, wrap)
 	if err != nil {
 		return nil, err
 	}
@@ -322,6 +383,7 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
+		etagTransports:           etagTransports,
 	}, nil
 }
 
@@ -331,11 +393,18 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		return nil, err
 	}
 
+	// Scope cache entries by app + org so different installations don't share
+	// state; the JWT itself rotates every ~9 minutes and would needlessly
+	// invalidate the cache if used as the scope.
+	var etagTransports []*customclient.ETagTransport
+	wrap := newETagWrap(ctx, ghc.EnableHttpEtagCache, "app:"+ghc.AppId+":"+ghc.Org, &etagTransports)
+
 	appClient, err := newGitHubClient(ctx,
 		ghc.InstanceUrl,
 		oauth2.StaticTokenSource(
 			&oauth2.Token{AccessToken: jwttoken},
 		),
+		wrap,
 	)
 
 	if err != nil {
@@ -377,16 +446,17 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	appClient, err = newGitHubClient(ctx,
 		ghc.InstanceUrl,
 		jwtts,
+		wrap,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts)
+	ghClient, err := newGitHubClient(ctx, ghc.InstanceUrl, ts, wrap)
 	if err != nil {
 		return nil, err
 	}
-	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ts)
+	graphqlClient, err := newGitHubGraphqlClient(ctx, ghc.InstanceUrl, ts, wrap)
 	if err != nil {
 		return nil, err
 	}
@@ -398,6 +468,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		instanceURL:              ghc.InstanceUrl,
 		orgs:                     []string{ghc.Org},
 		enterprises:              ghc.Enterprises,
+		etagTransports:           etagTransports,
 		graphqlClient:            graphqlClient,
 		orgCache:                 newOrgNameCache(ghClient),
 		syncSecrets:              ghc.SyncSecrets,
@@ -407,7 +478,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	return gh, nil
 }
 
-func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
+func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource, wrapTransport func(http.RoundTripper) http.RoundTripper) (*githubv4.Client, error) {
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
 
 	var enterpriseGqlURL string
@@ -425,6 +496,9 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.T
 		return nil, err
 	}
 	httpClient.Transport = &statusClassifyingTransport{base: httpClient.Transport}
+	if wrapTransport != nil {
+		httpClient.Transport = wrapTransport(httpClient.Transport)
+	}
 
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	tc := oauth2.NewClient(ctx, ts)
@@ -533,9 +607,11 @@ type appTokenRefresher struct {
 }
 
 func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
+	// Token-mint path is a one-shot POST per refresh — no benefit from ETag caching.
 	appClient, err := newGitHubClient(r.ctx,
 		r.instanceURL,
 		r.jwtTokenSource,
+		nil,
 	)
 	if err != nil {
 		return nil, err

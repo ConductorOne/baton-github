@@ -73,6 +73,21 @@ var (
 				"and skipping per-team detail fetches. Recommended for large orgs.",
 		),
 	)
+	// enableHttpEtagCache wires an If-None-Match / 304 cache around the GitHub
+	// HTTP client. Per GitHub's REST best-practices documentation, 304 responses
+	// to If-None-Match requests do not count against the primary rate-limit
+	// budget, so this trades a small amount of process memory for significant
+	// rate-limit headroom on warm endpoints.
+	enableHttpEtagCache = field.BoolField(
+		"enable-http-etag-cache",
+		field.WithDisplayName("Enable HTTP ETag cache"),
+		field.WithDescription(
+			"Add conditional-request (ETag / If-None-Match) caching to GitHub API calls. "+
+				"304 responses do not consume rate-limit budget, so this raises the "+
+				"throughput ceiling for large orgs. In-process cache; persists across "+
+				"warm Lambda invocations.",
+		),
+	)
 	orgField = field.StringField(
 		"org",
 		field.WithDisplayName("Github App Organization"),
@@ -94,6 +109,7 @@ var Config = field.NewConfiguration(
 		syncSecrets,
 		omitArchivedRepositories,
 		directCollaboratorsOnly,
+		enableHttpEtagCache,
 	},
 	field.WithConnectorDisplayName("GitHub v2"),
 	field.WithHelpUrl("/docs/baton/github-v2"),
@@ -103,14 +119,14 @@ var Config = field.NewConfiguration(
 			Name:        GithubPersonalAccessTokenGroup,
 			DisplayName: "Personal access token",
 			HelpText:    "Use a personal access token for authentication.",
-			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories, directCollaboratorsOnly},
+			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories, directCollaboratorsOnly, enableHttpEtagCache},
 			Default:     true,
 		},
 		{
 			Name:        GithubAppGroup,
 			DisplayName: "GitHub app",
 			HelpText:    "Use a github app for authentication",
-			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgField, syncSecrets, omitArchivedRepositories, directCollaboratorsOnly},
+			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgField, syncSecrets, omitArchivedRepositories, directCollaboratorsOnly, enableHttpEtagCache},
 			Default:     false,
 		},
 	}),
