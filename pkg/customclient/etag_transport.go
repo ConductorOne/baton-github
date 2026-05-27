@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -107,6 +108,11 @@ type ETagTransport struct {
 	saveCh chan saveJob
 	// closeOnce gates Close so multiple callers see consistent behavior.
 	closeOnce sync.Once
+	// closed is set before saveCh is closed so late-arriving enqueueSave callers
+	// can short-circuit instead of panicking on send-to-closed-channel. The
+	// SDK typically calls Close after sync ends, but the contract doesn't
+	// guarantee no RoundTrips are in flight.
+	closed atomic.Bool
 	// writerDone signals the writer goroutine has exited.
 	writerDone chan struct{}
 }
@@ -176,6 +182,11 @@ func (t *ETagTransport) SetSession(ctx context.Context, ss sessions.SessionStore
 // hydrateFromPersistor populates the in-memory Otter cache from the prior
 // sync's persisted entries. Best-effort: errors are logged and the cache
 // simply remains empty.
+//
+// Hydrate runs in a background goroutine spawned by SetSession, so by the
+// time it executes, in-flight RoundTrips may already have populated the cache
+// with fresher entries fetched during the current sync. Skip those — never
+// clobber a newer in-process entry with a 7-day-old persisted one.
 func (t *ETagTransport) hydrateFromPersistor(ctx context.Context, p Persistor) {
 	entries, err := p.LoadAll(ctx)
 	if err != nil {
@@ -184,11 +195,21 @@ func (t *ETagTransport) hydrateFromPersistor(ctx context.Context, p Persistor) {
 		)
 		return
 	}
+	hydrated := 0
 	for key, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		if existing, ok := t.cache.GetIfPresent(key); ok && existing != nil && !existing.StoredAt.Before(entry.StoredAt) {
+			// In-process entry is at least as fresh; leave it alone.
+			continue
+		}
 		t.cache.Set(key, entry)
+		hydrated++
 	}
 	ctxzap.Extract(ctx).Info("baton-github: http-etag-cache hydrated",
-		zap.Int("entries", len(entries)),
+		zap.Int("entries_loaded", len(entries)),
+		zap.Int("entries_installed", hydrated),
 	)
 }
 
@@ -222,6 +243,12 @@ func (t *ETagTransport) runWriter() {
 func (t *ETagTransport) Close(ctx context.Context) error {
 	var closeErr error
 	t.closeOnce.Do(func() {
+		// Mark closed BEFORE closing the channel so any concurrent
+		// enqueueSave callers see the flag and short-circuit. Without this
+		// guard, a select-default on a closed channel proceeds to the send
+		// case and panics — select treats send-to-closed as ready, not
+		// blocking, contrary to the intuitive read of the spec.
+		t.closed.Store(true)
 		close(t.saveCh)
 		timer := time.NewTimer(drainTimeout)
 		defer timer.Stop()
@@ -346,6 +373,14 @@ func (t *ETagTransport) enqueueSave(key string, entry *etagCacheEntry, bodyLen i
 		t.oversizedSkipped.Add(1)
 		return
 	}
+	// Guard against send-on-closed-channel panic. The atomic.Bool is set
+	// before close(saveCh) inside Close, so any RoundTrip racing with Close
+	// observes "closed" and exits without touching the channel. Count the
+	// drop so operators can see late writes happening.
+	if t.closed.Load() {
+		t.droppedWrites.Add(1)
+		return
+	}
 	select {
 	case t.saveCh <- saveJob{key: key, entry: entry}:
 	default:
@@ -377,6 +412,15 @@ func (t *ETagTransport) materializeFromCache(resp304 *http.Response, entry *etag
 	if entry.LastModified != "" {
 		out.Header.Set("Last-Modified", entry.LastModified)
 	}
+	// The 304 response carried Content-Length: 0; rewrite it to match the
+	// cached body so any downstream middleware that consults the header sees
+	// truthful framing.
+	out.Header.Set("Content-Length", strconv.FormatInt(int64(len(entry.Body)), 10))
+	// Strip Content-Encoding: cached bodies are stored post-decompression by
+	// Go's http.Transport, so claiming "gzip" here would mislead any code that
+	// tries to decompress again. (304 responses don't normally carry this,
+	// but be defensive.)
+	out.Header.Del("Content-Encoding")
 	out.Header.Set(etagHitHeader, etagHitHeaderValue)
 	return out
 }

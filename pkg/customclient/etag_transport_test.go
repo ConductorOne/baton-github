@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -560,4 +561,206 @@ func TestETagTransport_SessionPersistence_SetSessionIdempotent(t *testing.T) {
 
 	require.Equal(t, 0, ssB.size(), "second SetSession was a no-op; B must stay empty")
 	require.Equal(t, 1, ssA.size(), "A still holds its own primer; not consumed by anything")
+}
+
+// TestETagTransport_ReviewFix_LateSendAfterCloseNoPanic verifies the fix for
+// the send-on-closed-channel panic flagged by code review: enqueueSave called
+// after Close must not panic. We construct a transport, close it, then run a
+// request that would normally enqueue a Save. The Post-close request should
+// degrade to "drop" rather than crash.
+func TestETagTransport_ReviewFix_LateSendAfterCloseNoPanic(t *testing.T) {
+	next := &fakeRT{
+		fn: func(req *http.Request) (*http.Response, error) {
+			return newResp(http.StatusOK, http.Header{
+				"ETag":         []string{`"v1"`},
+				"Content-Type": []string{"application/json"},
+			}, "body", req), nil
+		},
+	}
+	tr, err := NewETagTransport(next, 0, "scope")
+	require.NoError(t, err)
+	tr.SetSession(context.Background(), newFakeSessionStore())
+	require.NoError(t, tr.Close(context.Background()))
+
+	// After Close, this request would normally try to enqueue. The atomic
+	// closed flag must short-circuit before the channel send.
+	require.NotPanics(t, func() {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://api.github.com/late", nil)
+		resp, err := (&http.Client{Transport: tr}).Do(req) //nolint:gosec // test transport; URL is static
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+	})
+	// The request still completed (304 substitution etc. don't apply on first
+	// fetch); the Store happened, but persistence was dropped.
+	require.GreaterOrEqual(t, tr.Stats().DroppedWrites, uint64(1),
+		"late save must increment droppedWrites instead of panicking")
+}
+
+// TestETagTransport_ReviewFix_HydrateDoesNotClobberFresherEntry verifies the
+// fix for the hydrate-vs-RoundTrip clobber: a hydrate goroutine seeing an
+// already-populated Otter entry with newer StoredAt must skip the overwrite.
+func TestETagTransport_ReviewFix_HydrateDoesNotClobberFresherEntry(t *testing.T) {
+	// Pre-seed the session store with a stale entry (StoredAt: -2h) under the
+	// prefix that scope "shared-hydrate" produces.
+	ss := newFakeSessionStore()
+	staleEntry := &etagCacheEntry{
+		ETag:        `"stale"`,
+		Body:        []byte("stale-body"),
+		ContentType: "application/json",
+		StoredAt:    time.Now().Add(-2 * time.Hour),
+	}
+
+	// Determine the cache key the transport will compute for our test URL, so
+	// we can also pre-populate Otter with a "fresher" entry before SetSession
+	// kicks off the hydrate.
+	tr, err := NewETagTransport(&fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		t.Fatalf("transport must not hit the wire in this test")
+		return nil, nil
+	}}, 0, "shared-hydrate")
+	require.NoError(t, err)
+	defer func() { _ = tr.Close(context.Background()) }()
+
+	// Save stale entry to the session store under the same key.
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://api.github.com/orgs/example", nil)
+	cacheKey := tr.cacheKey(req)
+	persistor := newSessionPersistor(ss, tr.authHash)
+	require.NoError(t, persistor.Save(context.Background(), cacheKey, staleEntry))
+
+	// Inject a fresher entry into Otter before SetSession fires.
+	freshEntry := &etagCacheEntry{
+		ETag:        `"fresh"`,
+		Body:        []byte("fresh-body"),
+		ContentType: "application/json",
+		StoredAt:    time.Now(),
+	}
+	tr.cache.Set(cacheKey, freshEntry)
+
+	tr.SetSession(context.Background(), ss)
+
+	// Wait briefly for the hydrate goroutine to run; can't observe it directly
+	// so poll until either the entry changes or a short deadline passes.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		got, ok := tr.cache.GetIfPresent(cacheKey)
+		if ok && got != nil && got.ETag != freshEntry.ETag {
+			t.Fatalf("hydrate clobbered fresher entry: got ETag %q, want %q", got.ETag, freshEntry.ETag)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	got, ok := tr.cache.GetIfPresent(cacheKey)
+	require.True(t, ok)
+	require.Equal(t, freshEntry.ETag, got.ETag, "fresher in-process entry must survive hydrate")
+}
+
+// errPersistor returns a hard error on every Save so we can exercise the
+// writer goroutine's error path.
+type errPersistor struct {
+	saveCalls atomic.Int32
+}
+
+func (e *errPersistor) LoadAll(_ context.Context) (map[string]*etagCacheEntry, error) {
+	return nil, nil
+}
+func (e *errPersistor) Save(_ context.Context, _ string, _ *etagCacheEntry) error {
+	e.saveCalls.Add(1)
+	return errPersistorFail
+}
+
+var errPersistorFail = errPersistorFailErr{}
+
+type errPersistorFailErr struct{}
+
+func (errPersistorFailErr) Error() string { return "persistor save failed (test)" }
+
+// TestETagTransport_ReviewFix_PersistorSaveErrorTolerated verifies the writer
+// goroutine logs and continues on persistor errors rather than tearing down.
+func TestETagTransport_ReviewFix_PersistorSaveErrorTolerated(t *testing.T) {
+	next := &fakeRT{
+		fn: func(req *http.Request) (*http.Response, error) {
+			return newResp(http.StatusOK, http.Header{
+				"ETag":         []string{`"v1"`},
+				"Content-Type": []string{"application/json"},
+			}, "body", req), nil
+		},
+	}
+	tr, err := NewETagTransport(next, 0, "scope")
+	require.NoError(t, err)
+	defer func() { _ = tr.Close(context.Background()) }()
+
+	// Swap the persistor directly (skips SetSession's sync.Once gate so the
+	// test stays focused on the error path).
+	ep := &errPersistor{}
+	var pers Persistor = ep
+	tr.persistorPtr.Store(&pers)
+
+	client := &http.Client{Transport: tr}
+	for i := 0; i < 5; i++ {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			"https://api.github.com/x/"+string(rune('a'+i)), nil)
+		resp, err := client.Do(req) //nolint:gosec // test transport; URL is static
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+	}
+	// Give the writer goroutine time to drain.
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) && ep.saveCalls.Load() < 5 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.Equal(t, int32(5), ep.saveCalls.Load(), "writer continued after errors")
+	// Persisted stays at 0 because all saves failed; in-memory cache still
+	// works as normal.
+	require.Equal(t, uint64(0), tr.Stats().Persisted)
+	require.Equal(t, uint64(5), tr.Stats().Stores)
+}
+
+// TestETagTransport_ReviewFix_MaterializeRewritesContentLength verifies that
+// the 304 substitution overwrites the cloned Content-Length (which would be 0
+// from the 304) and clears any stale Content-Encoding.
+func TestETagTransport_ReviewFix_MaterializeRewritesContentLength(t *testing.T) {
+	body := `{"items":[1,2,3]}`
+	first := true
+	next := &fakeRT{
+		fn: func(req *http.Request) (*http.Response, error) {
+			if first {
+				first = false
+				return newResp(http.StatusOK, http.Header{
+					"ETag":         []string{`"v1"`},
+					"Content-Type": []string{"application/json"},
+				}, body, req), nil
+			}
+			// 304 response with bogus Content-Length and Content-Encoding to
+			// confirm the materialize step rewrites both.
+			return newResp(http.StatusNotModified, http.Header{
+				"Content-Length":   []string{"0"},
+				"Content-Encoding": []string{"gzip"},
+			}, "", req), nil
+		},
+	}
+	tr, err := NewETagTransport(next, 0, "scope")
+	require.NoError(t, err)
+	defer func() { _ = tr.Close(context.Background()) }()
+
+	client := &http.Client{Transport: tr}
+
+	// Prime the cache.
+	req1, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://api.github.com/x", nil)
+	resp1, err := client.Do(req1) //nolint:gosec // test transport; URL is static
+	require.NoError(t, err)
+	_ = resp1.Body.Close()
+
+	// Second request: server returns 304, transport substitutes the cached body.
+	req2, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://api.github.com/x", nil)
+	resp2, err := client.Do(req2) //nolint:gosec // test transport; URL is static
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+	require.Equal(t, int64(len(body)), resp2.ContentLength, "ContentLength struct field matches body length")
+	require.Equal(t, strconv.Itoa(len(body)), resp2.Header.Get("Content-Length"),
+		"Content-Length header rewritten to match cached body")
+	require.Empty(t, resp2.Header.Get("Content-Encoding"),
+		"stale Content-Encoding must be cleared from substituted response")
+	got, _ := io.ReadAll(resp2.Body)
+	require.Equal(t, body, string(got))
 }
