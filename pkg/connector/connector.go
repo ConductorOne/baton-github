@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"bytes"
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	cfg "github.com/conductorone/baton-github/pkg/config"
@@ -268,6 +270,7 @@ func newGitHubClient(ctx context.Context, instanceURL string, ts oauth2.TokenSou
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
 	tc := oauth2.NewClient(ctx, ts)
+	wrap401Handlers(tc, ts)
 	gc := github.NewClient(tc)
 
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
@@ -361,7 +364,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 			privateKey: string(ghc.AppPrivatekeyPath),
 		},
 	)
-	ts := oauth2.ReuseTokenSource(
+	ts := newRefreshableTokenSource(
 		&oauth2.Token{
 			AccessToken: token.GetToken(),
 			Expiry:      token.GetExpiresAt().Time,
@@ -428,6 +431,7 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.T
 
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	tc := oauth2.NewClient(ctx, ts)
+	wrap401Handlers(tc, ts)
 
 	if enterpriseGqlURL != "" {
 		return githubv4.NewEnterpriseClient(enterpriseGqlURL, tc), nil
@@ -549,6 +553,174 @@ func (r *appTokenRefresher) Token() (*oauth2.Token, error) {
 		AccessToken: token.GetToken(),
 		Expiry:      token.GetExpiresAt().Time,
 	}, nil
+}
+
+// refreshableTokenSource is an oauth2.TokenSource whose cache can be cleared
+// externally, so a 401 can force a refresh before the cached token's expiry.
+type refreshableTokenSource struct {
+	mu      sync.Mutex
+	cur     *oauth2.Token
+	refresh oauth2.TokenSource
+}
+
+func newRefreshableTokenSource(initial *oauth2.Token, refresh oauth2.TokenSource) *refreshableTokenSource {
+	return &refreshableTokenSource{cur: initial, refresh: refresh}
+}
+
+func (r *refreshableTokenSource) Token() (*oauth2.Token, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cur.Valid() {
+		return r.cur, nil
+	}
+	t, err := r.refresh.Token()
+	if err != nil {
+		return nil, err
+	}
+	r.cur = t
+	return t, nil
+}
+
+// Invalidate clears the cached token if it still matches prev. The match check
+// prevents concurrent 401s on the same stale token from triggering redundant
+// refreshes.
+func (r *refreshableTokenSource) Invalidate(prev *oauth2.Token) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if prev != nil && r.cur != nil && r.cur.AccessToken != prev.AccessToken {
+		return
+	}
+	r.cur = nil
+}
+
+// tokenInvalidator is a TokenSource whose cache can be cleared externally.
+type tokenInvalidator interface {
+	Token() (*oauth2.Token, error)
+	Invalidate(prev *oauth2.Token)
+}
+
+// unauthorizedRefreshTransport retries a 401 response once with a refreshed token.
+type unauthorizedRefreshTransport struct {
+	base http.RoundTripper
+	src  tokenInvalidator
+}
+
+func (t *unauthorizedRefreshTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	prev, _ := t.src.Token()
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		return resp, err
+	}
+	if req.Body != nil && req.GetBody == nil {
+		return resp, nil
+	}
+
+	// Reproduce the body before draining the 401, so the GetBody-error path can
+	// return resp with a still-readable body.
+	var retryBody io.ReadCloser
+	if req.GetBody != nil {
+		body, gErr := req.GetBody()
+		if gErr != nil {
+			return resp, nil //nolint:nilerr // gErr is incidental; surface the 401
+		}
+		retryBody = body
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	t.src.Invalidate(prev)
+	ctxzap.Extract(req.Context()).Info("github-connector: got 401, invalidating cached token and retrying once",
+		zap.String("http.method", req.Method),
+		zap.String("http.url_details.path", req.URL.Path),
+	)
+
+	retry := req.Clone(req.Context())
+	if retryBody != nil {
+		retry.Body = retryBody
+	}
+	return t.base.RoundTrip(retry)
+}
+
+// wrap401Handlers attaches diagnostic logging beneath oauth2.Transport and the
+// 401-retry layer above it. The logger is installed unconditionally; the retry
+// only when ts supports invalidation (PAT and JWT-only sources don't).
+func wrap401Handlers(c *http.Client, ts oauth2.TokenSource) {
+	if oauthT, ok := c.Transport.(*oauth2.Transport); ok {
+		oauthT.Base = &unauthorized401Logger{base: oauthT.Base}
+	}
+	if inv, ok := ts.(tokenInvalidator); ok {
+		c.Transport = &unauthorizedRefreshTransport{base: c.Transport, src: inv}
+	}
+}
+
+// unauthorized401Logger is a diagnostic-only RoundTripper that emits a single
+// DEBUG line on every 401 response, capturing rate-limit headers, the GitHub
+// request id, the response body, and a fingerprint of the token in use. It
+// does not alter the response.
+type unauthorized401Logger struct {
+	base http.RoundTripper
+}
+
+var diagnostic401Headers = []string{
+	"X-Github-Request-Id",
+	"X-Ratelimit-Limit",
+	"X-Ratelimit-Remaining",
+	"X-Ratelimit-Reset",
+	"X-Ratelimit-Used",
+	"X-Ratelimit-Resource",
+	"Retry-After",
+}
+
+func (t *unauthorized401Logger) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt := t.base
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	resp, err := rt.RoundTrip(req)
+	if err != nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		return resp, err
+	}
+
+	var body []byte
+	if resp.Body != nil {
+		body, _ = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+	}
+
+	headers := make(map[string]string, len(diagnostic401Headers))
+	for _, h := range diagnostic401Headers {
+		if v := resp.Header.Get(h); v != "" {
+			headers[h] = v
+		}
+	}
+
+	ctxzap.Extract(req.Context()).Debug("github-connector: received 401 response",
+		zap.String("http.method", req.Method),
+		zap.String("http.url_details.path", req.URL.Path),
+		zap.String("http.url_details.query", req.URL.RawQuery),
+		zap.Any("response_headers", headers),
+		zap.String("response_body", string(body)),
+		zap.String("token_fingerprint", tokenFingerprint(req.Header.Get("Authorization"))),
+	)
+
+	return resp, err
+}
+
+// tokenFingerprint returns the first/last four characters of the bearer
+// portion of an Authorization header so log readers can tell whether the same
+// token is being used across requests without exposing the full secret.
+func tokenFingerprint(authHeader string) string {
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	tok := parts[1]
+	if len(tok) < 8 {
+		return ""
+	}
+	return tok[:4] + "..." + tok[len(tok)-4:]
 }
 
 func getOrgs(ctx context.Context, client *github.Client, orgs []string) ([]string, error) {
