@@ -9,6 +9,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/types/sessions"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
@@ -39,6 +40,10 @@ type orgResourceType struct {
 	orgs         map[string]struct{}
 	orgCache     *orgNameCache
 	syncSecrets  bool
+	// onSyncStart fires once per sync from List(), with the current sync's
+	// session store. Used by the connector to lazily bind the ETag transport's
+	// persistence backend (Phase 1.5). May be nil in tests.
+	onSyncStart func(ctx context.Context, ss sessions.SessionStore)
 }
 
 func organizationResource(
@@ -80,6 +85,12 @@ func (o *orgResourceType) List(
 	parentResourceID *v2.ResourceId,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
+	// Orgs sync first per ResourceSyncers() ordering, so this is the earliest
+	// reliable signal that a sync has started and a session store is available.
+	// The hook is idempotent across pages and across syncs.
+	if o.onSyncStart != nil {
+		o.onSyncStart(ctx, opts.Session)
+	}
 	if o.appClient != nil {
 		orgResource, pageToken, anno, err := o.listOrganizationsFromAppInstallations(ctx, parentResourceID)
 		if err != nil {
@@ -418,7 +429,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	return nil, nil
 }
 
-func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool) *orgResourceType {
+func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool, onSyncStart func(context.Context, sessions.SessionStore)) *orgResourceType {
 	orgMap := make(map[string]struct{})
 
 	for _, o := range orgs {
@@ -432,6 +443,7 @@ func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs [
 		appClient:    appClient,
 		orgCache:     orgCache,
 		syncSecrets:  syncSecrets,
+		onSyncStart:  onSyncStart,
 	}
 }
 

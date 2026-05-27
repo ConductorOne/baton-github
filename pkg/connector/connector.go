@@ -21,6 +21,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/cli"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/conductorone/baton-sdk/pkg/types/sessions"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/google/go-github/v69/github"
@@ -114,18 +115,42 @@ type GitHub struct {
 	etagTransports []*customclient.ETagTransport
 }
 
-// Close implements connectorbuilder.closeWithContext: emits the ETag-cache hit
-// rate so operators can see whether the cache is doing useful work.
+// Close implements connectorbuilder.closeWithContext. Drains any pending ETag
+// cache writes (bounded by each transport's drainTimeout) so we don't lose
+// in-flight persistence updates on shutdown, then emits the hit-rate summary.
 func (gh *GitHub) Close(ctx context.Context) error {
 	for _, t := range gh.etagTransports {
+		if err := t.Close(ctx); err != nil {
+			// Drain failures are logged inside ETagTransport.Close at Warn level;
+			// surface but do not propagate — closing the connector should never
+			// be blocked on cache persistence.
+			ctxzap.Extract(ctx).Debug("baton-github: etag transport close returned error",
+				zap.Error(err),
+			)
+		}
 		t.LogStats(ctx)
 	}
 	return nil
 }
 
+// ensureSessionWired binds the per-sync session store to every ETag transport
+// the connector owns. Idempotent across syncs (the transport's sync.Once
+// guards rebinding); we call it from the first builder method that fires.
+// This is how Phase 1.5's session-store-backed persistence finds its store
+// handle — the session is only available via SyncOpAttrs.Session, not at
+// connector construction time.
+func (gh *GitHub) ensureSessionWired(ctx context.Context, ss sessions.SessionStore) {
+	if ss == nil {
+		return
+	}
+	for _, t := range gh.etagTransports {
+		t.SetSession(ctx, ss)
+	}
+}
+
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
 	resourceSyncers := []connectorbuilder.ResourceSyncerV2{
-		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
+		orgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets, gh.ensureSessionWired),
 		teamBuilder(gh.client, gh.orgCache, gh.directCollaboratorsOnly),
 		userBuilder(gh.client, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises),
 		repositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories, gh.directCollaboratorsOnly),

@@ -5,14 +5,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/conductorone/baton-sdk/pkg/types/sessions"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/maypok86/otter/v2"
 	"go.uber.org/zap"
@@ -40,13 +43,38 @@ type etagCacheEntry struct {
 }
 
 // ETagCacheStats reports cumulative cache effectiveness for the transport's
-// lifetime. Useful for one-line "ratio = N%" log lines at sync end.
+// lifetime. Useful for one-line "ratio = N%" log lines at sync end. The
+// persistence-related counters (OversizedSkipped, DroppedWrites, Persisted)
+// are zero when no session store is wired in.
 type ETagCacheStats struct {
-	Hits304  uint64
-	Misses   uint64
-	Stores   uint64
-	Bypassed uint64
+	Hits304          uint64
+	Misses           uint64
+	Stores           uint64
+	Bypassed         uint64
+	OversizedSkipped uint64
+	DroppedWrites    uint64
+	Persisted        uint64
 }
+
+// saveJob carries a single entry from RoundTrip's hot path to the background
+// writer goroutine that talks to the persistor.
+type saveJob struct {
+	key   string
+	entry *etagCacheEntry
+}
+
+const (
+	// saveQueueDepth bounds the writer goroutine's buffer. A 5,000-repo sync
+	// with collaborator + team lists per repo emits roughly 10–20k cacheable
+	// responses; 256 keeps memory bounded while absorbing burst writes from
+	// concurrent SDK pool workers.
+	saveQueueDepth = 256
+	// drainTimeout caps how long Close waits for in-flight saves to drain
+	// before forcing shutdown.
+	drainTimeout = 5 * time.Second
+	// saveOpTimeout caps any single Save call inside the writer goroutine.
+	saveOpTimeout = 2 * time.Second
+)
 
 // ETagTransport wraps an http.RoundTripper to perform GitHub-style conditional
 // requests: it sends If-None-Match on GETs for which we have a cached ETag and
@@ -61,10 +89,26 @@ type ETagTransport struct {
 	cache    *otter.Cache[string, *etagCacheEntry]
 	authHash string
 
-	hits304  atomic.Uint64
-	misses   atomic.Uint64
-	stores   atomic.Uint64
-	bypassed atomic.Uint64
+	hits304          atomic.Uint64
+	misses           atomic.Uint64
+	stores           atomic.Uint64
+	bypassed         atomic.Uint64
+	oversizedSkipped atomic.Uint64
+	droppedWrites    atomic.Uint64
+	persisted        atomic.Uint64
+
+	// persistor is set to noopPersistor by NewETagTransport and may be swapped
+	// once by SetSession to a sessionPersistor backed by the SDK session store.
+	// Access via persistorPtr.Load(); writes are serialized by sessionOnce.
+	persistorPtr atomic.Pointer[Persistor]
+	sessionOnce  sync.Once
+
+	// saveCh feeds the writer goroutine; non-blocking sends from RoundTrip.
+	saveCh chan saveJob
+	// closeOnce gates Close so multiple callers see consistent behavior.
+	closeOnce sync.Once
+	// writerDone signals the writer goroutine has exited.
+	writerDone chan struct{}
 }
 
 // NewETagTransport constructs the transport. maxMB caps the total cache weight
@@ -98,20 +142,115 @@ func NewETagTransport(next http.RoundTripper, maxMB int, authToken string) (*ETa
 	}
 
 	h := sha256.Sum256([]byte(authToken))
-	return &ETagTransport{
-		next:     next,
-		cache:    cache,
-		authHash: hex.EncodeToString(h[:authHashCacheKeyBytes]),
-	}, nil
+	t := &ETagTransport{
+		next:       next,
+		cache:      cache,
+		authHash:   hex.EncodeToString(h[:authHashCacheKeyBytes]),
+		saveCh:     make(chan saveJob, saveQueueDepth),
+		writerDone: make(chan struct{}),
+	}
+	var p Persistor = noopPersistor{}
+	t.persistorPtr.Store(&p)
+	go t.runWriter()
+	return t, nil
+}
+
+// SetSession wires in the SDK session store as the persistence backend. Safe
+// to call concurrently; only the first call wins (subsequent calls are no-ops
+// so re-binding can't accidentally clobber an active cache hydrate). The
+// initial LoadAll runs in a goroutine so SetSession returns immediately —
+// requests issued before the load completes simply see cache misses, which is
+// correct (and the same as Phase 1's behavior). Logs warnings on load errors
+// rather than failing; persistence is best-effort.
+func (t *ETagTransport) SetSession(ctx context.Context, ss sessions.SessionStore) {
+	if ss == nil {
+		return
+	}
+	t.sessionOnce.Do(func() {
+		var p Persistor = newSessionPersistor(ss, t.authHash)
+		t.persistorPtr.Store(&p)
+		go t.hydrateFromPersistor(ctx, p)
+	})
+}
+
+// hydrateFromPersistor populates the in-memory Otter cache from the prior
+// sync's persisted entries. Best-effort: errors are logged and the cache
+// simply remains empty.
+func (t *ETagTransport) hydrateFromPersistor(ctx context.Context, p Persistor) {
+	entries, err := p.LoadAll(ctx)
+	if err != nil {
+		ctxzap.Extract(ctx).Warn("baton-github: http-etag-cache hydrate failed",
+			zap.Error(err),
+		)
+		return
+	}
+	for key, entry := range entries {
+		t.cache.Set(key, entry)
+	}
+	ctxzap.Extract(ctx).Info("baton-github: http-etag-cache hydrated",
+		zap.Int("entries", len(entries)),
+	)
+}
+
+// runWriter drains saveCh, persisting each entry. Best-effort: errors are
+// logged and counters incremented; we never retry or block the producer.
+func (t *ETagTransport) runWriter() {
+	defer close(t.writerDone)
+	for job := range t.saveCh {
+		pp := t.persistorPtr.Load()
+		if pp == nil {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), saveOpTimeout)
+		err := (*pp).Save(ctx, job.key, job.entry)
+		cancel()
+		if err != nil {
+			// Persistence is best-effort; don't propagate. Log at Warn so
+			// operators can see chronic failures without flooding Error logs.
+			ctxzap.Extract(ctx).Warn("baton-github: http-etag-cache save failed",
+				zap.String("key", job.key),
+				zap.Error(err),
+			)
+			continue
+		}
+		t.persisted.Add(1)
+	}
+}
+
+// Close drains pending writes (bounded by drainTimeout) so we don't lose
+// in-flight persistence updates on shutdown. Idempotent.
+func (t *ETagTransport) Close(ctx context.Context) error {
+	var closeErr error
+	t.closeOnce.Do(func() {
+		close(t.saveCh)
+		timer := time.NewTimer(drainTimeout)
+		defer timer.Stop()
+		select {
+		case <-t.writerDone:
+			return
+		case <-timer.C:
+			ctxzap.Extract(ctx).Warn("baton-github: http-etag-cache drain timed out",
+				zap.Duration("budget", drainTimeout),
+				zap.Uint64("dropped_writes", t.droppedWrites.Load()),
+			)
+			closeErr = errors.New("etag transport: drain timed out")
+		case <-ctx.Done():
+			closeErr = ctx.Err()
+		}
+	})
+	return closeErr
 }
 
 // Stats returns a snapshot of cumulative counters.
 func (t *ETagTransport) Stats() ETagCacheStats {
 	return ETagCacheStats{
-		Hits304:  t.hits304.Load(),
-		Misses:   t.misses.Load(),
-		Stores:   t.stores.Load(),
-		Bypassed: t.bypassed.Load(),
+		Hits304:          t.hits304.Load(),
+		Misses:           t.misses.Load(),
+		Stores:           t.stores.Load(),
+		Bypassed:         t.bypassed.Load(),
+		OversizedSkipped: t.oversizedSkipped.Load(),
+		DroppedWrites:    t.droppedWrites.Load(),
+		Persisted:        t.persisted.Load(),
 	}
 }
 
@@ -177,14 +316,16 @@ func (t *ETagTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				return nil, closeErr
 			}
 			resp.Body = io.NopCloser(bytes.NewReader(body))
-			t.cache.Set(key, &etagCacheEntry{
+			entry := &etagCacheEntry{
 				ETag:         respETag,
 				LastModified: resp.Header.Get("Last-Modified"),
 				Body:         body,
 				ContentType:  resp.Header.Get("Content-Type"),
 				StoredAt:     time.Now(),
-			})
+			}
+			t.cache.Set(key, entry)
 			t.stores.Add(1)
+			t.enqueueSave(key, entry, len(body))
 		} else {
 			t.misses.Add(1)
 		}
@@ -193,6 +334,23 @@ func (t *ETagTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	t.misses.Add(1)
 	return resp, nil
+}
+
+// enqueueSave hands a freshly-stored entry to the writer goroutine for
+// best-effort persistence. Bodies exceeding persistedMaxEntryBytes are kept in
+// the in-process cache (warm reruns still benefit) but skip persistence so we
+// don't fill the session store with huge payloads. Sends are non-blocking; a
+// full queue is preferable to slowing down the HTTP path.
+func (t *ETagTransport) enqueueSave(key string, entry *etagCacheEntry, bodyLen int) {
+	if bodyLen > persistedMaxEntryBytes {
+		t.oversizedSkipped.Add(1)
+		return
+	}
+	select {
+	case t.saveCh <- saveJob{key: key, entry: entry}:
+	default:
+		t.droppedWrites.Add(1)
+	}
 }
 
 // materializeFromCache returns a synthetic 200 response with the cached body,
@@ -276,6 +434,9 @@ func (t *ETagTransport) LogStats(ctx context.Context) {
 		zap.Uint64("misses", s.Misses),
 		zap.Uint64("stores", s.Stores),
 		zap.Uint64("bypassed_non_get", s.Bypassed),
+		zap.Uint64("persisted", s.Persisted),
+		zap.Uint64("oversized_skipped", s.OversizedSkipped),
+		zap.Uint64("dropped_writes", s.DroppedWrites),
 		zap.Float64("hit_ratio_pct", ratio),
 	)
 }
