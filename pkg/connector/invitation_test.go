@@ -154,7 +154,7 @@ func TestInvitationListPagination(t *testing.T) {
 
 	newBuilder := func(httpClient *http.Client) *invitationResourceType {
 		gh := github.NewClient(httpClient)
-		return invitationBuilder(invitationBuilderParams{
+		return InvitationBuilder(InvitationBuilderParams{
 			client:   gh,
 			orgCache: newOrgNameCache(gh),
 			orgs:     []string{invitationTestOrgLogin},

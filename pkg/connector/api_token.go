@@ -128,7 +128,7 @@ func (o *apiTokenResourceType) List(
 	}, nil
 }
 
-func apiTokenBuilder(client *github.Client, orgCache *orgNameCache) *apiTokenResourceType {
+func APITokenBuilder(client *github.Client, orgCache *orgNameCache) *apiTokenResourceType {
 	return &apiTokenResourceType{
 		resourceType: resourceTypeApiToken,
 		client:       client,

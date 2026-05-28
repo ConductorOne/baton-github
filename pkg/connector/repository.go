@@ -525,7 +525,7 @@ func orgBasePermissionToRepoPermissions(basePerm string) []string {
 	}
 }
 
-func repositoryBuilder(client *github.Client, orgCache *orgNameCache, omitArchivedRepositories bool, directCollaboratorsOnly bool) *repositoryResourceType {
+func RepositoryBuilder(client *github.Client, orgCache *orgNameCache, omitArchivedRepositories bool, directCollaboratorsOnly bool) *repositoryResourceType {
 	return &repositoryResourceType{
 		resourceType:             resourceTypeRepository,
 		client:                   client,

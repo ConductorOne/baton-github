@@ -162,7 +162,7 @@ func licenseResource(enterprise string, purchasedSeats, consumedSeats int64, ent
 	)
 }
 
-func licenseBuilder(
+func LicenseBuilder(
 	customClient *customclient.Client,
 	enterprises []string,
 ) *licenseResourceType {
