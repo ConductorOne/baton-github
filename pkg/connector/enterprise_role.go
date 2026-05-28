@@ -9,7 +9,6 @@ import (
 
 	"github.com/conductorone/baton-github/pkg/customclient"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
-	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -178,18 +177,8 @@ func (o *enterpriseRoleResourceType) Grants(
 }
 
 func EnterpriseRoleBuilder(client *github.Client, appClient *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {
-	annos := annotations.Annotations(resourceTypeEnterpriseRole.GetAnnotations())
-	if len(enterprises) == 0 {
-		annos.Append(&v2.SkipEntitlementsAndGrants{})
-	}
-	rt := &v2.ResourceType{
-		Id:          resourceTypeEnterpriseRole.Id,
-		DisplayName: resourceTypeEnterpriseRole.DisplayName,
-		Traits:      resourceTypeEnterpriseRole.Traits,
-		Annotations: annos,
-	}
 	return &enterpriseRoleResourceType{
-		resourceType:   rt,
+		resourceType:   resourceTypeEnterpriseRole,
 		client:         client,
 		appClient:      appClient,
 		customClient:   customClient,

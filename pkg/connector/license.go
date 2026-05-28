@@ -6,7 +6,6 @@ import (
 
 	"github.com/conductorone/baton-github/pkg/customclient"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
-	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -155,19 +154,8 @@ func LicenseBuilder(
 	customClient *customclient.Client,
 	enterprises []string,
 ) *licenseResourceType {
-	annos := annotations.Annotations(resourceTypeLicense.GetAnnotations())
-	if len(enterprises) == 0 {
-		annos.Append(&v2.SkipEntitlementsAndGrants{})
-	}
-
-	rt := &v2.ResourceType{
-		Id:          resourceTypeLicense.Id,
-		DisplayName: resourceTypeLicense.DisplayName,
-		Traits:      resourceTypeLicense.Traits,
-		Annotations: annos,
-	}
 	return &licenseResourceType{
-		resourceType: rt,
+		resourceType: resourceTypeLicense,
 		customClient: customClient,
 		enterprises:  enterprises,
 	}
