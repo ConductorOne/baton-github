@@ -418,7 +418,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	return nil, nil
 }
 
-func orgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool) *orgResourceType {
+func OrgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool) *orgResourceType {
 	orgMap := make(map[string]struct{})
 
 	for _, o := range orgs {

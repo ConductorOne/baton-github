@@ -520,13 +520,13 @@ func containsLower(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), substr)
 }
 
-type invitationBuilderParams struct {
+type InvitationBuilderParams struct {
 	client   *github.Client
 	orgCache *orgNameCache
 	orgs     []string
 }
 
-func invitationBuilder(p invitationBuilderParams) *invitationResourceType {
+func InvitationBuilder(p InvitationBuilderParams) *invitationResourceType {
 	return &invitationResourceType{
 		client:   p.client,
 		orgCache: p.orgCache,

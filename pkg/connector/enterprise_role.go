@@ -176,7 +176,7 @@ func (o *enterpriseRoleResourceType) Grants(
 	return ret, &resourceSdk.SyncOpResults{}, nil
 }
 
-func enterpriseRoleBuilder(client *github.Client, appClient *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {
+func EnterpriseRoleBuilder(client *github.Client, appClient *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {
 	return &enterpriseRoleResourceType{
 		resourceType:   resourceTypeEnterpriseRole,
 		client:         client,

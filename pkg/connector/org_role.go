@@ -445,7 +445,7 @@ func (o *orgRoleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (anno
 	return nil, nil
 }
 
-func orgRoleBuilder(client *github.Client, orgCache *orgNameCache) *orgRoleResourceType {
+func OrgRoleBuilder(client *github.Client, orgCache *orgNameCache) *orgRoleResourceType {
 	return &orgRoleResourceType{
 		resourceType: resourceTypeOrgRole,
 		client:       client,

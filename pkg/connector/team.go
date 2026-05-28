@@ -375,7 +375,7 @@ func (o *teamResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 	return nil, nil
 }
 
-func teamBuilder(client *github.Client, orgCache *orgNameCache, directCollaboratorsOnly bool) *teamResourceType {
+func TeamBuilder(client *github.Client, orgCache *orgNameCache, directCollaboratorsOnly bool) *teamResourceType {
 	return &teamResourceType{
 		resourceType:            resourceTypeTeam,
 		client:                  client,

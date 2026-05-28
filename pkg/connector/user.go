@@ -358,7 +358,7 @@ func (u *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId
 	return annotations, nil
 }
 
-func userBuilder(client *github.Client, graphqlClient *githubv4.Client, orgCache *orgNameCache, orgs []string, customClient *customclient.Client, enterprises []string) *userResourceType {
+func UserBuilder(client *github.Client, graphqlClient *githubv4.Client, orgCache *orgNameCache, orgs []string, customClient *customclient.Client, enterprises []string) *userResourceType {
 	return &userResourceType{
 		resourceType:  resourceTypeUser,
 		client:        client,

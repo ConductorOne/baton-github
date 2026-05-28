@@ -25,7 +25,7 @@ func TestOrgRole(t *testing.T) {
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
-		client := orgRoleBuilder(githubClient, cache)
+		client := OrgRoleBuilder(githubClient, cache)
 
 		organization, _ := organizationResource(ctx, githubOrganization, nil, true)
 		roleResource, _ := orgRoleResource(ctx, &OrganizationRole{
@@ -93,7 +93,7 @@ func TestOrgRole(t *testing.T) {
 
 		githubClient := github.NewClient(mockGithub.Server())
 		cache := newOrgNameCache(githubClient)
-		client := orgRoleBuilder(githubClient, cache)
+		client := OrgRoleBuilder(githubClient, cache)
 
 		organization, _ := organizationResource(ctx, githubOrganization, nil, true)
 
