@@ -93,6 +93,12 @@ var (
 		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_ROLE},
 		Annotations: skipEntitlementsAnnotations("enterprise_role"),
 	}
+	resourceTypeLicense = &v2.ResourceType{
+		Id:          "license",
+		DisplayName: "License",
+		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_LICENSE_PROFILE},
+		Annotations: skipEntitlementsAnnotations("license"),
+	}
 )
 
 type GitHub struct {
@@ -128,7 +134,10 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	}
 
 	if len(gh.enterprises) > 0 {
-		resourceSyncers = append(resourceSyncers, enterpriseRoleBuilder(gh.client, gh.appClient, gh.customClient, gh.enterprises))
+		resourceSyncers = append(resourceSyncers,
+			enterpriseRoleBuilder(gh.client, gh.appClient, gh.customClient, gh.enterprises),
+			licenseBuilder(gh.customClient, gh.enterprises),
+		)
 	}
 	return resourceSyncers
 }
