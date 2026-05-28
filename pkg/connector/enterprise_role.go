@@ -178,7 +178,7 @@ func (o *enterpriseRoleResourceType) Grants(
 }
 
 func EnterpriseRoleBuilder(client *github.Client, appClient *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {
-	annos := annotations.Annotations(resourceTypeLicense.GetAnnotations())
+	annos := annotations.Annotations(resourceTypeEnterpriseRole.GetAnnotations())
 	if len(enterprises) == 0 {
 		annos.Append(&v2.SkipEntitlementsAndGrants{})
 	}
