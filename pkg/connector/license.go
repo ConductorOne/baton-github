@@ -9,8 +9,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
 )
 
 const (
@@ -37,8 +35,6 @@ func (l *licenseResourceType) List(
 	parentID *v2.ResourceId,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
-	logger := ctxzap.Extract(ctx)
-
 	var ret []*v2.Resource
 	for _, enterprise := range l.enterprises {
 		// total_seats_purchased and total_seats_consumed are enterprise-wide
@@ -46,14 +42,6 @@ func (l *licenseResourceType) List(
 		// first page is enough.
 		consumedLicenses, _, err := l.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, 1)
 		if err != nil {
-			if isPermissionDenied(err) {
-				logger.Debug("baton-github: enterprise features (--enterprises) require a Personal Access Token. "+
-					"GitHub App authentication cannot access the consumed-licenses API. "+
-					"Either switch to PAT auth or remove the --enterprises flag.",
-					zap.String("enterprise", enterprise),
-					zap.Error(err))
-				continue
-			}
 			return nil, nil, fmt.Errorf("baton-github: error listing enterprise consumed licenses for %s: %w", enterprise, err)
 		}
 
