@@ -551,48 +551,6 @@ func bulkPutConnectorObject[T proto.Message](
 	return executeChunkedInsert(ctx, c, tableName, rows, buildQueryFn)
 }
 
-func bulkPutConnectorObjectIfNewer[T proto.Message](
-	ctx context.Context, c *C1File,
-	tableName string,
-	extractFields func(m T) (goqu.Record, error),
-	msgs ...T,
-) error {
-	if len(msgs) == 0 {
-		return nil
-	}
-	ctx, span := tracer.Start(ctx, "C1File.bulkPutConnectorObjectIfNewer")
-	var err error
-	defer func() { uotel.EndSpanWithError(span, err) }()
-
-	err = c.validateSyncDb(ctx)
-	if err != nil {
-		return err
-	}
-
-	// Prepare rows
-	rows, err := prepareConnectorObjectRows(c, msgs, extractFields)
-	if err != nil {
-		return err
-	}
-
-	// Define query building function
-	buildQueryFn := func(insertDs *goqu.InsertDataset, chunkedRows []*goqu.Record) (*goqu.InsertDataset, error) {
-		return insertDs.
-			OnConflict(goqu.DoUpdate("external_id, sync_id",
-				goqu.Record{
-					"data":          goqu.I("EXCLUDED.data"),
-					"discovered_at": goqu.I("EXCLUDED.discovered_at"),
-				}).Where(
-				goqu.L("EXCLUDED.discovered_at > ?.discovered_at", goqu.I(tableName)),
-			)).
-			Rows(chunkedRows).
-			Prepared(true), nil
-	}
-
-	// Execute the insert
-	return executeChunkedInsert(ctx, c, tableName, rows, buildQueryFn)
-}
-
 func (c *C1File) getResourceObject(ctx context.Context, resourceID *v2.ResourceId, m *v2.Resource, syncID string) error {
 	// No span here: this function is always called from C1File.GetResource
 	// which already owns a span. The duplicate emitted one span per
@@ -615,7 +573,7 @@ func (c *C1File) getResourceObject(ctx context.Context, resourceID *v2.ResourceI
 	case c.viewSyncID != "":
 		q = q.Where(goqu.C("sync_id").Eq(c.viewSyncID))
 	default:
-		var latestSyncRun *syncRun
+		var latestSyncRun *SyncRun
 		var err error
 		latestSyncRun, err = c.getFinishedSync(ctx, 0, connectorstore.SyncTypeFull)
 		if err != nil {
@@ -675,7 +633,7 @@ func (c *C1File) getConnectorObject(ctx context.Context, tableName string, id st
 	case c.viewSyncID != "":
 		q = q.Where(goqu.C("sync_id").Eq(c.viewSyncID))
 	default:
-		var latestSyncRun *syncRun
+		var latestSyncRun *SyncRun
 		var err error
 		latestSyncRun, err = c.getFinishedSync(ctx, 0, connectorstore.SyncTypeAny)
 		if err != nil {

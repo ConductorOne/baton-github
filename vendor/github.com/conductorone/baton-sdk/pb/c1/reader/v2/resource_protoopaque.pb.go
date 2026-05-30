@@ -318,6 +318,140 @@ func (b0 ResourcesReaderServiceGetResourceResponse_builder) Build() *ResourcesRe
 	return m0
 }
 
+type ResourcesReaderServiceListResourcesByIdsRequest struct {
+	state                  protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_ResourceIds *[]*v2.ResourceId      `protobuf:"bytes,1,rep,name=resource_ids,json=resourceIds,proto3"`
+	xxx_hidden_Annotations *[]*anypb.Any          `protobuf:"bytes,100,rep,name=annotations,proto3"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *ResourcesReaderServiceListResourcesByIdsRequest) Reset() {
+	*x = ResourcesReaderServiceListResourcesByIdsRequest{}
+	mi := &file_c1_reader_v2_resource_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourcesReaderServiceListResourcesByIdsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourcesReaderServiceListResourcesByIdsRequest) ProtoMessage() {}
+
+func (x *ResourcesReaderServiceListResourcesByIdsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_reader_v2_resource_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ResourcesReaderServiceListResourcesByIdsRequest) GetResourceIds() []*v2.ResourceId {
+	if x != nil {
+		if x.xxx_hidden_ResourceIds != nil {
+			return *x.xxx_hidden_ResourceIds
+		}
+	}
+	return nil
+}
+
+func (x *ResourcesReaderServiceListResourcesByIdsRequest) GetAnnotations() []*anypb.Any {
+	if x != nil {
+		if x.xxx_hidden_Annotations != nil {
+			return *x.xxx_hidden_Annotations
+		}
+	}
+	return nil
+}
+
+func (x *ResourcesReaderServiceListResourcesByIdsRequest) SetResourceIds(v []*v2.ResourceId) {
+	x.xxx_hidden_ResourceIds = &v
+}
+
+func (x *ResourcesReaderServiceListResourcesByIdsRequest) SetAnnotations(v []*anypb.Any) {
+	x.xxx_hidden_Annotations = &v
+}
+
+type ResourcesReaderServiceListResourcesByIdsRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	ResourceIds []*v2.ResourceId
+	Annotations []*anypb.Any
+}
+
+func (b0 ResourcesReaderServiceListResourcesByIdsRequest_builder) Build() *ResourcesReaderServiceListResourcesByIdsRequest {
+	m0 := &ResourcesReaderServiceListResourcesByIdsRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_ResourceIds = &b.ResourceIds
+	x.xxx_hidden_Annotations = &b.Annotations
+	return m0
+}
+
+type ResourcesReaderServiceListResourcesByIdsResponse struct {
+	state           protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_List *[]*v2.Resource        `protobuf:"bytes,1,rep,name=list,proto3"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ResourcesReaderServiceListResourcesByIdsResponse) Reset() {
+	*x = ResourcesReaderServiceListResourcesByIdsResponse{}
+	mi := &file_c1_reader_v2_resource_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourcesReaderServiceListResourcesByIdsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourcesReaderServiceListResourcesByIdsResponse) ProtoMessage() {}
+
+func (x *ResourcesReaderServiceListResourcesByIdsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_reader_v2_resource_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ResourcesReaderServiceListResourcesByIdsResponse) GetList() []*v2.Resource {
+	if x != nil {
+		if x.xxx_hidden_List != nil {
+			return *x.xxx_hidden_List
+		}
+	}
+	return nil
+}
+
+func (x *ResourcesReaderServiceListResourcesByIdsResponse) SetList(v []*v2.Resource) {
+	x.xxx_hidden_List = &v
+}
+
+type ResourcesReaderServiceListResourcesByIdsResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	List []*v2.Resource
+}
+
+func (b0 ResourcesReaderServiceListResourcesByIdsResponse_builder) Build() *ResourcesReaderServiceListResourcesByIdsResponse {
+	m0 := &ResourcesReaderServiceListResourcesByIdsResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_List = &b.List
+	return m0
+}
+
 var File_c1_reader_v2_resource_proto protoreflect.FileDescriptor
 
 const file_c1_reader_v2_resource_proto_rawDesc = "" +
@@ -333,38 +467,51 @@ const file_c1_reader_v2_resource_proto_rawDesc = "" +
 	"resourceId\x126\n" +
 	"\vannotations\x18\x02 \x03(\v2\x14.google.protobuf.AnyR\vannotations\"b\n" +
 	")ResourcesReaderServiceGetResourceResponse\x125\n" +
-	"\bresource\x18\x01 \x01(\v2\x19.c1.connector.v2.ResourceR\bresource2\xb1\x01\n" +
+	"\bresource\x18\x01 \x01(\v2\x19.c1.connector.v2.ResourceR\bresource\"\xb4\x01\n" +
+	"/ResourcesReaderServiceListResourcesByIdsRequest\x12I\n" +
+	"\fresource_ids\x18\x01 \x03(\v2\x1b.c1.connector.v2.ResourceIdB\t\xfaB\x06\x92\x01\x03\x10\x80\bR\vresourceIds\x126\n" +
+	"\vannotations\x18d \x03(\v2\x14.google.protobuf.AnyR\vannotations\"a\n" +
+	"0ResourcesReaderServiceListResourcesByIdsResponse\x12-\n" +
+	"\x04list\x18\x01 \x03(\v2\x19.c1.connector.v2.ResourceR\x04list2\xb1\x01\n" +
 	"\x1aResourceTypesReaderService\x12\x92\x01\n" +
-	"\x0fGetResourceType\x12>.c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeRequest\x1a?.c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeResponse2\x98\x01\n" +
+	"\x0fGetResourceType\x12>.c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeRequest\x1a?.c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeResponse2\xae\x02\n" +
 	"\x16ResourcesReaderService\x12~\n" +
-	"\vGetResource\x126.c1.reader.v2.ResourcesReaderServiceGetResourceRequest\x1a7.c1.reader.v2.ResourcesReaderServiceGetResourceResponseB3Z1github.com/conductorone/baton-sdk/pb/c1/reader/v2b\x06proto3"
+	"\vGetResource\x126.c1.reader.v2.ResourcesReaderServiceGetResourceRequest\x1a7.c1.reader.v2.ResourcesReaderServiceGetResourceResponse\x12\x93\x01\n" +
+	"\x12ListResourcesByIds\x12=.c1.reader.v2.ResourcesReaderServiceListResourcesByIdsRequest\x1a>.c1.reader.v2.ResourcesReaderServiceListResourcesByIdsResponseB3Z1github.com/conductorone/baton-sdk/pb/c1/reader/v2b\x06proto3"
 
-var file_c1_reader_v2_resource_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_c1_reader_v2_resource_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_c1_reader_v2_resource_proto_goTypes = []any{
 	(*ResourceTypesReaderServiceGetResourceTypeRequest)(nil),  // 0: c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeRequest
 	(*ResourceTypesReaderServiceGetResourceTypeResponse)(nil), // 1: c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeResponse
 	(*ResourcesReaderServiceGetResourceRequest)(nil),          // 2: c1.reader.v2.ResourcesReaderServiceGetResourceRequest
 	(*ResourcesReaderServiceGetResourceResponse)(nil),         // 3: c1.reader.v2.ResourcesReaderServiceGetResourceResponse
-	(*anypb.Any)(nil),       // 4: google.protobuf.Any
-	(*v2.ResourceType)(nil), // 5: c1.connector.v2.ResourceType
-	(*v2.ResourceId)(nil),   // 6: c1.connector.v2.ResourceId
-	(*v2.Resource)(nil),     // 7: c1.connector.v2.Resource
+	(*ResourcesReaderServiceListResourcesByIdsRequest)(nil),   // 4: c1.reader.v2.ResourcesReaderServiceListResourcesByIdsRequest
+	(*ResourcesReaderServiceListResourcesByIdsResponse)(nil),  // 5: c1.reader.v2.ResourcesReaderServiceListResourcesByIdsResponse
+	(*anypb.Any)(nil),       // 6: google.protobuf.Any
+	(*v2.ResourceType)(nil), // 7: c1.connector.v2.ResourceType
+	(*v2.ResourceId)(nil),   // 8: c1.connector.v2.ResourceId
+	(*v2.Resource)(nil),     // 9: c1.connector.v2.Resource
 }
 var file_c1_reader_v2_resource_proto_depIdxs = []int32{
-	4, // 0: c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeRequest.annotations:type_name -> google.protobuf.Any
-	5, // 1: c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeResponse.resource_type:type_name -> c1.connector.v2.ResourceType
-	6, // 2: c1.reader.v2.ResourcesReaderServiceGetResourceRequest.resource_id:type_name -> c1.connector.v2.ResourceId
-	4, // 3: c1.reader.v2.ResourcesReaderServiceGetResourceRequest.annotations:type_name -> google.protobuf.Any
-	7, // 4: c1.reader.v2.ResourcesReaderServiceGetResourceResponse.resource:type_name -> c1.connector.v2.Resource
-	0, // 5: c1.reader.v2.ResourceTypesReaderService.GetResourceType:input_type -> c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeRequest
-	2, // 6: c1.reader.v2.ResourcesReaderService.GetResource:input_type -> c1.reader.v2.ResourcesReaderServiceGetResourceRequest
-	1, // 7: c1.reader.v2.ResourceTypesReaderService.GetResourceType:output_type -> c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeResponse
-	3, // 8: c1.reader.v2.ResourcesReaderService.GetResource:output_type -> c1.reader.v2.ResourcesReaderServiceGetResourceResponse
-	7, // [7:9] is the sub-list for method output_type
-	5, // [5:7] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	6,  // 0: c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeRequest.annotations:type_name -> google.protobuf.Any
+	7,  // 1: c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeResponse.resource_type:type_name -> c1.connector.v2.ResourceType
+	8,  // 2: c1.reader.v2.ResourcesReaderServiceGetResourceRequest.resource_id:type_name -> c1.connector.v2.ResourceId
+	6,  // 3: c1.reader.v2.ResourcesReaderServiceGetResourceRequest.annotations:type_name -> google.protobuf.Any
+	9,  // 4: c1.reader.v2.ResourcesReaderServiceGetResourceResponse.resource:type_name -> c1.connector.v2.Resource
+	8,  // 5: c1.reader.v2.ResourcesReaderServiceListResourcesByIdsRequest.resource_ids:type_name -> c1.connector.v2.ResourceId
+	6,  // 6: c1.reader.v2.ResourcesReaderServiceListResourcesByIdsRequest.annotations:type_name -> google.protobuf.Any
+	9,  // 7: c1.reader.v2.ResourcesReaderServiceListResourcesByIdsResponse.list:type_name -> c1.connector.v2.Resource
+	0,  // 8: c1.reader.v2.ResourceTypesReaderService.GetResourceType:input_type -> c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeRequest
+	2,  // 9: c1.reader.v2.ResourcesReaderService.GetResource:input_type -> c1.reader.v2.ResourcesReaderServiceGetResourceRequest
+	4,  // 10: c1.reader.v2.ResourcesReaderService.ListResourcesByIds:input_type -> c1.reader.v2.ResourcesReaderServiceListResourcesByIdsRequest
+	1,  // 11: c1.reader.v2.ResourceTypesReaderService.GetResourceType:output_type -> c1.reader.v2.ResourceTypesReaderServiceGetResourceTypeResponse
+	3,  // 12: c1.reader.v2.ResourcesReaderService.GetResource:output_type -> c1.reader.v2.ResourcesReaderServiceGetResourceResponse
+	5,  // 13: c1.reader.v2.ResourcesReaderService.ListResourcesByIds:output_type -> c1.reader.v2.ResourcesReaderServiceListResourcesByIdsResponse
+	11, // [11:14] is the sub-list for method output_type
+	8,  // [8:11] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_c1_reader_v2_resource_proto_init() }
@@ -378,7 +525,7 @@ func file_c1_reader_v2_resource_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_c1_reader_v2_resource_proto_rawDesc), len(file_c1_reader_v2_resource_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

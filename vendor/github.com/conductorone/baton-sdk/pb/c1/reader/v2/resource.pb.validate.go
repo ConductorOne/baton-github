@@ -640,3 +640,340 @@ var _ interface {
 	Cause() error
 	ErrorName() string
 } = ResourcesReaderServiceGetResourceResponseValidationError{}
+
+// Validate checks the field values on
+// ResourcesReaderServiceListResourcesByIdsRequest with the rules defined in
+// the proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *ResourcesReaderServiceListResourcesByIdsRequest) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on
+// ResourcesReaderServiceListResourcesByIdsRequest with the rules defined in
+// the proto definition for this message. If any rules are violated, the
+// result is a list of violation errors wrapped in
+// ResourcesReaderServiceListResourcesByIdsRequestMultiError, or nil if none found.
+func (m *ResourcesReaderServiceListResourcesByIdsRequest) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *ResourcesReaderServiceListResourcesByIdsRequest) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if len(m.GetResourceIds()) > 1024 {
+		err := ResourcesReaderServiceListResourcesByIdsRequestValidationError{
+			field:  "ResourceIds",
+			reason: "value must contain no more than 1024 item(s)",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	for idx, item := range m.GetResourceIds() {
+		_, _ = idx, item
+
+		if all {
+			switch v := interface{}(item).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, ResourcesReaderServiceListResourcesByIdsRequestValidationError{
+						field:  fmt.Sprintf("ResourceIds[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, ResourcesReaderServiceListResourcesByIdsRequestValidationError{
+						field:  fmt.Sprintf("ResourceIds[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(item).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return ResourcesReaderServiceListResourcesByIdsRequestValidationError{
+					field:  fmt.Sprintf("ResourceIds[%v]", idx),
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	}
+
+	for idx, item := range m.GetAnnotations() {
+		_, _ = idx, item
+
+		if all {
+			switch v := interface{}(item).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, ResourcesReaderServiceListResourcesByIdsRequestValidationError{
+						field:  fmt.Sprintf("Annotations[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, ResourcesReaderServiceListResourcesByIdsRequestValidationError{
+						field:  fmt.Sprintf("Annotations[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(item).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return ResourcesReaderServiceListResourcesByIdsRequestValidationError{
+					field:  fmt.Sprintf("Annotations[%v]", idx),
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	}
+
+	if len(errors) > 0 {
+		return ResourcesReaderServiceListResourcesByIdsRequestMultiError(errors)
+	}
+
+	return nil
+}
+
+// ResourcesReaderServiceListResourcesByIdsRequestMultiError is an error
+// wrapping multiple validation errors returned by
+// ResourcesReaderServiceListResourcesByIdsRequest.ValidateAll() if the
+// designated constraints aren't met.
+type ResourcesReaderServiceListResourcesByIdsRequestMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m ResourcesReaderServiceListResourcesByIdsRequestMultiError) Error() string {
+	msgs := make([]string, 0, len(m))
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m ResourcesReaderServiceListResourcesByIdsRequestMultiError) AllErrors() []error { return m }
+
+// ResourcesReaderServiceListResourcesByIdsRequestValidationError is the
+// validation error returned by
+// ResourcesReaderServiceListResourcesByIdsRequest.Validate if the designated
+// constraints aren't met.
+type ResourcesReaderServiceListResourcesByIdsRequestValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e ResourcesReaderServiceListResourcesByIdsRequestValidationError) Field() string {
+	return e.field
+}
+
+// Reason function returns reason value.
+func (e ResourcesReaderServiceListResourcesByIdsRequestValidationError) Reason() string {
+	return e.reason
+}
+
+// Cause function returns cause value.
+func (e ResourcesReaderServiceListResourcesByIdsRequestValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e ResourcesReaderServiceListResourcesByIdsRequestValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e ResourcesReaderServiceListResourcesByIdsRequestValidationError) ErrorName() string {
+	return "ResourcesReaderServiceListResourcesByIdsRequestValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e ResourcesReaderServiceListResourcesByIdsRequestValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sResourcesReaderServiceListResourcesByIdsRequest.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = ResourcesReaderServiceListResourcesByIdsRequestValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = ResourcesReaderServiceListResourcesByIdsRequestValidationError{}
+
+// Validate checks the field values on
+// ResourcesReaderServiceListResourcesByIdsResponse with the rules defined in
+// the proto definition for this message. If any rules are violated, the first
+// error encountered is returned, or nil if there are no violations.
+func (m *ResourcesReaderServiceListResourcesByIdsResponse) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on
+// ResourcesReaderServiceListResourcesByIdsResponse with the rules defined in
+// the proto definition for this message. If any rules are violated, the
+// result is a list of violation errors wrapped in
+// ResourcesReaderServiceListResourcesByIdsResponseMultiError, or nil if none found.
+func (m *ResourcesReaderServiceListResourcesByIdsResponse) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *ResourcesReaderServiceListResourcesByIdsResponse) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	for idx, item := range m.GetList() {
+		_, _ = idx, item
+
+		if all {
+			switch v := interface{}(item).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, ResourcesReaderServiceListResourcesByIdsResponseValidationError{
+						field:  fmt.Sprintf("List[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, ResourcesReaderServiceListResourcesByIdsResponseValidationError{
+						field:  fmt.Sprintf("List[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(item).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return ResourcesReaderServiceListResourcesByIdsResponseValidationError{
+					field:  fmt.Sprintf("List[%v]", idx),
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	}
+
+	if len(errors) > 0 {
+		return ResourcesReaderServiceListResourcesByIdsResponseMultiError(errors)
+	}
+
+	return nil
+}
+
+// ResourcesReaderServiceListResourcesByIdsResponseMultiError is an error
+// wrapping multiple validation errors returned by
+// ResourcesReaderServiceListResourcesByIdsResponse.ValidateAll() if the
+// designated constraints aren't met.
+type ResourcesReaderServiceListResourcesByIdsResponseMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m ResourcesReaderServiceListResourcesByIdsResponseMultiError) Error() string {
+	msgs := make([]string, 0, len(m))
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m ResourcesReaderServiceListResourcesByIdsResponseMultiError) AllErrors() []error { return m }
+
+// ResourcesReaderServiceListResourcesByIdsResponseValidationError is the
+// validation error returned by
+// ResourcesReaderServiceListResourcesByIdsResponse.Validate if the designated
+// constraints aren't met.
+type ResourcesReaderServiceListResourcesByIdsResponseValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e ResourcesReaderServiceListResourcesByIdsResponseValidationError) Field() string {
+	return e.field
+}
+
+// Reason function returns reason value.
+func (e ResourcesReaderServiceListResourcesByIdsResponseValidationError) Reason() string {
+	return e.reason
+}
+
+// Cause function returns cause value.
+func (e ResourcesReaderServiceListResourcesByIdsResponseValidationError) Cause() error {
+	return e.cause
+}
+
+// Key function returns key value.
+func (e ResourcesReaderServiceListResourcesByIdsResponseValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e ResourcesReaderServiceListResourcesByIdsResponseValidationError) ErrorName() string {
+	return "ResourcesReaderServiceListResourcesByIdsResponseValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e ResourcesReaderServiceListResourcesByIdsResponseValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sResourcesReaderServiceListResourcesByIdsResponse.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = ResourcesReaderServiceListResourcesByIdsResponseValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = ResourcesReaderServiceListResourcesByIdsResponseValidationError{}

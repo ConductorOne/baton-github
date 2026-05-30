@@ -3,9 +3,9 @@ package dotc1z
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,7 +39,8 @@ create table if not exists %s (
     parent_sync_id text not null default '',
     linked_sync_id text not null default '',
     supports_diff integer not null default 0,
-    grants_backfilled integer not null default 0
+    grants_backfilled integer not null default 0,
+		stats text
 );
 create unique index if not exists %s on %s (sync_id);`
 
@@ -128,24 +129,23 @@ func (r *syncRunsTable) Migrations(ctx context.Context, db *goqu.Database) (bool
 		migrated = true
 	}
 
-	return migrated, nil
-}
+	// Add stats column so we can store the cached stats.
+	_, err = db.ExecContext(ctx, fmt.Sprintf("alter table %s add column stats text", r.Name()))
+	if err != nil {
+		if !isAlreadyExistsError(err) {
+			return false, err
+		}
+	} else {
+		migrated = true
+	}
 
-type syncRun struct {
-	ID           string
-	StartedAt    *time.Time
-	EndedAt      *time.Time
-	SyncToken    string
-	Type         connectorstore.SyncType
-	ParentSyncID string
-	LinkedSyncID string
-	SupportsDiff bool
+	return migrated, nil
 }
 
 // getCachedViewSyncRun returns the cached sync run for read operations.
 // This avoids N+1 queries when paginating through listConnectorObjects.
 // The cache is invalidated when a sync starts or ends.
-func (c *C1File) getCachedViewSyncRun(ctx context.Context) (*syncRun, error) {
+func (c *C1File) getCachedViewSyncRun(ctx context.Context) (*SyncRun, error) {
 	ctx, span := tracer.Start(ctx, "C1File.getCachedViewSyncRun")
 	var err error
 	defer func() { uotel.EndSpanWithError(span, err) }()
@@ -179,7 +179,7 @@ func (c *C1File) invalidateCachedViewSyncRun() {
 	c.cachedViewSyncErr = nil
 }
 
-func (c *C1File) getLatestUnfinishedSync(ctx context.Context, syncType connectorstore.SyncType) (*syncRun, error) {
+func (c *C1File) getLatestUnfinishedSync(ctx context.Context, syncType connectorstore.SyncType) (*SyncRun, error) {
 	ctx, span := tracer.Start(ctx, "C1File.getLatestUnfinishedSync")
 	var err error
 	defer func() { uotel.EndSpanWithError(span, err) }()
@@ -191,9 +191,9 @@ func (c *C1File) getLatestUnfinishedSync(ctx context.Context, syncType connector
 
 	// Don't resume syncs that started over a week ago
 	oneWeekAgo := time.Now().AddDate(0, 0, -7)
-	ret := &syncRun{}
+	ret := &SyncRun{}
 	q := c.db.From(syncRuns.Name())
-	q = q.Select("sync_id", "started_at", "ended_at", "sync_token", "sync_type", "parent_sync_id", "linked_sync_id", "supports_diff")
+	q = q.Select("sync_id", "started_at", "ended_at", "sync_token", "sync_type", "parent_sync_id", "linked_sync_id", "supports_diff", "stats")
 	q = q.Where(goqu.C("ended_at").IsNull())
 	q = q.Where(goqu.C("started_at").Gte(oneWeekAgo))
 	q = q.Order(goqu.C("started_at").Desc())
@@ -208,8 +208,8 @@ func (c *C1File) getLatestUnfinishedSync(ctx context.Context, syncType connector
 	}
 
 	row := c.db.QueryRowContext(ctx, query, args...)
-
-	err = row.Scan(&ret.ID, &ret.StartedAt, &ret.EndedAt, &ret.SyncToken, &ret.Type, &ret.ParentSyncID, &ret.LinkedSyncID, &ret.SupportsDiff)
+	statsBytes := &[]byte{}
+	err = row.Scan(&ret.ID, &ret.StartedAt, &ret.EndedAt, &ret.SyncToken, &ret.Type, &ret.ParentSyncID, &ret.LinkedSyncID, &ret.SupportsDiff, &statsBytes)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -217,10 +217,12 @@ func (c *C1File) getLatestUnfinishedSync(ctx context.Context, syncType connector
 		return nil, err
 	}
 
+	ret.Stats = parseStats(ctx, statsBytes)
+
 	return ret, nil
 }
 
-func (c *C1File) getFinishedSync(ctx context.Context, offset uint, syncType connectorstore.SyncType) (*syncRun, error) {
+func (c *C1File) getFinishedSync(ctx context.Context, offset uint, syncType connectorstore.SyncType) (*SyncRun, error) {
 	ctx, span := tracer.Start(ctx, "C1File.getFinishedSync")
 	var err error
 	defer func() { uotel.EndSpanWithError(span, err) }()
@@ -235,14 +237,18 @@ func (c *C1File) getFinishedSync(ctx context.Context, offset uint, syncType conn
 		return nil, status.Errorf(codes.InvalidArgument, "invalid sync type: %s", syncType)
 	}
 
-	ret := &syncRun{}
+	ret := &SyncRun{}
 	q := c.db.From(syncRuns.Name())
-	q = q.Select("sync_id", "started_at", "ended_at", "sync_token", "sync_type", "parent_sync_id", "linked_sync_id", "supports_diff")
+	q = q.Select("sync_id", "started_at", "ended_at", "sync_token", "sync_type", "parent_sync_id", "linked_sync_id", "supports_diff", "stats")
 	q = q.Where(goqu.C("ended_at").IsNotNull())
 	if syncType != connectorstore.SyncTypeAny {
 		q = q.Where(goqu.C("sync_type").Eq(syncType))
 	}
-	q = q.Order(goqu.C("ended_at").Desc())
+	// Tiebreak on sync_id when ended_at ties — Windows can have
+	// coarser-than-nanosecond time resolution, so two adjacent
+	// EndSync calls can produce identical ended_at strings. sync_ids
+	// are KSUIDs (timestamp-sortable) so DESC picks the later one.
+	q = q.Order(goqu.C("ended_at").Desc(), goqu.C("sync_id").Desc())
 	q = q.Limit(1)
 
 	if offset != 0 {
@@ -255,8 +261,8 @@ func (c *C1File) getFinishedSync(ctx context.Context, offset uint, syncType conn
 	}
 
 	row := c.db.QueryRowContext(ctx, query, args...)
-
-	err = row.Scan(&ret.ID, &ret.StartedAt, &ret.EndedAt, &ret.SyncToken, &ret.Type, &ret.ParentSyncID, &ret.LinkedSyncID, &ret.SupportsDiff)
+	statsBytes := &[]byte{}
+	err = row.Scan(&ret.ID, &ret.StartedAt, &ret.EndedAt, &ret.SyncToken, &ret.Type, &ret.ParentSyncID, &ret.LinkedSyncID, &ret.SupportsDiff, &statsBytes)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -264,10 +270,26 @@ func (c *C1File) getFinishedSync(ctx context.Context, offset uint, syncType conn
 		return nil, err
 	}
 
+	ret.Stats = parseStats(ctx, statsBytes)
+
 	return ret, nil
 }
 
-func (c *C1File) ListSyncRuns(ctx context.Context, pageToken string, pageSize uint32) ([]*syncRun, string, error) {
+func parseStats(ctx context.Context, statsBytes *[]byte) *reader_v2.SyncStats {
+	if statsBytes == nil || len(*statsBytes) == 0 {
+		return nil
+	}
+	ret := &reader_v2.SyncStats{}
+	err := json.Unmarshal(*statsBytes, ret)
+	if err != nil {
+		// Ignore error parsing stats. We will recalculate them if Stats() is called.
+		ctxzap.Extract(ctx).Warn("error parsing stats", zap.Error(err))
+		return nil
+	}
+	return ret
+}
+
+func (c *C1File) ListSyncRuns(ctx context.Context, pageToken string, pageSize uint32) ([]*SyncRun, string, error) {
 	ctx, span := tracer.Start(ctx, "C1File.ListSyncRuns")
 	var err error
 	defer func() { uotel.EndSpanWithError(span, err) }()
@@ -278,7 +300,7 @@ func (c *C1File) ListSyncRuns(ctx context.Context, pageToken string, pageSize ui
 	}
 
 	q := c.db.From(syncRuns.Name()).Prepared(true)
-	q = q.Select("id", "sync_id", "started_at", "ended_at", "sync_token", "sync_type", "parent_sync_id", "linked_sync_id", "supports_diff")
+	q = q.Select("id", "sync_id", "started_at", "ended_at", "sync_token", "sync_type", "parent_sync_id", "linked_sync_id", "supports_diff", "stats")
 
 	if pageToken != "" {
 		q = q.Where(goqu.C("id").Gte(pageToken))
@@ -291,7 +313,7 @@ func (c *C1File) ListSyncRuns(ctx context.Context, pageToken string, pageSize ui
 	q = q.Order(goqu.C("id").Asc())
 	q = q.Limit(uint(pageSize + 1))
 
-	var ret []*syncRun
+	var ret []*SyncRun
 
 	query, args, err := q.ToSQL()
 	if err != nil {
@@ -311,12 +333,15 @@ func (c *C1File) ListSyncRuns(ctx context.Context, pageToken string, pageSize ui
 		if count > pageSize {
 			break
 		}
+		statsBytes := &[]byte{}
 		rowId := 0
-		data := &syncRun{}
-		err := rows.Scan(&rowId, &data.ID, &data.StartedAt, &data.EndedAt, &data.SyncToken, &data.Type, &data.ParentSyncID, &data.LinkedSyncID, &data.SupportsDiff)
+		data := &SyncRun{}
+		err := rows.Scan(&rowId, &data.ID, &data.StartedAt, &data.EndedAt, &data.SyncToken, &data.Type, &data.ParentSyncID, &data.LinkedSyncID, &data.SupportsDiff, &statsBytes)
 		if err != nil {
 			return nil, "", err
 		}
+
+		data.Stats = parseStats(ctx, statsBytes)
 		lastRow = rowId
 		ret = append(ret, data)
 	}
@@ -393,7 +418,7 @@ func (c *C1File) LatestFinishedSyncID(ctx context.Context, syncType connectorsto
 	return s.ID, nil
 }
 
-func (c *C1File) getSync(ctx context.Context, syncID string) (*syncRun, error) {
+func (c *C1File) getSync(ctx context.Context, syncID string) (*SyncRun, error) {
 	ctx, span := tracer.Start(ctx, "C1File.getSync")
 	var err error
 	defer func() { uotel.EndSpanWithError(span, err) }()
@@ -403,10 +428,10 @@ func (c *C1File) getSync(ctx context.Context, syncID string) (*syncRun, error) {
 		return nil, err
 	}
 
-	ret := &syncRun{}
+	ret := &SyncRun{}
 
 	q := c.db.From(syncRuns.Name())
-	q = q.Select("sync_id", "started_at", "ended_at", "sync_token", "sync_type", "parent_sync_id", "linked_sync_id", "supports_diff")
+	q = q.Select("sync_id", "started_at", "ended_at", "sync_token", "sync_type", "parent_sync_id", "linked_sync_id", "supports_diff", "stats")
 	q = q.Where(goqu.C("sync_id").Eq(syncID))
 
 	query, args, err := q.ToSQL()
@@ -414,15 +439,18 @@ func (c *C1File) getSync(ctx context.Context, syncID string) (*syncRun, error) {
 		return nil, err
 	}
 	row := c.db.QueryRowContext(ctx, query, args...)
-	err = row.Scan(&ret.ID, &ret.StartedAt, &ret.EndedAt, &ret.SyncToken, &ret.Type, &ret.ParentSyncID, &ret.LinkedSyncID, &ret.SupportsDiff)
+	var statsBytes *[]byte
+	err = row.Scan(&ret.ID, &ret.StartedAt, &ret.EndedAt, &ret.SyncToken, &ret.Type, &ret.ParentSyncID, &ret.LinkedSyncID, &ret.SupportsDiff, &statsBytes)
 	if err != nil {
 		return nil, err
 	}
 
+	ret.Stats = parseStats(ctx, statsBytes)
+
 	return ret, nil
 }
 
-func (c *C1File) getCurrentSync(ctx context.Context) (*syncRun, error) {
+func (c *C1File) getCurrentSync(ctx context.Context) (*SyncRun, error) {
 	ctx, span := tracer.Start(ctx, "C1File.getCurrentSync")
 	var err error
 	defer func() { uotel.EndSpanWithError(span, err) }()
@@ -709,6 +737,16 @@ func (c *C1File) endSyncRun(ctx context.Context, syncID string) error {
 	}
 	c.dbUpdated = true
 
+	// Run stats to generate and save the cached stats.
+	_, _, statsErr := c.stats(ctx, connectorstore.SyncTypeAny, syncID)
+	if statsErr != nil {
+		// Ignore stats error. We will recalculate them if Stats() is called.
+		ctxzap.Extract(ctx).Warn("c1z: error calculating & saving stats",
+			zap.Error(statsErr),
+			zap.String("sync_id", syncID),
+		)
+	}
+
 	return nil
 }
 
@@ -772,7 +810,7 @@ func (c *C1File) Cleanup(ctx context.Context) error {
 		return nil
 	}
 
-	if skipCleanup, _ := strconv.ParseBool(os.Getenv("BATON_SKIP_CLEANUP")); skipCleanup {
+	if CleanupSkippedByEnv() {
 		l.Info("BATON_SKIP_CLEANUP is set, skipping cleanup of old syncs")
 		return nil
 	}
@@ -782,135 +820,36 @@ func (c *C1File) Cleanup(ctx context.Context) error {
 		return err
 	}
 
-	var fullSyncs []*syncRun
-	var partials []*syncRun
-	var diffSyncs []*syncRun
-
+	var candidates []SyncRun
 	pageToken := ""
 	for {
 		runs, nextPageToken, err := c.ListSyncRuns(ctx, pageToken, 100)
 		if err != nil {
 			return wrapSqliteInterruptError(err)
 		}
-
 		for _, sr := range runs {
-			if sr.EndedAt == nil || sr.ID == c.currentSyncID {
-				continue
-			}
-			switch sr.Type {
-			case connectorstore.SyncTypePartial, connectorstore.SyncTypeResourcesOnly:
-				partials = append(partials, sr)
-			case connectorstore.SyncTypePartialUpserts, connectorstore.SyncTypePartialDeletions:
-				diffSyncs = append(diffSyncs, sr)
-			default:
-				fullSyncs = append(fullSyncs, sr)
-			}
+			candidates = append(candidates, *sr)
 		}
-
 		if nextPageToken == "" {
 			break
 		}
 		pageToken = nextPageToken
 	}
 
-	syncLimit := 2
-
-	if c.syncLimit > 0 {
-		syncLimit = c.syncLimit
-	} else if customSyncLimit, err := strconv.ParseInt(os.Getenv("BATON_KEEP_SYNC_COUNT"), 10, 64); err == nil && customSyncLimit > 0 {
-		syncLimit = int(customSyncLimit)
-	}
-	if c.currentSyncID != "" && syncLimit > 0 {
-		syncLimit-- // Count the current sync against the limit.
-	}
-
+	syncLimit := ResolveCleanupSyncLimit(c.syncLimit, c.currentSyncID != "")
 	l.Debug("found syncs",
-		zap.Int("full_count", len(fullSyncs)),
-		zap.Int("partial_count", len(partials)),
-		zap.Int("diff_count", len(diffSyncs)),
+		zap.Int("candidate_count", len(candidates)),
 		zap.Int("sync_limit", syncLimit))
 
-	// Clean up old full syncs beyond the limit
-	if len(fullSyncs) > syncLimit {
-		l.Info("Cleaning up old sync data...", zap.Int("full_sync_count", len(fullSyncs)), zap.Int("sync_limit", syncLimit))
-		for i := 0; i < len(fullSyncs)-syncLimit; i++ {
-			err = c.DeleteSyncRun(ctx, fullSyncs[i].ID)
-			if err != nil {
-				return wrapSqliteInterruptError(err)
-			}
-			l.Info("Removed old sync data.", zap.String("sync_date", fullSyncs[i].EndedAt.Format(time.RFC3339)), zap.String("sync_id", fullSyncs[i].ID))
-		}
-
-		// Delete partial syncs that ended before the earliest-kept full sync started
-		earliestKeptSyncIndex := len(fullSyncs) - syncLimit
-		if c.currentSyncID != "" {
-			earliestKeptSyncIndex--
-		}
-		earliestKeptSync := fullSyncs[earliestKeptSyncIndex]
-		l.Debug("Earliest kept sync", zap.String("sync_id", earliestKeptSync.ID), zap.Time("started_at", *earliestKeptSync.StartedAt))
-
-		for _, partial := range partials {
-			if partial.EndedAt != nil && partial.EndedAt.Before(*earliestKeptSync.StartedAt) {
-				err = c.DeleteSyncRun(ctx, partial.ID)
-				if err != nil {
-					return wrapSqliteInterruptError(err)
-				}
-				l.Info("Removed partial sync that ended before earliest kept sync.",
-					zap.String("partial_sync_end", partial.EndedAt.Format(time.RFC3339)),
-					zap.String("earliest_kept_sync_start", earliestKeptSync.StartedAt.Format(time.RFC3339)),
-					zap.String("sync_id", partial.ID))
-			}
-		}
+	toDelete := SelectSyncsToDelete(candidates, c.currentSyncID, syncLimit)
+	if len(toDelete) > 0 {
+		l.Info("Cleaning up old sync data...", zap.Int("delete_count", len(toDelete)), zap.Int("sync_limit", syncLimit))
 	}
-
-	// Clean up old diff syncs - keep only the most recent diff sync (upserts or deletions) and its linked pair (if present)
-	if len(diffSyncs) > 2 {
-		// Build a map for quick lookup by ID
-		syncByID := make(map[string]*syncRun)
-		for _, ds := range diffSyncs {
-			syncByID[ds.ID] = ds
+	for _, id := range toDelete {
+		if err := c.DeleteSyncRun(ctx, id); err != nil {
+			return wrapSqliteInterruptError(err)
 		}
-
-		// Determine which syncs to keep. diffSyncs are ordered by row id (ascending),
-		// so the last element is the most recently created diff sync.
-		keepIDs := make(map[string]bool)
-		latestDiff := diffSyncs[len(diffSyncs)-1]
-		keepIDs[latestDiff.ID] = true
-		l.Debug("keeping latest diff sync",
-			zap.String("sync_id", latestDiff.ID),
-			zap.String("sync_type", string(latestDiff.Type)))
-
-		// Also keep its linked pair if it exists.
-		// NOTE: We intentionally do NOT require a bidirectional link; if the latest diff sync exists,
-		// it's better to keep it and best-effort keep its linked partner (if present).
-		if latestDiff.LinkedSyncID != "" {
-			if linkedSync := syncByID[latestDiff.LinkedSyncID]; linkedSync != nil {
-				keepIDs[linkedSync.ID] = true
-				l.Debug("keeping linked diff sync",
-					zap.String("sync_id", linkedSync.ID),
-					zap.String("sync_type", string(linkedSync.Type)))
-				if linkedSync.LinkedSyncID != latestDiff.ID {
-					l.Warn("diff sync link is not bidirectional",
-						zap.String("sync_id", latestDiff.ID),
-						zap.String("linked_sync_id", latestDiff.LinkedSyncID),
-						zap.String("linked_sync_linked_sync_id", linkedSync.LinkedSyncID))
-				}
-			}
-		}
-
-		// Delete all diff syncs except the ones we're keeping
-		for _, ds := range diffSyncs {
-			if keepIDs[ds.ID] {
-				continue
-			}
-			err = c.DeleteSyncRun(ctx, ds.ID)
-			if err != nil {
-				return wrapSqliteInterruptError(err)
-			}
-			l.Info("Removed old diff sync.",
-				zap.String("sync_type", string(ds.Type)),
-				zap.String("sync_id", ds.ID))
-		}
+		l.Info("Removed old sync data.", zap.String("sync_id", id))
 	}
 
 	l.Debug("vacuuming database")
@@ -1021,6 +960,7 @@ func (c *C1File) GetSync(ctx context.Context, request *reader_v2.SyncsReaderServ
 			SyncToken:    sr.SyncToken,
 			SyncType:     string(sr.Type),
 			ParentSyncId: sr.ParentSyncID,
+			Stats:        sr.Stats,
 		}.Build(),
 	}.Build(), nil
 }
