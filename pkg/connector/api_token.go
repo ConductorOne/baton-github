@@ -15,6 +15,8 @@ func apiTokenResource(ctx context.Context, token *github.PersonalAccessToken) (*
 
 	options := []resourceSdk.SecretTraitOption{}
 	options = append(options,
+		resourceSdk.WithSecretType(v2.SecretTrait_CREDENTIAL_TYPE_STATIC_SECRET),
+		resourceSdk.WithSecretDetail("github.token.pat"),
 		resourceSdk.WithSecretCreatedByID(&v2.ResourceId{
 			ResourceType:  resourceTypeUser.Id,
 			Resource:      strconv.FormatInt(userId, 10),
