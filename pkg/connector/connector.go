@@ -99,6 +99,12 @@ var (
 		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_LICENSE_PROFILE},
 		Annotations: skipEntitlementsAnnotations("license"),
 	}
+	resourceTypeApp = &v2.ResourceType{
+		Id:          "app",
+		DisplayName: "GitHub App",
+		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_APP},
+		Annotations: annotations.New(&v2.SkipEntitlementsAndGrants{}),
+	}
 )
 
 type GitHub struct {
@@ -127,6 +133,7 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 			orgCache: gh.orgCache,
 			orgs:     gh.orgs,
 		}),
+		AppBuilder(gh.client, gh.orgCache),
 	}
 
 	if gh.syncSecrets {
