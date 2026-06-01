@@ -76,8 +76,8 @@ github.com/cockroachdb/swiss v0.0.0-20251224182025-b0f6560f979b h1:VXvSNzmr8hMj8
 github.com/cockroachdb/swiss v0.0.0-20251224182025-b0f6560f979b/go.mod h1:yBRu/cnL4ks9bgy4vAASdjIW+/xMlFwuHKqtmh3GZQg=
 github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 h1:zuQyyAKVxetITBuuhv3BI9cMrmStnpT18zmgmTxunpo=
 github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06/go.mod h1:7nc4anLGjupUW/PeY5qiNYsdNXj7zopG+eqsS7To5IQ=
-github.com/conductorone/baton-sdk v0.11.1 h1:reX86n36AyTR3616+uWJq5gM0nGRhofwQhQz+Ph0VJw=
-github.com/conductorone/baton-sdk v0.11.1/go.mod h1:hNdQlCu0prYFQj8ysF/J+0zjUxdqjPPVBlZJVwMIb6o=
+github.com/conductorone/baton-sdk v0.11.2 h1:nuGZXMOsrM1XccOs8S8Ga9buTHXQK8GHdDbxCDLYCOo=
+github.com/conductorone/baton-sdk v0.11.2/go.mod h1:hNdQlCu0prYFQj8ysF/J+0zjUxdqjPPVBlZJVwMIb6o=
 github.com/conductorone/dpop v0.2.6 h1:fakwai/Xm2b/fcDUwJN41WtcSI/2UhQOyRIVvnnrrNA=
 github.com/conductorone/dpop v0.2.6/go.mod h1:gyo8TtzB9SCFCsjsICH4IaLZ7y64CcrDXMOPBwfq/3s=
 github.com/conductorone/dpop/integrations/dpop_grpc v0.2.4 h1:lYxYi9/WTSL9sE96CO0QF2BY3kehs8dTTApI134TGCA=
