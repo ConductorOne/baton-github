@@ -97,7 +97,13 @@ var (
 		Id:          "license",
 		DisplayName: "License",
 		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_LICENSE_PROFILE},
-		Annotations: skipEntitlementsAnnotations("license"),
+		Annotations: annotations.New(
+			&v2.V1Identifier{
+				Id: "license",
+			},
+			&v2.SkipEntitlements{},
+			&v2.OptInRequired{},
+		),
 	}
 )
 
