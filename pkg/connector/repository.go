@@ -141,7 +141,7 @@ func (o *repositoryResourceType) StaticEntitlements(_ context.Context, _ resourc
 			entitlement.WithAnnotation(&v2.EntitlementExclusionGroup{
 				ExclusionGroupId: "repository",
 				Order:            uint32(i),
-				IsDefault:        level == repoPermissionPush,
+				IsDefault:        false,
 				ScopeToResource:  true,
 			}),
 		))
