@@ -131,11 +131,19 @@ func (o *repositoryResourceType) Entitlements(_ context.Context, resource *v2.Re
 
 func (o *repositoryResourceType) StaticEntitlements(_ context.Context, _ resourceSdk.SyncOpAttrs) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
 	rv := make([]*v2.Entitlement, 0, len(repoAccessLevels))
-	for _, level := range repoAccessLevels {
-		rv = append(rv, entitlement.NewPermissionEntitlement(nil, level,
+	for i, level := range repoAccessLevels {
+		rv = append(rv, entitlement.NewPermissionEntitlement(
+			nil,
+			level,
 			entitlement.WithDisplayName(fmt.Sprintf("Repo %s", titleCase(level))),
 			entitlement.WithDescription(fmt.Sprintf("Access to repository in GitHub as %s", level)),
 			entitlement.WithGrantableTo(resourceTypeUser, resourceTypeTeam),
+			entitlement.WithAnnotation(&v2.EntitlementExclusionGroup{
+				ExclusionGroupId: "repository",
+				Order:            uint32(i),
+				IsDefault:        false,
+				ScopeToResource:  true,
+			}),
 		))
 	}
 
