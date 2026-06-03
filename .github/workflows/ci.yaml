@@ -5,7 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BATON_TOKEN: ${{ secrets.BATON_TOKEN }}
-      BATON_ORGS: ConductorOne
+      BATON_ORGS: ${{ vars.BATON_ORGS }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -19,6 +19,6 @@ jobs:
         uses: ConductorOne/github-workflows/actions/sync-test@v4
         with:
           connector: ./baton-github
-          baton-entitlement: 'repository:642588514:admin'
-          baton-principal: '166871869'
-          baton-principal-type: 'user'
+          baton-entitlement: ${{ vars.BATON_ENTITLEMENT_REPOSITORY }}
+          baton-principal: ${{ vars.BATON_PRINCIPAL }}
+          baton-principal-type: ${{ vars.BATON_PRINCIPAL_TYPE }}
