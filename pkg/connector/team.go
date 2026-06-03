@@ -102,7 +102,7 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list teams")
 	}
 
-	nextPage, reqAnnos, err := parseResp(resp)
+	pageToken, reqAnnos, err := nextPageToken(bag, resp)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -123,11 +123,6 @@ func (o *teamResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 		}
 
 		rv = append(rv, tr)
-	}
-
-	pageToken, err := bag.NextToken(nextPage)
-	if err != nil {
-		return nil, nil, err
 	}
 
 	return rv, &rType.SyncOpResults{

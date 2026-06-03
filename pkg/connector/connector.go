@@ -103,7 +103,7 @@ var (
 		Id:          "app",
 		DisplayName: "GitHub App",
 		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_APP},
-		Annotations: annotations.New(&v2.SkipEntitlementsAndGrants{}),
+		Annotations: skipEntitlementsAndGrantsAnnotations("app", "organization_administration:read"),
 	}
 )
 

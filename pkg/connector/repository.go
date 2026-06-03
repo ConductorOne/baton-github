@@ -97,12 +97,7 @@ func (o *repositoryResourceType) List(ctx context.Context, parentID *v2.Resource
 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list repositories")
 	}
 
-	nextPage, reqAnnos, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pageToken, err := bag.NextToken(nextPage)
+	pageToken, reqAnnos, err := nextPageToken(bag, resp)
 	if err != nil {
 		return nil, nil, err
 	}

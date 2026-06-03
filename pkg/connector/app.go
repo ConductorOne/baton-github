@@ -3,15 +3,10 @@ package connector
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
-	"github.com/conductorone/baton-sdk/pkg/annotations"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
-	"google.golang.org/protobuf/proto"
 )
 
 // appResource builds a GitHub App resource from one organization installation.
@@ -42,21 +37,20 @@ func appResource(ctx context.Context, installation *github.Installation, parentR
 		profile["repository_selection"] = installation.GetRepositorySelection()
 	}
 
-	annos := []proto.Message{
-		&v2.V1Identifier{Id: fmt.Sprintf("app:%d", installation.GetID())},
+	opts := []resourceSdk.ResourceOption{
+		resourceSdk.WithParentResourceID(parentResourceID),
+		resourceSdk.WithAppTrait(resourceSdk.WithAppProfile(profile)),
+		resourceSdk.WithNHIType(v2.NonHumanIdentityTrait_NHI_TYPE_APP_REGISTRATION, "github.app"),
 	}
 	if installation.HTMLURL != nil {
-		annos = append(annos, &v2.ExternalLink{Url: installation.GetHTMLURL()})
+		opts = append(opts, resourceSdk.WithAnnotation(&v2.ExternalLink{Url: installation.GetHTMLURL()}))
 	}
 
 	return resourceSdk.NewResource(
 		displayName,
 		resourceTypeApp,
 		installation.GetID(),
-		resourceSdk.WithParentResourceID(parentResourceID),
-		resourceSdk.WithAppTrait(resourceSdk.WithAppProfile(profile)),
-		resourceSdk.WithNHIType(v2.NonHumanIdentityTrait_NHI_TYPE_APP_REGISTRATION, "github.app"),
-		resourceSdk.WithAnnotation(annos...),
+		opts...,
 	)
 }
 
@@ -85,7 +79,6 @@ func (o *appResourceType) List(
 	parentID *v2.ResourceId,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
-	var annos annotations.Annotations
 	if parentID == nil {
 		return nil, &resourceSdk.SyncOpResults{}, nil
 	}
@@ -105,33 +98,10 @@ func (o *appResourceType) List(
 		PerPage: opts.PageToken.Size,
 	})
 	if err != nil {
-		// Listing org installations requires "Organization administration"
-		// read access. PAT auth is validated as an org admin, but a GitHub
-		// App installation token may not be granted that permission. Degrade
-		// gracefully so the rest of the sync still completes.
-		if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound) {
-			ctxzap.Extract(ctx).Warn("baton-github: cannot list org app installations; skipping app sync for org. "+
-				"This requires Organization administration (read) access on the configured credentials.",
-				zap.String("org", orgName),
-				zap.Int("http_status", resp.StatusCode),
-			)
-			return nil, &resourceSdk.SyncOpResults{}, nil
-		}
 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list organization app installations")
 	}
 
-	restApiRateLimit, err := extractRateLimitData(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-	annos.WithRateLimiting(restApiRateLimit)
-
-	nextPage, _, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pageToken, err := bag.NextToken(nextPage)
+	pageToken, annos, err := nextPageToken(bag, resp)
 	if err != nil {
 		return nil, nil, err
 	}
