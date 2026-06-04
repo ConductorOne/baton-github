@@ -79,6 +79,29 @@ var (
 		field.WithDescription("Organization of your github app"),
 		field.WithRequired(true),
 	)
+	AccountCreationModeField = field.StringField(
+		"account-creation-mode",
+		field.WithDisplayName("Account creation mode"),
+		field.WithDescription(
+			`How the connector creates accounts. "invitation" (default) sends an org `+
+				`invitation email. "site_admin_create" calls POST /admin/users using a `+
+				`site-admin PAT, bypassing email invitations (GHES only).`,
+		),
+	)
+	SiteAdminTokenField = field.StringField(
+		"site-admin-token",
+		field.WithDisplayName("Site-admin personal access token"),
+		field.WithDescription(
+			"A GHES site-admin PAT used for account creation when account-creation-mode "+
+				"is site_admin_create. This token requires site-admin privilege on the GHES instance.",
+		),
+		field.WithIsSecret(true),
+	)
+)
+
+const (
+	AccountCreationModeInvitation     = "invitation"
+	AccountCreationModeSiteAdminCreate = "site_admin_create"
 )
 
 //go:generate go run ./gen
@@ -94,6 +117,8 @@ var Config = field.NewConfiguration(
 		syncSecrets,
 		omitArchivedRepositories,
 		directCollaboratorsOnly,
+		AccountCreationModeField,
+		SiteAdminTokenField,
 	},
 	field.WithConnectorDisplayName("GitHub v2"),
 	field.WithHelpUrl("/docs/baton/github-v2"),

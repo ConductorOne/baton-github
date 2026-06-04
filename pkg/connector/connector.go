@@ -117,6 +117,7 @@ type GitHub struct {
 	orgs                     []string
 	client                   *github.Client
 	appClient                *github.Client
+	siteAdminClient          *github.Client
 	customClient             *customclient.Client
 	instanceURL              string
 	graphqlClient            *githubv4.Client
@@ -125,6 +126,7 @@ type GitHub struct {
 	omitArchivedRepositories bool
 	directCollaboratorsOnly  bool
 	enterprises              []string
+	accountCreationMode      string
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
@@ -135,9 +137,12 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 		RepositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories, gh.directCollaboratorsOnly),
 		OrgRoleBuilder(gh.client, gh.orgCache),
 		InvitationBuilder(InvitationBuilderParams{
-			client:   gh.client,
-			orgCache: gh.orgCache,
-			orgs:     gh.orgs,
+			client:              gh.client,
+			orgCache:            gh.orgCache,
+			orgs:                gh.orgs,
+			accountCreationMode: gh.accountCreationMode,
+			siteAdminClient:     gh.siteAdminClient,
+			instanceURL:         gh.instanceURL,
 		}),
 		AppBuilder(gh.client, gh.orgCache),
 	}
@@ -157,14 +162,28 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 
 // Metadata returns metadata about the connector.
 func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
+	siteAdminMode := gh.accountCreationMode == cfg.AccountCreationModeSiteAdminCreate
+
+	usernameRequired := siteAdminMode
+	usernameDesc := "The user's GitHub username (optional, used to look up the user if email is private)."
+	if siteAdminMode {
+		usernameDesc = "The user's GitHub/GHES login. Required when account-creation-mode is site_admin_create."
+	}
+
+	emailRequired := !siteAdminMode
+	emailDesc := "This email will be used as the login for the user."
+	if siteAdminMode {
+		emailDesc = "The user's email address (optional for LDAP/SAML/CAS-authenticated GHES instances)."
+	}
+
 	return &v2.ConnectorMetadata{
 		DisplayName: "GitHub",
 		AccountCreationSchema: &v2.ConnectorAccountCreationSchema{
 			FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
 				"email": {
 					DisplayName: "Email",
-					Required:    true,
-					Description: "This email will be used as the login for the user.",
+					Required:    emailRequired,
+					Description: emailDesc,
 					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
 						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
 					},
@@ -183,8 +202,8 @@ func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 				},
 				"github_username": {
 					DisplayName: "GitHub username",
-					Required:    false,
-					Description: "The user's GitHub username (optional, used to look up the user if email is private).",
+					Required:    usernameRequired,
+					Description: usernameDesc,
 					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
 						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
 					},
@@ -311,13 +330,35 @@ func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.Conne
 		if err != nil {
 			return nil, nil, err
 		}
-		return cb, nil, nil
+	} else {
+		cb, err = newWithGithubPAT(ctx, ghc)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
-	cb, err = newWithGithubPAT(ctx, ghc)
-	if err != nil {
-		return nil, nil, err
+	mode := ghc.AccountCreationMode
+	if mode == "" {
+		mode = cfg.AccountCreationModeInvitation
 	}
+	if mode != cfg.AccountCreationModeInvitation && mode != cfg.AccountCreationModeSiteAdminCreate {
+		return nil, nil, fmt.Errorf("github-connector: invalid account-creation-mode %q (must be %q or %q)",
+			mode, cfg.AccountCreationModeInvitation, cfg.AccountCreationModeSiteAdminCreate)
+	}
+	cb.accountCreationMode = mode
+
+	if mode == cfg.AccountCreationModeSiteAdminCreate {
+		if ghc.SiteAdminToken == "" {
+			return nil, nil, fmt.Errorf("github-connector: site-admin-token is required when account-creation-mode is %q", cfg.AccountCreationModeSiteAdminCreate)
+		}
+		siteAdminTS := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: ghc.SiteAdminToken})
+		siteAdminClient, err := newGitHubClient(ctx, ghc.InstanceUrl, siteAdminTS)
+		if err != nil {
+			return nil, nil, fmt.Errorf("github-connector: failed to create site-admin client: %w", err)
+		}
+		cb.siteAdminClient = siteAdminClient
+	}
+
 	return cb, nil, nil
 }
 

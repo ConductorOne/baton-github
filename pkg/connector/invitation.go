@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	cfg "github.com/conductorone/baton-github/pkg/config"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
@@ -92,9 +93,12 @@ func invitationExpiresAt(invitation *github.Invitation, status string) (time.Tim
 }
 
 type invitationResourceType struct {
-	client   *github.Client
-	orgCache *orgNameCache
-	orgs     []string
+	client              *github.Client
+	orgCache            *orgNameCache
+	orgs                []string
+	accountCreationMode string
+	siteAdminClient     *github.Client
+	instanceURL         string
 }
 
 func (i *invitationResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -252,6 +256,21 @@ func (i *invitationResourceType) CreateAccount(
 	annotations.Annotations,
 	error,
 ) {
+	if i.accountCreationMode == cfg.AccountCreationModeSiteAdminCreate {
+		return i.createAccountViaSiteAdmin(ctx, accountInfo)
+	}
+	return i.createAccountViaInvitation(ctx, accountInfo)
+}
+
+func (i *invitationResourceType) createAccountViaInvitation(
+	ctx context.Context,
+	accountInfo *v2.AccountInfo,
+) (
+	connectorbuilder.CreateAccountResponse,
+	[]*v2.PlaintextData,
+	annotations.Annotations,
+	error,
+) {
 	l := ctxzap.Extract(ctx)
 
 	params, err := getCreateUserParams(accountInfo)
@@ -288,7 +307,6 @@ func (i *invitationResourceType) CreateAccount(
 			return nil, nil, nil, fmt.Errorf("github-connector: organization %s uses Enterprise Managed Users (EMU); accounts are provisioned by the IdP, not via org invitations", params.org)
 		}
 
-		// Check for expired/failed invitations as diagnostic context for unexpected failures.
 		failedInv, failedErr := i.lookupFailedInvitation(ctx, params.org, params.login, *params.email)
 		if failedErr != nil {
 			l.Warn("failed to check for expired invitations", zap.Error(failedErr))
@@ -319,6 +337,60 @@ func (i *invitationResourceType) CreateAccount(
 		Resource: r,
 		Message:  "GitHub org invite sent. User must accept the invitation before team membership can be granted.",
 	}, nil, annotations, nil
+}
+
+func (i *invitationResourceType) createAccountViaSiteAdmin(
+	ctx context.Context,
+	accountInfo *v2.AccountInfo,
+) (
+	connectorbuilder.CreateAccountResponse,
+	[]*v2.PlaintextData,
+	annotations.Annotations,
+	error,
+) {
+	if i.siteAdminClient == nil {
+		return nil, nil, nil, fmt.Errorf("github-connector: site-admin client not configured; set site-admin-token when using account-creation-mode=site_admin_create")
+	}
+
+	params, err := getSiteAdminCreateParams(accountInfo)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("github-connector: failed to get site-admin create params: %w", err)
+	}
+
+	createReq := github.CreateUserRequest{
+		Login: params.login,
+	}
+	if params.email != "" {
+		createReq.Email = &params.email
+	}
+
+	user, resp, err := i.siteAdminClient.Admin.CreateUser(ctx, createReq)
+	if err != nil {
+		if isUserAlreadyExistsError(err, resp) {
+			existingUser, lookupErr := i.lookupUser(ctx, params.login, params.email)
+			if lookupErr != nil {
+				ctxzap.Extract(ctx).Warn("user already exists but lookup failed, returning AlreadyExistsResult without resource", zap.Error(lookupErr))
+				return &v2.CreateAccountResponse_AlreadyExistsResult{}, nil, nil, nil
+			}
+			return &v2.CreateAccountResponse_AlreadyExistsResult{Resource: existingUser}, nil, nil, nil
+		}
+		return nil, nil, nil, wrapGitHubError(err, resp, "github-connector: failed to create user via site-admin API")
+	}
+
+	restApiRateLimit, err := extractRateLimitData(resp)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	var annos annotations.Annotations
+	annos.WithRateLimiting(restApiRateLimit)
+
+	r, err := userResource(ctx, user, user.GetEmail(), nil)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("github-connector: failed to build user resource from site-admin create response: %w", err)
+	}
+
+	return &v2.CreateAccountResponse_SuccessResult{Resource: r}, nil, annos, nil
 }
 
 func (i *invitationResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {
@@ -516,20 +588,58 @@ func isGitHubValidationError(err error, resp *github.Response, substrings ...str
 	return false
 }
 
+func isUserAlreadyExistsError(err error, resp *github.Response) bool {
+	if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	var ghErr *github.ErrorResponse
+	if !errors.As(err, &ghErr) {
+		return false
+	}
+	return containsLower(ghErr.Message, "already exists") || containsLower(ghErr.Message, "login is already taken")
+}
+
+type siteAdminCreateParams struct {
+	login string
+	email string
+}
+
+func getSiteAdminCreateParams(accountInfo *v2.AccountInfo) (*siteAdminCreateParams, error) {
+	pMap := accountInfo.Profile.AsMap()
+
+	login, _ := pMap["github_username"].(string)
+	if login == "" {
+		return nil, fmt.Errorf("github_username is required when account-creation-mode is %s", cfg.AccountCreationModeSiteAdminCreate)
+	}
+
+	email, _ := pMap["email"].(string)
+
+	return &siteAdminCreateParams{
+		login: login,
+		email: email,
+	}, nil
+}
+
 func containsLower(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), substr)
 }
 
 type InvitationBuilderParams struct {
-	client   *github.Client
-	orgCache *orgNameCache
-	orgs     []string
+	client              *github.Client
+	orgCache            *orgNameCache
+	orgs                []string
+	accountCreationMode string
+	siteAdminClient     *github.Client
+	instanceURL         string
 }
 
 func InvitationBuilder(p InvitationBuilderParams) *invitationResourceType {
 	return &invitationResourceType{
-		client:   p.client,
-		orgCache: p.orgCache,
-		orgs:     p.orgs,
+		client:              p.client,
+		orgCache:            p.orgCache,
+		orgs:                p.orgs,
+		accountCreationMode: p.accountCreationMode,
+		siteAdminClient:     p.siteAdminClient,
+		instanceURL:         p.instanceURL,
 	}
 }
