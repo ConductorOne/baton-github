@@ -20,6 +20,7 @@ Use this integration if your organization accesses GitHub at `github.com`. If yo
 | Repositories | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
 | Teams | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
 | Orgs | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
+| GitHub Apps (NHI) | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |  |
 | Secrets - API keys | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |  |
 
 The GitHub connector supports [automatic account provisioning and deprovisioning](/product/admin/account-provisioning). New accounts will send an invitation to the account owner; if an invitation is pending, the account status will be shown as **Unspecified**. 
@@ -123,6 +124,7 @@ In the **Permissions** section of the page, give the token the following permiss
 
    - Organization permissions:
 
+     - **Administration**: Read-only access (required to sync installed GitHub Apps)
      - **Members**: Read and write access
      - **Custom organization roles**: Read and write access
 

@@ -55,6 +55,7 @@ func organizationResource(
 		&v2.ChildResourceType{ResourceTypeId: resourceTypeRepository.Id},
 		&v2.ChildResourceType{ResourceTypeId: resourceTypeOrgRole.Id},
 		&v2.ChildResourceType{ResourceTypeId: resourceTypeInvitation.Id},
+		&v2.ChildResourceType{ResourceTypeId: resourceTypeApp.Id},
 	}
 	if syncSecrets {
 		annotations = append(annotations, &v2.ChildResourceType{ResourceTypeId: resourceTypeApiToken.Id})
@@ -108,12 +109,7 @@ func (o *orgResourceType) List(
 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to fetch organizations")
 	}
 
-	nextPage, reqAnnos, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pageToken, err := bag.NextToken(nextPage)
+	pageToken, reqAnnos, err := nextPageToken(bag, resp)
 	if err != nil {
 		return nil, nil, err
 	}

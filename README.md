@@ -42,6 +42,7 @@ baton resources
 - Users
 - Teams
 - Repositories
+- GitHub Apps (installed in organizations, synced as non-human identities)
 
 By default, `baton-github` will sync information from any organizations that the provided credential has Administrator permissions on. You can specify exactly which organizations you would like to sync using the `--orgs` flag.
 
@@ -105,7 +106,7 @@ Use "baton-github [command] --help" for more information about a command.
 To use this Baton connector, you need to create a GitHub organization access token with the following permissions:
 
 Org:
-- Administration: Read-only (required to detect SAML/SSO configuration)
+- Administration: Read-only (required to detect SAML/SSO configuration and to sync installed GitHub Apps)
 - Member Read and Write
 
 Repo:

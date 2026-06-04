@@ -76,18 +76,33 @@ func newOrgNameCache(c *github.Client) *orgNameCache {
 	}
 }
 
-func v1AnnotationsForResourceType(resourceTypeID string) annotations.Annotations {
+func v1AnnotationsForResourceType(resourceTypeID string, permissions ...string) annotations.Annotations {
 	annos := annotations.Annotations{}
 	annos.Update(&v2.V1Identifier{
 		Id: resourceTypeID,
 	})
 
+	if len(permissions) > 0 {
+		caps := make([]*v2.CapabilityPermission, 0, len(permissions))
+		for _, p := range permissions {
+			caps = append(caps, &v2.CapabilityPermission{Permission: p})
+		}
+		annos.Update(&v2.CapabilityPermissions{Permissions: caps})
+	}
+
 	return annos
 }
 
-func skipEntitlementsAnnotations(resourceTypeID string) annotations.Annotations {
-	annos := v1AnnotationsForResourceType(resourceTypeID)
+func skipEntitlementsAnnotations(resourceTypeID string, permissions ...string) annotations.Annotations {
+	annos := v1AnnotationsForResourceType(resourceTypeID, permissions...)
 	annos.Update(&v2.SkipEntitlements{})
+
+	return annos
+}
+
+func skipEntitlementsAndGrantsAnnotations(resourceTypeID string, permissions ...string) annotations.Annotations {
+	annos := v1AnnotationsForResourceType(resourceTypeID, permissions...)
+	annos.Update(&v2.SkipEntitlementsAndGrants{})
 
 	return annos
 }
@@ -127,6 +142,20 @@ func convertPageToken(token string) (int, error) {
 		return 0, nil
 	}
 	return strconv.Atoi(token)
+}
+
+// nextPageToken combines parseResp and bag.NextToken into a single call,
+// returning the serialized page token and rate-limit annotations together.
+func nextPageToken(bag *pagination.Bag, resp *github.Response) (string, annotations.Annotations, error) {
+	nextPage, annos, err := parseResp(resp)
+	if err != nil {
+		return "", nil, err
+	}
+	pageToken, err := bag.NextToken(nextPage)
+	if err != nil {
+		return "", nil, err
+	}
+	return pageToken, annos, nil
 }
 
 // fmtGitHubPageToken return a formatted string for a github page token.

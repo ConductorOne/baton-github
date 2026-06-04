@@ -105,6 +105,12 @@ var (
 			&v2.OptInRequired{},
 		),
 	}
+	resourceTypeApp = &v2.ResourceType{
+		Id:          "app",
+		DisplayName: "GitHub App",
+		Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_APP},
+		Annotations: skipEntitlementsAndGrantsAnnotations("app", "organization_administration:read"),
+	}
 )
 
 type GitHub struct {
@@ -133,6 +139,7 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 			orgCache: gh.orgCache,
 			orgs:     gh.orgs,
 		}),
+		AppBuilder(gh.client, gh.orgCache),
 	}
 
 	if gh.syncSecrets {

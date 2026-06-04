@@ -5,7 +5,6 @@ import (
 	"strconv"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
-	"github.com/conductorone/baton-sdk/pkg/annotations"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 )
@@ -71,7 +70,6 @@ func (o *apiTokenResourceType) List(
 	parentID *v2.ResourceId,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
-	var annotations annotations.Annotations
 	if parentID == nil {
 		return nil, &resourceSdk.SyncOpResults{}, nil
 	}
@@ -96,18 +94,7 @@ func (o *apiTokenResourceType) List(
 		return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list fine-grained personal access tokens")
 	}
 
-	restApiRateLimit, err := extractRateLimitData(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-	annotations.WithRateLimiting(restApiRateLimit)
-
-	nextPage, _, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pageToken, err := bag.NextToken(nextPage)
+	pageToken, annotations, err := nextPageToken(bag, resp)
 	if err != nil {
 		return nil, nil, err
 	}
