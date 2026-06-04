@@ -21,6 +21,42 @@
     },
     {
       "resourceType": {
+        "id": "app",
+        "displayName": "GitHub App",
+        "traits": [
+          "TRAIT_APP"
+        ],
+        "annotations": [
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.V1Identifier",
+            "id": "app"
+          },
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
+            "permissions": [
+              {
+                "permission": "organization_administration:read"
+              }
+            ]
+          },
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlementsAndGrants"
+          }
+        ]
+      },
+      "capabilities": [
+        "CAPABILITY_SYNC"
+      ],
+      "permissions": {
+        "permissions": [
+          {
+            "permission": "organization_administration:read"
+          }
+        ]
+      }
+    },
+    {
+      "resourceType": {
         "id": "invitation",
         "displayName": "Invitation",
         "traits": [
