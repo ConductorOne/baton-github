@@ -66,6 +66,9 @@
           {
             "@type": "type.googleapis.com/c1.connector.v2.V1Identifier",
             "id": "invitation"
+          },
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipSyncAnomalyDetection"
           }
         ]
       },
@@ -74,7 +77,8 @@
         "CAPABILITY_ACCOUNT_PROVISIONING",
         "CAPABILITY_RESOURCE_DELETE"
       ],
-      "permissions": {}
+      "permissions": {},
+      "skipSyncAnomalyDetection": true
     },
     {
       "resourceType": {
