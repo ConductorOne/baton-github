@@ -73,7 +73,9 @@ var (
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_USER,
 		},
-		Annotations: v1AnnotationsForResourceType("invitation"),
+		// Invitations disappear once accepted, so their count can legitimately
+		// drop between syncs. Skip sync anomaly detection for this type only.
+		Annotations: append(v1AnnotationsForResourceType("invitation"), annotations.New(&v2.SkipSyncAnomalyDetection{})...),
 	}
 	resourceTypeApiToken = &v2.ResourceType{
 		Id:          "api-key",
