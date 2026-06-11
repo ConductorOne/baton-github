@@ -365,6 +365,8 @@ func (c *C1File) ListSyncRuns(ctx context.Context, pageToken string, pageSize ui
 	return ret, nextPageToken, nil
 }
 
+// LatestSyncID returns the ID of the most recently finished sync of the given type.
+// If syncType is connectorstore.SyncTypeAny, it will return the most recently finished sync of any type.
 func (c *C1File) LatestSyncID(ctx context.Context, syncType connectorstore.SyncType) (string, error) {
 	ctx, span := tracer.Start(ctx, "C1File.LatestSyncID")
 	var err error
@@ -620,10 +622,19 @@ func (c *C1File) StartNewSync(ctx context.Context, syncType connectorstore.SyncT
 		if err != nil {
 			return "", err
 		}
-		if cur != nil && cur.EndedAt == nil && cur.Type != syncType {
-			return "", status.Errorf(codes.FailedPrecondition, "current sync (id %s) is type %s. cannot start %s", cur.ID, cur.Type, syncType)
+		// Only adopt the current sync as the started one when it actually exists
+		// and is still open. An ENDED (cur.EndedAt != nil) or missing (cur == nil)
+		// current sync must NOT be returned here: a caller that scanned existing
+		// syncs and left currentSyncID pointing at a finished sync would otherwise
+		// get that finished sync back and write a fresh sync's records into it.
+		// Fall through to create a brand-new sync instead.
+		if cur != nil && cur.EndedAt == nil {
+			if cur.Type != syncType {
+				return "", status.Errorf(codes.FailedPrecondition, "current sync (id %s) is type %s. cannot start %s", cur.ID, cur.Type, syncType)
+			}
+			return c.currentSyncID, nil
 		}
-		return c.currentSyncID, nil
+		c.currentSyncID = ""
 	}
 
 	switch syncType {

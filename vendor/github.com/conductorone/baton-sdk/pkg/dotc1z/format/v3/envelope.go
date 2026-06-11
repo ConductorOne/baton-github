@@ -9,10 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 
 	c1zv3 "github.com/conductorone/baton-sdk/pb/c1/c1z/v3"
 	"github.com/klauspost/compress/zstd"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 )
 
 // C1Z3Magic is the 5-byte header that identifies a v3 c1z file. Same
@@ -37,6 +40,90 @@ var ErrEnvelopeTruncated = errors.New("c1z v3: envelope truncated")
 // manifest length.
 const maxManifestBytes = 16 << 20
 const maxTarEntryBytes int64 = 4 << 30
+
+// Tar entries larger than this are streamed straight to disk on the
+// reader goroutine instead of being buffered in memory for the writer
+// worker pool. Pebble's typical 2 MiB FlushSplitBytes keeps the common
+// case well below this, preserving the parallel-write win while
+// bounding peak extraction memory at roughly
+// (extractWorkerCount + channel buffer) × inlineCopyThresholdBytes.
+const inlineCopyThresholdBytes int64 = 8 << 20
+
+// Payload decode limits. Defaults and env var names mirror the v1
+// decoder in pkg/dotc1z/decoder.go so operators tune one knob for both
+// formats. Duplicated here (like C1Z3Magic) because this package is the
+// layer below dotc1z and cannot import it.
+const (
+	defaultMaxDecodedPayloadBytes uint64 = 10 << 30  // 10 GiB
+	defaultDecoderMaxMemoryBytes  uint64 = 128 << 20 // 128 MiB zstd window cap
+	maxDecodedSizeEnvVar                 = "BATON_DECODER_MAX_DECODED_SIZE_MB"
+	maxDecoderMemorySizeEnvVar           = "BATON_DECODER_MAX_MEMORY_MB"
+)
+
+// ErrMaxSizeExceeded is returned (wrapped) when a payload decodes to
+// more bytes than the configured cap. Guards against decompression
+// bombs in untrusted v3 c1z files.
+var ErrMaxSizeExceeded = fmt.Errorf("c1z v3: max decoded payload size exceeded, increase via the %s environment variable", maxDecodedSizeEnvVar)
+
+// envSizeBytes reads an env var holding a size in MiB and converts it
+// to bytes, falling back to def when unset, unparsable, zero, or large
+// enough to overflow the MiB→bytes conversion.
+func envSizeBytes(envVar string, def uint64) uint64 {
+	v := os.Getenv(envVar)
+	if v == "" {
+		return def
+	}
+	mb, err := strconv.ParseUint(v, 10, 64)
+	if err != nil || mb == 0 || mb > (1<<63)>>20 {
+		return def
+	}
+	return mb << 20
+}
+
+func maxDecodedPayloadBytes() uint64 {
+	return envSizeBytes(maxDecodedSizeEnvVar, defaultMaxDecodedPayloadBytes)
+}
+
+func decoderMaxMemoryBytes() uint64 {
+	return envSizeBytes(maxDecoderMemorySizeEnvVar, defaultDecoderMaxMemoryBytes)
+}
+
+// limitedPayloadReader passes through up to limit bytes and then fails
+// with ErrMaxSizeExceeded. Unlike io.LimitReader, exceeding the budget
+// is an error, not a silent EOF — a truncated tar stream must not look
+// like a well-formed short one.
+type limitedPayloadReader struct {
+	r     io.Reader
+	read  uint64
+	limit uint64
+}
+
+func (l *limitedPayloadReader) Read(p []byte) (int, error) {
+	if l.read > l.limit {
+		return 0, l.limitErr()
+	}
+	n, err := l.r.Read(p)
+	//nolint:gosec // n is always >= 0.
+	l.read += uint64(n)
+	// Clip bytes that crossed the cap in this single Read so callers
+	// never see data past the budget; exactly-limit payloads still
+	// succeed and reach EOF normally.
+	if l.read > l.limit {
+		over := l.read - l.limit
+		//nolint:gosec // over <= n by construction (we just added n and went over).
+		if uint64(n) >= over {
+			n -= int(over)
+		} else {
+			n = 0
+		}
+		return n, l.limitErr()
+	}
+	return n, err
+}
+
+func (l *limitedPayloadReader) limitErr() error {
+	return fmt.Errorf("c1z v3: payload exceeds %d bytes: %w", l.limit, ErrMaxSizeExceeded)
+}
 
 // WriteEnvelope writes a complete v3 envelope to w:
 //
@@ -126,15 +213,109 @@ type Envelope struct {
 	PayloadReader io.Reader
 
 	zstdReader *zstd.Decoder
+	pool       *DecoderPool
 }
 
-// Close releases any pooled decoder resources held by PayloadReader.
+// Close returns the payload decoder to the envelope's DecoderPool (when
+// one was supplied) or destroys it.
 func (e *Envelope) Close() error {
 	if e.zstdReader != nil {
-		e.zstdReader.Close()
+		if e.pool != nil {
+			e.pool.put(e.zstdReader)
+		} else {
+			e.zstdReader.Close()
+		}
 		e.zstdReader = nil
+		e.pool = nil
 	}
 	return nil
+}
+
+// DecoderPool reuses zstd payload decoders across envelope reads. A
+// decoder retains its window/history buffers across Reset, so reuse
+// avoids both the construction cost (worker goroutine spin-up, buffer
+// allocation) and the per-open garbage when many envelopes are read in
+// a loop — the compactor opens one envelope per source per merge.
+//
+// The pool is deliberately NOT process-global: a pooled decoder keeps
+// whatever buffers its largest stream grew, so the owner scopes the
+// pool to the operation that benefits (one pool per compaction) and
+// calls Close when done, releasing everything deterministically
+// instead of waiting out sync.Pool's GC-paced eviction in a long-lived
+// worker process. Callers that open a single envelope pass a nil pool
+// and get a one-shot decoder destroyed at Envelope.Close.
+type DecoderPool struct {
+	mu     sync.Mutex
+	idle   []*zstd.Decoder
+	closed bool
+}
+
+// NewDecoderPool returns an empty pool. The caller owns its lifetime
+// and must call Close to release idle decoders.
+func NewDecoderPool() *DecoderPool {
+	return &DecoderPool{}
+}
+
+// get returns an idle decoder reset onto r, or constructs one (with the
+// standard decoder memory cap). Nil-receiver safe: a nil pool always
+// constructs, and the Envelope destroys the decoder at Close.
+func (p *DecoderPool) get(r io.Reader) (*zstd.Decoder, error) {
+	if p != nil {
+		p.mu.Lock()
+		if n := len(p.idle); n > 0 {
+			dec := p.idle[n-1]
+			p.idle = p.idle[:n-1]
+			p.mu.Unlock()
+			if err := dec.Reset(r); err != nil {
+				dec.Close()
+				return nil, err
+			}
+			return dec, nil
+		}
+		p.mu.Unlock()
+	}
+	return zstd.NewReader(r, zstd.WithDecoderMaxMemory(decoderMaxMemoryBytes()))
+}
+
+// put detaches dec from its reader and parks it for reuse. Decoders
+// returned after Close (an envelope outliving the pool) are destroyed
+// rather than leaked into a closed pool.
+func (p *DecoderPool) put(dec *zstd.Decoder) {
+	if dec == nil {
+		return
+	}
+	if p == nil {
+		dec.Close()
+		return
+	}
+	if err := dec.Reset(nil); err != nil {
+		dec.Close()
+		return
+	}
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		dec.Close()
+		return
+	}
+	p.idle = append(p.idle, dec)
+	p.mu.Unlock()
+}
+
+// Close releases every idle decoder and marks the pool closed; later
+// puts destroy their decoders. Safe to call on a nil pool.
+func (p *DecoderPool) Close() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	idle := p.idle
+	p.idle = nil
+	p.closed = true
+	p.mu.Unlock()
+	for _, dec := range idle {
+		dec.Close()
+	}
 }
 
 // ReadEnvelope reads a v3 envelope from r. r must be positioned at the
@@ -144,8 +325,50 @@ func (e *Envelope) Close() error {
 // PAYLOAD_ENCODING_TAR (passing through unchanged). The reserved
 // values 1 (RAW) and 2 (single-stream ZSTD) return an error — they
 // were never wired and aren't supported.
+//
+// The payload is treated as untrusted: the zstd decoder's window
+// memory is capped (BATON_DECODER_MAX_MEMORY_MB, default 128 MiB) and
+// PayloadReader fails with ErrMaxSizeExceeded once the decoded payload
+// exceeds the configured budget (BATON_DECODER_MAX_DECODED_SIZE_MB,
+// default 10 GiB) — the same knobs the v1 decoder honors.
 func ReadEnvelope(r io.Reader) (*Envelope, error) {
-	// 1. Magic.
+	return readEnvelope(r, false, nil)
+}
+
+// ReadEnvelopeHeader is the low-allocation open path for engine dispatch.
+// It parses only the cheap manifest fields (engine, engine_schema_version,
+// payload_encoding, sync_runs) and skips the descriptor closure. Call
+// ReadEnvelope when callers need the full self-describing descriptor set.
+func ReadEnvelopeHeader(r io.Reader) (*Envelope, error) {
+	return readEnvelope(r, true, nil)
+}
+
+// ReadEnvelopeHeaderWithPool is ReadEnvelopeHeader with a caller-scoped
+// payload decoder pool: the envelope draws its zstd decoder from pool
+// and returns it on Close instead of destroying it. Used by callers
+// that open many envelopes in a loop (compaction source opens). A nil
+// pool behaves exactly like ReadEnvelopeHeader.
+func ReadEnvelopeHeaderWithPool(r io.Reader, pool *DecoderPool) (*Envelope, error) {
+	return readEnvelope(r, true, pool)
+}
+
+// ReadManifestHeader parses only the cheap manifest fields and stops
+// before the payload: no zstd decoder is constructed and not a single
+// payload byte is read. This is the "shallow unpack" path for callers
+// that want envelope metadata — sync run summaries with their cached
+// stats — without rematerializing the Pebble directory (compaction
+// source selection, overlay bucket planning, tooling).
+func ReadManifestHeader(r io.Reader) (*c1zv3.C1ZManifestV3, error) {
+	mb, err := readManifestBytes(r)
+	if err != nil {
+		return nil, err
+	}
+	return unmarshalManifestHeader(mb)
+}
+
+// readManifestBytes consumes the magic, the manifest length prefix, and
+// the manifest bytes, leaving r positioned at the first payload byte.
+func readManifestBytes(r io.Reader) ([]byte, error) {
 	magic := make([]byte, len(C1Z3Magic))
 	if _, err := io.ReadFull(r, magic); err != nil {
 		return nil, fmt.Errorf("%w: reading magic: %w", ErrEnvelopeTruncated, err)
@@ -153,7 +376,6 @@ func ReadEnvelope(r io.Reader) (*Envelope, error) {
 	if !bytes.Equal(magic, C1Z3Magic) {
 		return nil, ErrInvalidV3Magic
 	}
-	// 2. Manifest length.
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return nil, fmt.Errorf("%w: reading manifest length: %w", ErrEnvelopeTruncated, err)
@@ -162,12 +384,24 @@ func ReadEnvelope(r io.Reader) (*Envelope, error) {
 	if mlen > maxManifestBytes {
 		return nil, fmt.Errorf("c1z v3: manifest claims %d bytes, exceeds cap %d", mlen, maxManifestBytes)
 	}
-	// 3. Manifest bytes.
 	mb := make([]byte, mlen)
 	if _, err := io.ReadFull(r, mb); err != nil {
 		return nil, fmt.Errorf("%w: reading manifest: %w", ErrEnvelopeTruncated, err)
 	}
-	m, err := UnmarshalManifest(mb)
+	return mb, nil
+}
+
+func readEnvelope(r io.Reader, headerOnly bool, pool *DecoderPool) (*Envelope, error) {
+	mb, err := readManifestBytes(r)
+	if err != nil {
+		return nil, err
+	}
+	var m *c1zv3.C1ZManifestV3
+	if headerOnly {
+		m, err = unmarshalManifestHeader(mb)
+	} else {
+		m, err = UnmarshalManifest(mb)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -175,18 +409,96 @@ func ReadEnvelope(r io.Reader) (*Envelope, error) {
 	env := &Envelope{Manifest: m}
 	switch m.GetPayloadEncoding() {
 	case c1zv3.PayloadEncoding_PAYLOAD_ENCODING_TAR_ZSTD:
-		zr, err := zstd.NewReader(r)
+		zr, err := pool.get(r)
 		if err != nil {
 			return nil, fmt.Errorf("c1z v3: zstd reader: %w", err)
 		}
 		env.zstdReader = zr
-		env.PayloadReader = zr
+		env.pool = pool
+		env.PayloadReader = &limitedPayloadReader{r: zr, limit: maxDecodedPayloadBytes()}
 	case c1zv3.PayloadEncoding_PAYLOAD_ENCODING_TAR:
-		env.PayloadReader = r
+		env.PayloadReader = &limitedPayloadReader{r: r, limit: maxDecodedPayloadBytes()}
 	default:
 		return nil, fmt.Errorf("c1z v3: unsupported payload encoding %v", m.GetPayloadEncoding())
 	}
 	return env, nil
+}
+
+// unmarshalManifestHeader decodes the cheap manifest fields by hand:
+// engine (1), engine_schema_version (2), payload_encoding (4), and the
+// sync_runs projection (40). The descriptor closure (field 10) — by far
+// the largest field — is skipped, which is what makes header reads
+// cheap enough for engine dispatch on every open. Sync run summaries
+// are small and few (bounded by the sync retention limit), so decoding
+// them here costs a handful of allocations.
+func unmarshalManifestHeader(b []byte) (*c1zv3.C1ZManifestV3, error) {
+	out := &c1zv3.C1ZManifestV3{}
+	for len(b) > 0 {
+		num, typ, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			return nil, protowire.ParseError(n)
+		}
+		b = b[n:]
+		switch num {
+		case 1:
+			if typ != protowire.BytesType {
+				return nil, fmt.Errorf("c1z v3: manifest engine has wire type %v", typ)
+			}
+			v, n := protowire.ConsumeString(b)
+			if n < 0 {
+				return nil, protowire.ParseError(n)
+			}
+			out.SetEngine(v)
+			b = b[n:]
+		case 2:
+			if typ != protowire.VarintType {
+				return nil, fmt.Errorf("c1z v3: manifest engine_schema_version has wire type %v", typ)
+			}
+			v, n := protowire.ConsumeVarint(b)
+			if n < 0 {
+				return nil, protowire.ParseError(n)
+			}
+			if v > uint64(^uint32(0)) {
+				return nil, fmt.Errorf("c1z v3: manifest engine_schema_version overflow: %d", v)
+			}
+			out.SetEngineSchemaVersion(uint32(v))
+			b = b[n:]
+		case 4:
+			if typ != protowire.VarintType {
+				return nil, fmt.Errorf("c1z v3: manifest payload_encoding has wire type %v", typ)
+			}
+			v, n := protowire.ConsumeVarint(b)
+			if n < 0 {
+				return nil, protowire.ParseError(n)
+			}
+			if v > uint64(1<<31-1) {
+				return nil, fmt.Errorf("c1z v3: manifest payload_encoding overflow: %d", v)
+			}
+			out.SetPayloadEncoding(c1zv3.PayloadEncoding(v))
+			b = b[n:]
+		case 40:
+			if typ != protowire.BytesType {
+				return nil, fmt.Errorf("c1z v3: manifest sync_runs has wire type %v", typ)
+			}
+			v, n := protowire.ConsumeBytes(b)
+			if n < 0 {
+				return nil, protowire.ParseError(n)
+			}
+			summary := &c1zv3.SyncRunSummary{}
+			if err := proto.Unmarshal(v, summary); err != nil {
+				return nil, fmt.Errorf("%w: sync_runs entry: %w", ErrManifestInvalid, err)
+			}
+			out.SetSyncRuns(append(out.GetSyncRuns(), summary))
+			b = b[n:]
+		default:
+			n := protowire.ConsumeFieldValue(num, typ, b)
+			if n < 0 {
+				return nil, protowire.ParseError(n)
+			}
+			b = b[n:]
+		}
+	}
+	return out, nil
 }
 
 // writeZstdTar walks dir in sorted order, writing each entry into a
@@ -320,14 +632,22 @@ func writeTar(w io.Writer, dir string) error {
 // reader when the encoding was TAR. Same downstream code path.
 //
 // Parallelism: the tar reader pulls bytes from the underlying stream
-// serially in this goroutine (tar framing is sequential). For each
-// regular-file entry we read the bytes into a freshly-allocated
-// buffer and dispatch (target, mode, buffer) to a writer worker pool.
-// Workers perform the per-file open/write/close syscalls in parallel.
-// Memory peak is bounded by extractWorkerCount × max-entry-size; at
-// Pebble's typical 2 MiB FlushSplitBytes this is a few tens of MiB
-// regardless of total c1z size — the per-entry parallelism win
-// compounds at production-scale c1z files (100s GB).
+// serially in this goroutine (tar framing is sequential). Regular-file
+// entries up to inlineCopyThresholdBytes are read into a
+// freshly-allocated buffer and dispatched (target, mode, buffer) to a
+// writer worker pool; workers perform the per-file open/write/close
+// syscalls in parallel. Larger entries are streamed straight to disk
+// on this goroutine so a hostile archive full of multi-GiB entries
+// can't drive memory to extractWorkerCount × maxTarEntryBytes. Memory
+// peak is bounded by (extractWorkerCount + channel buffer) ×
+// inlineCopyThresholdBytes; at Pebble's typical 2 MiB FlushSplitBytes
+// nearly every entry takes the parallel path — the per-entry
+// parallelism win compounds at production-scale c1z files (100s GB).
+//
+// Aggregate extraction is bounded too: when r is an Envelope's
+// PayloadReader, the decoded-byte budget (file contents AND tar
+// headers, so entry count as well) fails the extraction with
+// ErrMaxSizeExceeded once exceeded.
 //
 // Directory creation stays on the main goroutine because tar entries
 // are emitted in walk order — a TypeDir must finish before a TypeReg
@@ -415,6 +735,13 @@ entryLoop:
 				readErr = err
 				break entryLoop
 			}
+			if hdr.Size > inlineCopyThresholdBytes {
+				if err := streamTarEntry(tr, target, mode); err != nil {
+					readErr = fmt.Errorf("c1z v3: tar stream %q: %w", hdr.Name, err)
+					break entryLoop
+				}
+				continue
+			}
 			buf := make([]byte, hdr.Size)
 			if _, err := io.ReadFull(tr, buf); err != nil {
 				readErr = fmt.Errorf("c1z v3: tar read %q: %w", hdr.Name, err)
@@ -432,6 +759,21 @@ entryLoop:
 		return readErr
 	}
 	return firstErr
+}
+
+// streamTarEntry copies one large tar entry from tr to target without
+// buffering it in memory. The tar reader bounds the copy at the entry's
+// declared size.
+func streamTarEntry(tr *tar.Reader, target string, mode os.FileMode) error {
+	f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(f, tr)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 func tarFileMode(mode int64, mask os.FileMode) (os.FileMode, error) {
