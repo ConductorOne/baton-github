@@ -31,6 +31,8 @@ const (
 	repoPermissionAdmin    = "admin"
 )
 
+const readConst = "read"
+
 var repoAccessLevels = []string{
 	repoPermissionPull,
 	repoPermissionTriage,
@@ -46,7 +48,7 @@ var repoAccessLevels = []string{
 // roles it does not recognize.
 func roleNameToRepoPermission(roleName string) string {
 	switch roleName {
-	case "read":
+	case readConst:
 		return repoPermissionPull
 	case "write":
 		return repoPermissionPush
@@ -563,7 +565,7 @@ func (o *repositoryResourceType) getOrgBasePermission(ctx context.Context, ss se
 
 	perm := org.GetDefaultRepoPermission()
 	if perm == "" {
-		perm = "read" // GitHub default
+		perm = readConst // GitHub default
 	}
 
 	if err := session.SetJSON(ctx, ss, key, perm); err != nil {
@@ -580,7 +582,7 @@ func orgBasePermissionToRepoPermissions(basePerm string) []string {
 		return []string{repoPermissionPull, repoPermissionTriage, repoPermissionPush, repoPermissionMaintain, repoPermissionAdmin}
 	case "write":
 		return []string{repoPermissionPull, repoPermissionTriage, repoPermissionPush}
-	case "read":
+	case readConst:
 		return []string{repoPermissionPull}
 	default:
 		return nil
