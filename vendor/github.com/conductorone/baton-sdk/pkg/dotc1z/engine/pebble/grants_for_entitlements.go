@@ -9,8 +9,10 @@ import (
 	"hash/crc32"
 	"sort"
 
+	"github.com/cockroachdb/pebble/v2"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	reader_v2 "github.com/conductorone/baton-sdk/pb/c1/reader/v2"
+	"github.com/conductorone/baton-sdk/pkg/dotc1z/c1zstore"
 )
 
 // ListGrantsForEntitlements is the batched counterpart to
@@ -77,7 +79,7 @@ EntitlementLoop:
 			remaining := limit - len(out)
 			records, next, err := a.engine.PaginateGrantsByEntitlement(ctx, syncID, entID, intraCursor, remaining)
 			if err != nil {
-				return nil, err
+				return nil, c1zstore.AdaptNotFound(err, pebble.ErrNotFound)
 			}
 			brokeEarly := false
 			var lastIntra string
@@ -151,7 +153,7 @@ func encodeBatchCursor(idx int, intra string, listChecksum uint32) string {
 	if idx < 0 {
 		idx = 0
 	}
-	n := binary.PutUvarint(v[:], uint64(idx))
+	n := binary.PutUvarint(v[:], uint64(idx)) // #nosec G115 -- idx is normalized non-negative; int values fit in uint64.
 	buf = append(buf, v[:n]...)
 	intraBytes := []byte(intra)
 	n = binary.PutUvarint(v[:], uint64(len(intraBytes)))
