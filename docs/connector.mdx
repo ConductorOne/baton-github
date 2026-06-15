@@ -386,7 +386,10 @@ stringData:
 
   # GitHub credentials if configuring with a GitHub app
   BATON_APP_ID: <GitHub app ID>
+  # Supply the private key one of two ways:
   BATON_APP_PRIVATEKEY_PATH: <Path to the private key file for the GitHub app>
+  # ...or pass the raw PEM contents directly (takes precedence when both are set):
+  # BATON_APP_PRIVATEKEY: <Raw PEM contents of the private key for the GitHub app>
   BATON_ORGS: <Name of the single GitHib org the app was created for>
 
   # Optional: include if you want C1 to provision access using this connector

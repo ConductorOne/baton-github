@@ -10,6 +10,7 @@ type Github struct {
 	InstanceUrl string `mapstructure:"instance-url"`
 	AppId string `mapstructure:"app-id"`
 	AppPrivatekeyPath []byte `mapstructure:"app-privatekey-path"`
+	AppPrivatekey string `mapstructure:"app-privatekey"`
 	Org string `mapstructure:"org"`
 	SyncSecrets bool `mapstructure:"sync-secrets"`
 	OmitArchivedRepositories bool `mapstructure:"omit-archived-repositories"`
