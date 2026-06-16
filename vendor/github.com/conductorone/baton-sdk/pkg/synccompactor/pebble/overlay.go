@@ -265,28 +265,29 @@ func overlayPreGateFires(seen *seenSuffixSet, srcStats *reader_v2.SyncStats, buc
 	return int64(seen.size()) >= gateThreshold
 }
 
-// bucketIndexRanges enumerates the bucket's sync-scoped secondary
-// index keyspaces under syncBytes — everything the overlay writer's
-// forEachIndexKeyFromRaw can have emitted for this bucket. Paired with
-// bucket.syncRange (the primary range) these are exactly the ranges a
-// restart must delete.
-func bucketIndexRanges(bucket bucketSpec, syncBytes []byte) [][2][]byte {
+// bucketIndexRanges enumerates the bucket's secondary index keyspaces
+// — everything the overlay writer's forEachIndexKeyFromRaw can have
+// emitted for this bucket. Paired with bucket.syncRange (the primary
+// range) these are exactly the ranges a restart must delete. The file
+// holds one sync and keys carry no sync_id, so each is one contiguous
+// range.
+func bucketIndexRanges(bucket bucketSpec) [][2][]byte {
 	switch bucket.id {
 	case runBucketResources:
 		return [][2][]byte{
-			{enginepkg.ResourceByParentSyncLowerBound(syncBytes), enginepkg.ResourceByParentSyncUpperBound(syncBytes)},
+			{enginepkg.ResourceByParentLowerBound(), enginepkg.ResourceByParentUpperBound()},
 		}
 	case runBucketEntitlements:
 		return [][2][]byte{
-			{enginepkg.EntitlementByResourceSyncLowerBound(syncBytes), enginepkg.EntitlementByResourceSyncUpperBound(syncBytes)},
+			{enginepkg.EntitlementByResourceLowerBound(), enginepkg.EntitlementByResourceUpperBound()},
 		}
 	case runBucketGrants:
 		return [][2][]byte{
-			{enginepkg.GrantByEntitlementSyncLowerBound(syncBytes), enginepkg.GrantByEntitlementSyncUpperBound(syncBytes)},
-			{enginepkg.GrantByEntitlementResourceSyncLowerBound(syncBytes), enginepkg.GrantByEntitlementResourceSyncUpperBound(syncBytes)},
-			{enginepkg.GrantByPrincipalSyncLowerBound(syncBytes), enginepkg.GrantByPrincipalSyncUpperBound(syncBytes)},
-			{enginepkg.GrantByPrincipalResourceTypeSyncLowerBound(syncBytes), enginepkg.GrantByPrincipalResourceTypeSyncUpperBound(syncBytes)},
-			{enginepkg.GrantByNeedsExpansionSyncLowerBound(syncBytes), enginepkg.GrantByNeedsExpansionSyncUpperBound(syncBytes)},
+			{enginepkg.GrantByEntitlementLowerBound(), enginepkg.GrantByEntitlementUpperBound()},
+			{enginepkg.GrantByEntitlementResourceLowerBound(), enginepkg.GrantByEntitlementResourceUpperBound()},
+			{enginepkg.GrantByPrincipalLowerBound(), enginepkg.GrantByPrincipalUpperBound()},
+			{enginepkg.GrantByPrincipalResourceTypeLowerBound(), enginepkg.GrantByPrincipalResourceTypeUpperBound()},
+			{enginepkg.GrantByNeedsExpansionLowerBound(), enginepkg.GrantByNeedsExpansionUpperBound()},
 		}
 	default:
 		return nil
@@ -299,18 +300,18 @@ func bucketIndexRanges(bucket bucketSpec, syncBytes []byte) [][2][]byte {
 // primary + index keyspaces are range-deleted, including anything the
 // whole-source SST path ingested. Stats for the bucket are zeroed; the
 // blind kway materialization recounts from scratch.
-func overlayRestartBucket(ctx context.Context, dest *enginepkg.Engine, bucket bucketSpec, destSyncBytes []byte, writer *overlayBucketRawWriter, stats *mergeStatsAccumulator) error {
+func overlayRestartBucket(ctx context.Context, dest *enginepkg.Engine, bucket bucketSpec, writer *overlayBucketRawWriter, stats *mergeStatsAccumulator) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	writer.discard()
 	b := dest.DB().NewBatch()
 	defer func() { _ = b.Close() }()
-	lo, hi := bucket.syncRange(destSyncBytes)
+	lo, hi := bucket.syncRange()
 	if err := b.DeleteRange(lo, hi, nil); err != nil {
 		return err
 	}
-	for _, r := range bucketIndexRanges(bucket, destSyncBytes) {
+	for _, r := range bucketIndexRanges(bucket) {
 		if err := b.DeleteRange(r[0], r[1], nil); err != nil {
 			return err
 		}
@@ -365,10 +366,6 @@ func MergeFilesIntoOverlay(ctx context.Context, dest *enginepkg.Engine, sources 
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	destSyncBytes, err := codec.EncodeSyncID(destSyncID)
-	if err != nil {
-		return nil, err
-	}
 	hardLimit := cfg.hardLimit()
 	gateThreshold := cfg.gateThreshold()
 	buckets := allBuckets()
@@ -419,10 +416,6 @@ func MergeFilesIntoOverlay(ctx context.Context, dest *enginepkg.Engine, sources 
 		if err := func() error {
 			defer chunk.closeAsync(rm)
 			for _, source := range chunk.handles {
-				sourceSyncBytes, err := codec.EncodeSyncID(source.syncID)
-				if err != nil {
-					return err
-				}
 				for bucketIdx, bucket := range overlayBuckets {
 					st := &states[bucketIdx]
 					if st.mode != overlayBucketActive {
@@ -432,7 +425,7 @@ func MergeFilesIntoOverlay(ctx context.Context, dest *enginepkg.Engine, sources 
 					}
 					seen := seenByBucket[bucketIdx]
 					if source.rank == len(sources)-1 {
-						useSST, err := overlayWholeSourceWorthIt(ctx, source, bucket, sourceSyncBytes, seen)
+						useSST, err := overlayWholeSourceWorthIt(ctx, source, bucket, seen)
 						if err != nil {
 							return err
 						}
@@ -460,7 +453,7 @@ func MergeFilesIntoOverlay(ctx context.Context, dest *enginepkg.Engine, sources 
 							// can't shadow them. The SST path never
 							// grows the seen set, so no degradation
 							// checks apply here.
-							if err := overlayMaterializeWholeSourceBucketSST(ctx, dest, source.engine, bucket, writers[bucketIdx], seen, sourceSyncBytes, destSyncBytes, tmpDir, stats); err != nil {
+							if err := overlayMaterializeWholeSourceBucketSST(ctx, dest, source.engine, bucket, writers[bucketIdx], seen, tmpDir, stats); err != nil {
 								return err
 							}
 							continue
@@ -474,7 +467,7 @@ func MergeFilesIntoOverlay(ctx context.Context, dest *enginepkg.Engine, sources 
 							// through the blind kway path, keeping
 							// SST ingest instead of paying the
 							// map-aware batch path with an empty map.
-							if err := overlayRestartBucket(ctx, dest, bucket, destSyncBytes, writers[bucketIdx], stats); err != nil {
+							if err := overlayRestartBucket(ctx, dest, bucket, writers[bucketIdx], stats); err != nil {
 								return err
 							}
 							st.mode = overlayBucketRestarted
@@ -491,10 +484,10 @@ func MergeFilesIntoOverlay(ctx context.Context, dest *enginepkg.Engine, sources 
 						)
 						continue
 					}
-					err = overlaySinglePassBucket(ctx, source.engine, bucket, writers[bucketIdx], seen, sourceSyncBytes, destSyncBytes, hardLimit)
+					err := overlaySinglePassBucket(ctx, source.engine, bucket, writers[bucketIdx], seen, hardLimit)
 					switch {
 					case errors.Is(err, errOverlayHardLimit):
-						if err := overlayRestartBucket(ctx, dest, bucket, destSyncBytes, writers[bucketIdx], stats); err != nil {
+						if err := overlayRestartBucket(ctx, dest, bucket, writers[bucketIdx], stats); err != nil {
 							return err
 						}
 						// Release the (large) seen map; the blind kway
@@ -566,8 +559,6 @@ func MergeFilesIntoOverlay(ctx context.Context, dest *enginepkg.Engine, sources 
 					tmpDir,
 					chunk.handles[from:],
 					fmt.Sprintf("overlay-fallback-%04d", len(kwayRunFiles)),
-					destSyncID,
-					destSyncBytes,
 					needs[from],
 				)
 				if err != nil {
@@ -587,7 +578,7 @@ func MergeFilesIntoOverlay(ctx context.Context, dest *enginepkg.Engine, sources 
 	// range-deleted). Re-open only those chunks, only for the buckets
 	// that need them. Records carry global source ranks, so backfill
 	// run files merge correctly regardless of build order.
-	if err := overlayBackfillRestartedChunks(ctx, tmpDir, sources, cfg.fanIn, overlayBuckets, states, destSyncID, destSyncBytes, &kwayRunFiles, rm); err != nil {
+	if err := overlayBackfillRestartedChunks(ctx, tmpDir, sources, cfg.fanIn, overlayBuckets, states, &kwayRunFiles, rm); err != nil {
 		return nil, err
 	}
 
@@ -618,13 +609,13 @@ func MergeFilesIntoOverlay(ctx context.Context, dest *enginepkg.Engine, sources 
 	}
 	if len(blindBuckets) > 0 && len(kwayRunFiles) > 0 {
 		kwayStats := newMergeStatsAccumulator()
-		if err := materializeRunFilesToPebble(ctx, dest, tmpDir, kwayRunFiles, destSyncBytes, blindBuckets, kwayStats); err != nil {
+		if err := materializeRunFilesToPebble(ctx, dest, tmpDir, kwayRunFiles, blindBuckets, kwayStats); err != nil {
 			return nil, err
 		}
 		stats.addRecord(kwayStats.record())
 	}
 	for _, i := range resumedIdx {
-		if err := materializeResumedRunFilesToPebble(ctx, tmpDir, kwayRunFiles, destSyncBytes, overlayBuckets[i], seenByBucket[i], writers[i]); err != nil {
+		if err := materializeResumedRunFilesToPebble(ctx, tmpDir, kwayRunFiles, overlayBuckets[i], seenByBucket[i], writers[i]); err != nil {
 			return nil, err
 		}
 	}
@@ -656,8 +647,6 @@ func overlayBackfillRestartedChunks(
 	fanIn int,
 	overlayBuckets []bucketSpec,
 	states []overlayBucketState,
-	destSyncID string,
-	destSyncBytes []byte,
 	kwayRunFiles *[]runFile,
 	rm *asyncRemover,
 ) error {
@@ -685,8 +674,6 @@ func overlayBackfillRestartedChunks(
 				tmpDir,
 				chunk.handles,
 				fmt.Sprintf("overlay-backfill-%04d", len(*kwayRunFiles)),
-				destSyncID,
-				destSyncBytes,
 				needed,
 			)
 		}()
@@ -720,7 +707,6 @@ func materializeResumedRunFilesToPebble(
 	ctx context.Context,
 	tmpDir string,
 	inputs []runFile,
-	destSyncBytes []byte,
 	bucket bucketSpec,
 	seen *seenSuffixSet,
 	writer *overlayBucketRawWriter,
@@ -743,7 +729,7 @@ func materializeResumedRunFilesToPebble(
 		return err
 	}
 	br := bufio.NewReaderSize(io.LimitReader(f, section.length), runFileBufferSize)
-	destLower, _ := bucket.syncRange(destSyncBytes)
+	destLower, _ := bucket.syncRange()
 	var rec runRecord
 	var hdr [runHeaderSize]byte
 	var lastPrimaryKey []byte
@@ -770,12 +756,12 @@ func materializeResumedRunFilesToPebble(
 			if rec.tsNanos <= prevTs {
 				continue
 			}
-			if err := writer.replaceRaw(ctx, bucket, destSyncBytes, rec.key, destLower, rec.value); err != nil {
+			if err := writer.replaceRaw(ctx, bucket, rec.key, destLower, rec.value); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := writer.addRaw(ctx, bucket, destSyncBytes, rec.key, destLower, rec.value); err != nil {
+		if err := writer.addRaw(ctx, bucket, rec.key, destLower, rec.value); err != nil {
 			return err
 		}
 	}
@@ -901,28 +887,26 @@ func overlaySinglePassBucket(
 	bucket bucketSpec,
 	writer *overlayBucketRawWriter,
 	seen *seenSuffixSet,
-	sourceSyncBytes []byte,
-	destSyncBytes []byte,
 	hardLimit int64,
 ) error {
-	destLower, _ := bucket.syncRange(destSyncBytes)
-	sourceLower, sourceUpper := bucket.syncRange(sourceSyncBytes)
-	iter, err := source.DB().NewIter(&cpebble.IterOptions{LowerBound: sourceLower, UpperBound: sourceUpper})
+	lower, upper := bucket.syncRange()
+	iter, err := source.DB().NewIter(&cpebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return err
 	}
 	defer iter.Close()
-	var destKey []byte
 	for iter.First(); iter.Valid(); iter.Next() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		// Dedupe on the primary-key suffix before constructing the
-		// destination key. Admission is hash-based and allocation-free
-		// (see seenSuffixSet); the shallow discovered_at scan keeps the
-		// winner rule identical to K-way / sqlite.
-		sourceSuffix := iter.Key()[len(sourceLower):]
-		k := seen.keyOf(sourceSuffix)
+		// Dedupe on the primary-key suffix. Source keys are already in
+		// final dest form (no sync_id), so admitted records are written
+		// under iter.Key() verbatim. Admission is hash-based and
+		// allocation-free (see seenSuffixSet); the shallow
+		// discovered_at scan keeps the winner rule identical to
+		// K-way / sqlite.
+		suffix := iter.Key()[len(lower):]
+		k := seen.keyOf(suffix)
 		ts, err := discoveredAtNanosFromRaw(bucket, iter.Value())
 		if err != nil {
 			return err
@@ -936,8 +920,7 @@ func overlaySinglePassBucket(
 			if ts <= prevTs {
 				continue
 			}
-			destKey = rewritePrimaryKeyForDestInto(destKey[:0], sourceSuffix, destLower)
-			if err := writer.replaceRaw(ctx, bucket, destSyncBytes, destKey, destLower, iter.Value()); err != nil {
+			if err := writer.replaceRaw(ctx, bucket, iter.Key(), lower, iter.Value()); err != nil {
 				return err
 			}
 			seen.put(k, ts)
@@ -951,8 +934,7 @@ func overlaySinglePassBucket(
 			return errOverlayHardLimit
 		}
 		seen.put(k, ts)
-		destKey = rewritePrimaryKeyForDestInto(destKey[:0], sourceSuffix, destLower)
-		if err := writer.addRaw(ctx, bucket, destSyncBytes, destKey, destLower, iter.Value()); err != nil {
+		if err := writer.addRaw(ctx, bucket, iter.Key(), lower, iter.Value()); err != nil {
 			return err
 		}
 	}
@@ -976,7 +958,7 @@ var overlayWholeSourceMinKeys int64 = 100_000
 // machinery. Bucket size comes from the source's cached stats (free,
 // via the manifest projection) or a bounded key count capped at the
 // threshold.
-func overlayWholeSourceWorthIt(ctx context.Context, source sourceHandle, bucket bucketSpec, sourceSyncBytes []byte, seen *seenSuffixSet) (bool, error) {
+func overlayWholeSourceWorthIt(ctx context.Context, source sourceHandle, bucket bucketSpec, seen *seenSuffixSet) (bool, error) {
 	if seen.size() == 0 {
 		return true, nil
 	}
@@ -985,7 +967,7 @@ func overlayWholeSourceWorthIt(ctx context.Context, source sourceHandle, bucket 
 			return n >= overlayWholeSourceMinKeys, nil
 		}
 	}
-	lower, upper := bucket.syncRange(sourceSyncBytes)
+	lower, upper := bucket.syncRange()
 	iter, err := source.engine.DB().NewIter(&cpebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return false, err
@@ -1013,6 +995,12 @@ func overlayWholeSourceWorthIt(ctx context.Context, source sourceHandle, bucket 
 // strictly newer (by discovered_at) is replaced through the writer's
 // batch path instead, preserving the merge-wide winner rule.
 //
+// Secondary indexes are NOT derived here: the source's index
+// keyspaces are copied verbatim by overlayCopySourceIndexesSST, which
+// applies the same seen-set filter at byte level. Re-deriving and
+// re-sorting index keys per record was the whole-source path's
+// dominant allocation and CPU cost.
+//
 // This is the bulk path for the production skewed shape: a large base
 // sync with a small partial-derived seen set streams through here at
 // SST-build speed instead of paying memtable insertion, flush, and
@@ -1024,14 +1012,11 @@ func overlayMaterializeWholeSourceBucketSST(
 	bucket bucketSpec,
 	writer *overlayBucketRawWriter,
 	seen *seenSuffixSet,
-	sourceSyncBytes []byte,
-	destSyncBytes []byte,
 	tmpDir string,
 	stats *mergeStatsAccumulator,
 ) error {
-	sourceLower, sourceUpper := bucket.syncRange(sourceSyncBytes)
-	destLower, _ := bucket.syncRange(destSyncBytes)
-	iter, err := source.DB().NewIter(&cpebble.IterOptions{LowerBound: sourceLower, UpperBound: sourceUpper})
+	lower, upper := bucket.syncRange()
+	iter, err := source.DB().NewIter(&cpebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return err
 	}
@@ -1049,28 +1034,22 @@ func overlayMaterializeWholeSourceBucketSST(
 			_ = os.Remove(primaryPath)
 		}
 	}()
-	indexWriters, err := newIndexWriterSet(tmpDir, bucket.name+"-overlay-whole-index")
-	if err != nil {
-		return err
-	}
-	defer indexWriters.cleanup()
 
 	wrotePrimary := false
 	checkSeen := seen.size() > 0
-	var destKey []byte
-	var scratch rawIndexScratch
-	emitIndexKey := indexWriters.writeKey
 	for iter.First(); iter.Valid(); iter.Next() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// Source keys are already in final dest form (no sync_id):
+		// winners are written under iter.Key() verbatim.
 		sourceKey := iter.Key()
-		if len(sourceKey) < len(sourceLower) {
-			return fmt.Errorf("overlay merge: source key shorter than lower bound prefix: key=%d prefix=%d", len(sourceKey), len(sourceLower))
+		if len(sourceKey) < len(lower) {
+			return fmt.Errorf("overlay merge: source key shorter than lower bound prefix: key=%d prefix=%d", len(sourceKey), len(lower))
 		}
-		sourceSuffix := sourceKey[len(sourceLower):]
+		suffix := sourceKey[len(lower):]
 		if checkSeen {
-			if prevTs, ok := seen.get(seen.keyOf(sourceSuffix)); ok {
+			if prevTs, ok := seen.get(seen.keyOf(suffix)); ok {
 				// Admitted by an earlier (newer) source. Same rule as
 				// overlaySinglePassBucket: replace only on a strictly
 				// newer discovered_at, through the batch path (rare).
@@ -1082,24 +1061,22 @@ func overlayMaterializeWholeSourceBucketSST(
 				if ts <= prevTs {
 					continue
 				}
-				destKey = rewritePrimaryKeyForDestInto(destKey[:0], sourceSuffix, destLower)
-				if err := writer.replaceRaw(ctx, bucket, destSyncBytes, destKey, destLower, iter.Value()); err != nil {
+				if err := writer.replaceRaw(ctx, bucket, sourceKey, lower, iter.Value()); err != nil {
 					return err
 				}
 				continue
 			}
 		}
-		destKey = rewritePrimaryKeyForDestInto(destKey[:0], sourceSuffix, destLower)
-		if err := primaryWriter.Set(destKey, iter.Value()); err != nil {
+		if err := primaryWriter.Set(sourceKey, iter.Value()); err != nil {
 			return err
 		}
 		wrotePrimary = true
-		// Every unseen key in this path is a winner.
-		stats.countWinnerTotal(bucket.id)
-		if bucket.forEachIndexKey != nil {
-			if err := forEachIndexKeyFromRaw(bucket, destSyncBytes, destKey, destLower, iter.Value(), &scratch, stats, emitIndexKey); err != nil {
-				return err
-			}
+		// Every unseen key in this path is a winner. countWinner does
+		// total + grouping (resources: from the key tail; grants: a
+		// shallow value scan) — the grouping the removed index-key
+		// derivation used to piggyback.
+		if err := stats.countWinner(bucket, sourceKey, lower, iter.Value()); err != nil {
+			return err
 		}
 	}
 	if err := iter.Error(); err != nil {
@@ -1115,7 +1092,139 @@ func overlayMaterializeWholeSourceBucketSST(
 			return fmt.Errorf("overlay merge: ingest whole primary %s: %w", bucket.name, err)
 		}
 	}
-	return indexWriters.closeSortAndIngest(ctx, dest)
+	return overlayCopySourceIndexesSST(ctx, dest, source, bucket, seen, tmpDir)
+}
+
+// indexKeyPrimarySuffix extracts the trailing tuple elements of an
+// index key that form the corresponding record's primary-key suffix —
+// the exact bytes the seen set hashed when the record was admitted:
+//
+//   - grants / entitlements: every index family's last element is the
+//     record's external_id, and the grant/entitlement primary suffix
+//     is sep | esc(external_id) → elems = 1;
+//   - resources (by_parent): the tail is (parent_rt, parent_id,
+//     child_rt, child_id) and the resource primary suffix is
+//     sep | esc(rt) | sep | esc(id) → elems = 2.
+//
+// The returned slice INCLUDES the leading separator, matching
+// key[len(lower):] of the primary key byte-for-byte: tuple escaping
+// guarantees element bytes never contain a bare separator (0x00), so
+// the separators found by LastIndexByte are exactly the element
+// boundaries, and the escaped element bytes are identical in primary
+// and index keys.
+func indexKeyPrimarySuffix(key []byte, elems int) ([]byte, error) {
+	i := len(key)
+	for n := 0; n < elems; n++ {
+		i = bytes.LastIndexByte(key[:i], 0x00)
+		if i < 3 {
+			// Position 3 is the first separator (after the 3-byte
+			// v3|typeIndex|idx header); anything earlier means the key
+			// has fewer tuple elements than the family guarantees.
+			return nil, fmt.Errorf("overlay merge: index key too short for %d-element suffix: %x", elems, key)
+		}
+	}
+	return key[i:], nil
+}
+
+// overlayCopySourceIndexesSST streams one bucket's secondary-index
+// keyspaces from the source verbatim into a single SST and ingests it.
+// Source index keys are already in final dest byte form (v3 keys carry
+// no sync_id) and each family range is already sorted, so no per-record
+// derivation, run files, or external sort are needed.
+//
+// Index entries belonging to records the primary copy filtered out
+// (admitted earlier by a newer source) are dropped by probing the seen
+// set with the index key's primary suffix (indexKeyPrimarySuffix).
+// Replacements that went through the batch path re-emit their own
+// index keys there, so dropping every seen entry here is exact.
+func overlayCopySourceIndexesSST(
+	ctx context.Context,
+	dest *enginepkg.Engine,
+	source *enginepkg.Engine,
+	bucket bucketSpec,
+	seen *seenSuffixSet,
+	tmpDir string,
+) error {
+	ranges := bucketIndexRanges(bucket)
+	if len(ranges) == 0 {
+		return nil
+	}
+	// SST keys must be appended in ascending order; the family ranges
+	// are disjoint, so ordering them by lower bound suffices.
+	sort.Slice(ranges, func(i, j int) bool {
+		return bytes.Compare(ranges[i][0], ranges[j][0]) < 0
+	})
+	suffixElems := 1
+	if bucket.id == runBucketResources {
+		suffixElems = 2
+	}
+	sstPath := filepath.Join(tmpDir, fmt.Sprintf("overlay-whole-%s-index.sst", bucket.name))
+	w, err := newSSTBuilder(sstPath)
+	if err != nil {
+		return err
+	}
+	success := false
+	defer func() {
+		if !success {
+			_ = w.Close()
+		}
+		_ = os.Remove(sstPath)
+	}()
+	checkSeen := seen.size() > 0
+	wrote := false
+	for _, r := range ranges {
+		if err := copyIndexRangeFiltered(ctx, source, r[0], r[1], checkSeen, seen, suffixElems, w, &wrote); err != nil {
+			return err
+		}
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	success = true
+	if !wrote {
+		return nil
+	}
+	if err := dest.DB().Ingest(ctx, []string{sstPath}); err != nil {
+		return fmt.Errorf("overlay merge: ingest whole index %s: %w", bucket.name, err)
+	}
+	return nil
+}
+
+func copyIndexRangeFiltered(
+	ctx context.Context,
+	source *enginepkg.Engine,
+	lower, upper []byte,
+	checkSeen bool,
+	seen *seenSuffixSet,
+	suffixElems int,
+	w *sstBuilder,
+	wrote *bool,
+) error {
+	iter, err := source.DB().NewIter(&cpebble.IterOptions{LowerBound: lower, UpperBound: upper})
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+	for iter.First(); iter.Valid(); iter.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		key := iter.Key()
+		if checkSeen {
+			suffix, err := indexKeyPrimarySuffix(key, suffixElems)
+			if err != nil {
+				return err
+			}
+			if _, ok := seen.get(seen.keyOf(suffix)); ok {
+				continue
+			}
+		}
+		if err := w.Set(key, nil); err != nil {
+			return err
+		}
+		*wrote = true
+	}
+	return iter.Error()
 }
 
 type rawIndexScratch struct {
@@ -1136,7 +1245,6 @@ type rawIndexScratch struct {
 // record passed in is a merge winner.
 func forEachIndexKeyFromRaw(
 	bucket bucketSpec,
-	syncBytes []byte,
 	destKey []byte,
 	destLower []byte,
 	value []byte,
@@ -1161,7 +1269,7 @@ func forEachIndexKeyFromRaw(
 		if len(parentID) == 0 {
 			return nil
 		}
-		scratch.key = enginepkg.AppendResourceIndexKeyRawBytes(scratch.key[:0], syncBytes, parentRT, parentID, rt, id)
+		scratch.key = enginepkg.AppendResourceIndexKeyRawBytes(scratch.key[:0], parentRT, parentID, rt, id)
 		return emit(scratch.key)
 	case runBucketEntitlements:
 		ext, err := decodePrimaryTailBytes1(destKey, destLower, scratch)
@@ -1175,7 +1283,7 @@ func forEachIndexKeyFromRaw(
 		if len(resourceID) == 0 {
 			return nil
 		}
-		scratch.key = enginepkg.AppendEntitlementIndexKeyRawBytes(scratch.key[:0], syncBytes, resourceRT, resourceID, ext)
+		scratch.key = enginepkg.AppendEntitlementIndexKeyRawBytes(scratch.key[:0], resourceRT, resourceID, ext)
 		return emit(scratch.key)
 	case runBucketGrants:
 		ext, err := decodePrimaryTailBytes1(destKey, destLower, scratch)
@@ -1188,29 +1296,29 @@ func forEachIndexKeyFromRaw(
 		}
 		stats.groupGrant(entRT)
 		if len(entID) != 0 && len(principalRT) != 0 && len(principalID) != 0 {
-			scratch.key = enginepkg.AppendGrantByEntitlementIndexKeyRawBytes(scratch.key[:0], syncBytes, entID, principalRT, principalID, ext)
+			scratch.key = enginepkg.AppendGrantByEntitlementIndexKeyRawBytes(scratch.key[:0], entID, principalRT, principalID, ext)
 			if err := emit(scratch.key); err != nil {
 				return err
 			}
 		}
 		if len(entRID) != 0 {
-			scratch.key = enginepkg.AppendGrantByEntitlementResourceIndexKeyRawBytes(scratch.key[:0], syncBytes, entRT, entRID, ext)
+			scratch.key = enginepkg.AppendGrantByEntitlementResourceIndexKeyRawBytes(scratch.key[:0], entRT, entRID, ext)
 			if err := emit(scratch.key); err != nil {
 				return err
 			}
 		}
 		if len(principalRT) != 0 && len(principalID) != 0 {
-			scratch.key = enginepkg.AppendGrantByPrincipalIndexKeyRawBytes(scratch.key[:0], syncBytes, principalRT, principalID, ext)
+			scratch.key = enginepkg.AppendGrantByPrincipalIndexKeyRawBytes(scratch.key[:0], principalRT, principalID, ext)
 			if err := emit(scratch.key); err != nil {
 				return err
 			}
-			scratch.key = enginepkg.AppendGrantByPrincipalResourceTypeIndexKeyRawBytes(scratch.key[:0], syncBytes, principalRT, ext)
+			scratch.key = enginepkg.AppendGrantByPrincipalResourceTypeIndexKeyRawBytes(scratch.key[:0], principalRT, ext)
 			if err := emit(scratch.key); err != nil {
 				return err
 			}
 		}
 		if needsExpansion {
-			scratch.key = enginepkg.AppendGrantByNeedsExpansionIndexKeyRawBytes(scratch.key[:0], syncBytes, ext)
+			scratch.key = enginepkg.AppendGrantByNeedsExpansionIndexKeyRawBytes(scratch.key[:0], ext)
 			if err := emit(scratch.key); err != nil {
 				return err
 			}
@@ -1523,7 +1631,7 @@ func newOverlayBucketRawWriter(dest *enginepkg.Engine, bucket bucketSpec, stats 
 	}
 }
 
-func (w *overlayBucketRawWriter) addRaw(ctx context.Context, bucket bucketSpec, syncBytes []byte, destKey []byte, destLower []byte, value []byte) error {
+func (w *overlayBucketRawWriter) addRaw(ctx context.Context, bucket bucketSpec, destKey []byte, destLower []byte, value []byte) error {
 	if err := w.primary.Set(destKey, value, nil); err != nil {
 		return err
 	}
@@ -1538,7 +1646,7 @@ func (w *overlayBucketRawWriter) addRaw(ctx context.Context, bucket bucketSpec, 
 		}
 		return nil
 	}
-	if err := forEachIndexKeyFromRaw(bucket, syncBytes, destKey, destLower, value, &w.scratch, w.stats, func(key []byte) error {
+	if err := forEachIndexKeyFromRaw(bucket, destKey, destLower, value, &w.scratch, w.stats, func(key []byte) error {
 		return w.index.Set(key, nil, nil)
 	}); err != nil {
 		return err
@@ -1561,7 +1669,7 @@ func (w *overlayBucketRawWriter) addRaw(ctx context.Context, bucket bucketSpec, 
 // Totals are unchanged (same logical key, already counted at first
 // admission); only the grant per-RT grouping can move, because the
 // entitlement resource type lives in the value.
-func (w *overlayBucketRawWriter) replaceRaw(ctx context.Context, bucket bucketSpec, syncBytes []byte, destKey []byte, destLower []byte, value []byte) error {
+func (w *overlayBucketRawWriter) replaceRaw(ctx context.Context, bucket bucketSpec, destKey []byte, destLower []byte, value []byte) error {
 	w.replacements++
 	if err := w.flush(ctx); err != nil {
 		return err
@@ -1572,7 +1680,7 @@ func (w *overlayBucketRawWriter) replaceRaw(ctx context.Context, bucket bucketSp
 			// Seen-set hash collision: the admitted record was a different
 			// key (probability ~1e-28, see seenSuffixSet). Treat the
 			// candidate as a fresh admission.
-			return w.addRaw(ctx, bucket, syncBytes, destKey, destLower, value)
+			return w.addRaw(ctx, bucket, destKey, destLower, value)
 		}
 		return err
 	}
@@ -1581,7 +1689,7 @@ func (w *overlayBucketRawWriter) replaceRaw(ctx context.Context, bucket bucketSp
 	// re-setting an identical index key within the same batch is fine —
 	// batch ops apply in order, so the Set below wins.
 	if bucket.forEachIndexKey != nil {
-		if err := forEachIndexKeyFromRaw(bucket, syncBytes, destKey, destLower, oldVal, &w.scratch, nil, func(key []byte) error {
+		if err := forEachIndexKeyFromRaw(bucket, destKey, destLower, oldVal, &w.scratch, nil, func(key []byte) error {
 			return w.index.Delete(key, nil)
 		}); err != nil {
 			closer.Close()
@@ -1606,7 +1714,7 @@ func (w *overlayBucketRawWriter) replaceRaw(ctx context.Context, bucket bucketSp
 		return err
 	}
 	if bucket.forEachIndexKey != nil {
-		if err := forEachIndexKeyFromRaw(bucket, syncBytes, destKey, destLower, value, &w.scratch, nil, func(key []byte) error {
+		if err := forEachIndexKeyFromRaw(bucket, destKey, destLower, value, &w.scratch, nil, func(key []byte) error {
 			return w.index.Set(key, nil, nil)
 		}); err != nil {
 			return err

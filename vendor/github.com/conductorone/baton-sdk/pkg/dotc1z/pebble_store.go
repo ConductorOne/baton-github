@@ -42,7 +42,7 @@ func (pebbleDriver) OpenStore(ctx context.Context, outputFilePath string, opts S
 	}
 
 	dbDir := filepath.Join(tmpDir, "db")
-	reuse, fileEncoding, err := unpackExistingPebbleC1Z(outputFilePath, dbDir, opts.MaxDecodedPayloadBytes, opts.MaxDecoderMemoryBytes, opts.DecoderPool)
+	reuse, fileEncoding, foldDeadBytes, err := unpackExistingPebbleC1Z(outputFilePath, dbDir, opts.MaxDecodedPayloadBytes, opts.MaxDecoderMemoryBytes, opts.DecoderPool)
 	if err != nil {
 		return nil, cleanupOnError(err)
 	}
@@ -70,6 +70,7 @@ func (pebbleDriver) OpenStore(ctx context.Context, outputFilePath string, opts S
 		readOnly:        opts.ReadOnly,
 		payloadEncoding: encoding,
 		payloadReuse:    reuse,
+		foldDeadBytes:   foldDeadBytes,
 		syncLimit:       opts.SyncLimit,
 		skipCleanup:     opts.SkipCleanup,
 	}, nil
@@ -81,32 +82,32 @@ func unpackExistingPebbleC1Z(
 	maxDecodedPayloadBytes uint64,
 	maxDecoderMemoryBytes uint64,
 	pool *EnvelopeDecoderPool,
-) (*formatv3.PayloadReuse, PayloadEncoding, error) {
+) (*formatv3.PayloadReuse, PayloadEncoding, int64, error) {
 	stat, err := os.Stat(outputFilePath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return nil, PayloadEncodingUnspecified, nil
+		return nil, PayloadEncodingUnspecified, 0, nil
 	case err != nil:
-		return nil, PayloadEncodingUnspecified, err
+		return nil, PayloadEncodingUnspecified, 0, err
 	case stat.Size() == 0:
-		return nil, PayloadEncodingUnspecified, nil
+		return nil, PayloadEncodingUnspecified, 0, nil
 	}
 
 	f, err := os.Open(outputFilePath)
 	if err != nil {
-		return nil, PayloadEncodingUnspecified, err
+		return nil, PayloadEncodingUnspecified, 0, err
 	}
 	defer f.Close()
 
 	header, err := formatv3.ReadManifestHeader(f)
 	if err != nil {
-		return nil, PayloadEncodingUnspecified, err
+		return nil, PayloadEncodingUnspecified, 0, err
 	}
-	if Engine(header.GetEngine()) != EnginePebble {
-		return nil, PayloadEncodingUnspecified, fmt.Errorf("%w: %s", pebble.ErrUnknownEngine, header.GetEngine())
+	if e := Engine(header.GetEngine()); e != EnginePebble && e != PebbleManifestEngine {
+		return nil, PayloadEncodingUnspecified, 0, fmt.Errorf("%w: %s", pebble.ErrUnknownEngine, header.GetEngine())
 	}
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
-		return nil, PayloadEncodingUnspecified, err
+		return nil, PayloadEncodingUnspecified, 0, err
 	}
 	manifest, reuse, err := formatv3.ExtractEnvelopePayload(f, dbDir,
 		formatv3.WithMaxDecodedPayloadBytes(maxDecodedPayloadBytes),
@@ -114,9 +115,12 @@ func unpackExistingPebbleC1Z(
 		formatv3.WithPayloadDecoderPool(pool),
 	)
 	if err != nil {
-		return nil, PayloadEncodingUnspecified, err
+		return nil, PayloadEncodingUnspecified, 0, err
 	}
-	return reuse, payloadEncodingFromProto(manifest.GetPayloadEncoding()), nil
+	// fold_dead_bytes is inherited from the source file so the waste
+	// accounting survives arbitrary open/save cycles, not just fold
+	// compactions; a fresh file starts at zero.
+	return reuse, payloadEncodingFromProto(manifest.GetPayloadEncoding()), header.GetFoldDeadBytes(), nil
 }
 
 func payloadEncodingFromProto(enc c1zv3.PayloadEncoding) PayloadEncoding {
@@ -142,6 +146,13 @@ type pebbleStore struct {
 	readOnly        bool
 	payloadEncoding PayloadEncoding
 	payloadReuse    *formatv3.PayloadReuse
+	// foldDeadBytes is the cumulative fold-waste counter carried in
+	// the envelope manifest (C1ZManifestV3.fold_dead_bytes): seeded
+	// from the file this store was opened from, optionally bumped by
+	// AddFoldDeadBytes during a fold compaction, and written back at
+	// save. Guarded by closeMu (writes happen on the compactor's
+	// single merge goroutine; the lock just pairs it with save/Close).
+	foldDeadBytes int64
 
 	// syncLimit and skipCleanup mirror StoreOptions and feed into
 	// Cleanup. The Adapter intentionally has no awareness of these
@@ -187,6 +198,10 @@ type pebbleStoreFileOps struct {
 
 func (f pebbleStoreFileOps) CloneSync(ctx context.Context, outPath string, syncID string, opts ...CloneSyncOption) error {
 	return f.inner.CloneSync(ctx, outPath, syncID, opts...)
+}
+
+func (f pebbleStoreFileOps) CopyIsolateSync(ctx context.Context, outPath string, syncID string, opts ...CloneSyncOption) error {
+	return f.inner.CopyIsolateSync(ctx, outPath, syncID, opts...)
 }
 
 func (f pebbleStoreFileOps) GenerateSyncDiff(ctx context.Context, baseSyncID, appliedSyncID string) (string, error) {
@@ -248,11 +263,13 @@ func (s *pebbleStore) CloseEngineOnly() error {
 	return s.engine.Close()
 }
 
-// NormalizeForFixtureSave flushes and compacts one sync, then marks the
-// store dirty so Close writes a fresh c1z envelope. Intentionally
-// narrow (consumed by benchmark fixture generation via
+// NormalizeForFixtureSave flushes and compacts the single sync, then
+// marks the store dirty so Close writes a fresh c1z envelope.
+// Intentionally narrow (consumed by benchmark fixture generation via
 // pebble.NormalizeForFixtureSave): fixtures should not measure WAL
-// replay or un-compacted LSM shape left over from generation.
+// replay or un-compacted LSM shape left over from generation. The
+// syncID arg is accepted for signature parity but ignored — the file
+// holds one sync and CompactAllRanges covers the whole keyspace.
 func (s *pebbleStore) NormalizeForFixtureSave(ctx context.Context, syncID string) error {
 	if s == nil || s.engine == nil {
 		return nil
@@ -263,7 +280,7 @@ func (s *pebbleStore) NormalizeForFixtureSave(ctx context.Context, syncID string
 	if err := s.engine.Flush(ctx); err != nil {
 		return err
 	}
-	if err := s.engine.CompactSyncRanges(ctx, syncID); err != nil {
+	if err := s.engine.CompactAllRanges(ctx); err != nil {
 		return err
 	}
 	s.closeMu.Lock()
@@ -281,6 +298,21 @@ func (s *pebbleStore) MarkDirty() {
 	s.closeMu.Lock()
 	if !s.closed {
 		s.dirty = true
+	}
+	s.closeMu.Unlock()
+}
+
+// AddFoldDeadBytes bumps the cumulative fold-waste counter persisted
+// in the envelope manifest at save. Called by the fold compactor with
+// the raw bytes its merge shadowed in the base keyspace (see
+// pebble.AddFoldDeadBytes for the Writer-level accessor).
+func (s *pebbleStore) AddFoldDeadBytes(n int64) {
+	if s == nil || n <= 0 {
+		return
+	}
+	s.closeMu.Lock()
+	if !s.closed {
+		s.foldDeadBytes += n
 	}
 	s.closeMu.Unlock()
 }
@@ -320,141 +352,14 @@ func (s *pebbleStore) EndSync(ctx context.Context) error {
 	return s.markDirty(s.Adapter.EndSync(ctx))
 }
 
-// Cleanup prunes old sync data per the SDK retention policy. The
-// Adapter-level Cleanup is a no-op (it doesn't have access to the
-// retention options); the pebbleStore owns those options and
-// drives the policy here.
-//
-// Mirrors (*C1File).Cleanup: gather sync_runs, apply
-// SelectSyncsToDelete, range-delete every keyspace scoped to each
-// pruned sync, then compact + flush so the next checkpoint sees the
-// reclaimed bytes (the Pebble analogue of SQLite VACUUM).
-//
-// Cancellation model — three passes with different urgency:
-//
-//   - Pass 1 (logical deletions): once we've committed to a
-//     toDelete list, we finish every DeleteSyncData call we can.
-//     Each is microseconds (tombstones-only). Between syncs we
-//     check ctx as a safety valve for pathological "thousands of
-//     deletes + write stall" cases; if we bail mid-pass we return
-//     ctx.Err() so syncer.go:531 marks the sync ErrSyncNotComplete
-//     and reattempts on the next run.
-//
-//   - Pass 2 (compaction): purely opportunistic. Compact rewrites
-//     SSTs (seconds to minutes) and pebble's background compactor
-//     handles eventual disk reclamation regardless of whether we
-//     run it here. We skip the whole pass on ctx cancel and log
-//     per-sync failures as warnings — neither blocks Cleanup from
-//     reporting success.
-//
-//   - Pass 3 (flush): also opportunistic. Skipped on ctx cancel
-//     because the dirty flag we set up-front guarantees Close →
-//     CheckpointTo will flush at the next safe boundary.
-//
-// Net effect: if the syncer's runDuration expires mid-Cleanup,
-// every logical deletion we managed to start completes (so the
-// next Cleanup re-selects against an accurate post-prune view),
-// and we return ctx.Err() to signal the syncer to retry. If the
-// budget expires only during the opportunistic passes, the syncer
-// sees a successful Cleanup and the sync proceeds normally —
-// pebble's background work catches up on the disk reclamation.
+// Cleanup is a no-op for the Pebble v3 engine. A c1z holds exactly one
+// sync by contract — StartNewSync replaces any prior sync in place (see
+// Engine.ResetForNewSync) — so there is never stale sync data to prune.
+// The SDK retention policy (SelectSyncsToDelete, WithSyncLimit,
+// BATON_KEEP_SYNC_COUNT) applies only to the multi-sync SQLite engine;
+// those options are accepted on the Pebble store but inert. The method
+// stays to satisfy connectorstore.Writer.
 func (s *pebbleStore) Cleanup(ctx context.Context) error {
-	l := ctxzap.Extract(ctx)
-
-	if s.skipCleanup {
-		l.Info("skip_cleanup option is set, skipping cleanup of old syncs")
-		return nil
-	}
-	if CleanupSkippedByEnv() {
-		l.Info("BATON_SKIP_CLEANUP is set, skipping cleanup of old syncs")
-		return nil
-	}
-	if s.readOnly {
-		return nil
-	}
-
-	candidates, err := s.CleanupCandidates(ctx)
-	if err != nil {
-		return err
-	}
-
-	currentSyncID := s.CurrentSyncID()
-	syncLimit := ResolveCleanupSyncLimit(s.syncLimit, currentSyncID != "")
-	l.Debug("found syncs",
-		zap.Int("candidate_count", len(candidates)),
-		zap.Int("sync_limit", syncLimit))
-
-	toDelete := SelectSyncsToDelete(candidates, currentSyncID, syncLimit)
-	if len(toDelete) == 0 {
-		return nil
-	}
-	// Mark dirty before any LSM mutation. A Cleanup that successfully
-	// tombstoned one sync and then errored (context cancel, Compact
-	// panic, Flush failure) must still drive Close → save →
-	// CheckpointTo so the on-disk envelope reflects the in-memory
-	// deletions. Otherwise reopening the c1z would resurrect the
-	// pruned syncs.
-	s.closeMu.Lock()
-	s.dirty = true
-	s.closeMu.Unlock()
-
-	l.Info("Cleaning up old sync data...",
-		zap.Int("delete_count", len(toDelete)),
-		zap.Int("sync_limit", syncLimit))
-
-	// === Pass 1: logical deletions (must complete) ===
-	deleted := 0
-	for _, id := range toDelete {
-		if err := ctx.Err(); err != nil {
-			l.Info("pebble Cleanup: interrupted mid-pass; remaining syncs deferred to next run",
-				zap.Int("deleted", deleted),
-				zap.Int("remaining", len(toDelete)-deleted),
-				zap.Error(err))
-			return err
-		}
-		if err := s.engine.DeleteSyncData(ctx, id); err != nil {
-			return fmt.Errorf("pebble Cleanup: DeleteSyncData(%q): %w", id, err)
-		}
-		l.Info("Removed old sync data.", zap.String("sync_id", id))
-		deleted++
-	}
-
-	// === Pass 2: opportunistic compaction ===
-	// Skip on cancellation — pebble's background compactor will
-	// reclaim the deleted bytes asynchronously, and a re-run of
-	// Cleanup won't (and doesn't need to) reattempt compaction
-	// because previously-deleted syncs aren't in the next
-	// toDelete list. This is a soft permanent skip; the bg
-	// compactor is the eventual cleanup path.
-	compacted := 0
-	for _, id := range toDelete {
-		if ctx.Err() != nil {
-			l.Info("pebble Cleanup: compaction pass interrupted; deferring to background compactor",
-				zap.Int("compacted", compacted),
-				zap.Int("remaining", len(toDelete)-compacted))
-			break
-		}
-		if err := s.engine.CompactSyncRanges(ctx, id); err != nil {
-			l.Warn("pebble Cleanup: CompactSyncRanges failed; tombstones will linger until background compaction",
-				zap.String("sync_id", id),
-				zap.Error(err))
-		}
-		compacted++
-	}
-
-	// === Pass 3: opportunistic flush ===
-	// Skip on cancellation. Close → CheckpointTo Flushes anyway,
-	// and the dirty flag we set up-front guarantees Close runs the
-	// save path. The only failure mode skipping Flush opens is
-	// "process crashes between Cleanup return and Close call" —
-	// pebble's WAL recovery handles that, so the tombstones survive
-	// either way.
-	if ctx.Err() == nil {
-		if err := s.engine.Flush(ctx); err != nil {
-			l.Warn("pebble Cleanup: Flush failed; tombstones will flush at Close",
-				zap.Error(err))
-		}
-	}
 	return nil
 }
 
@@ -586,6 +491,9 @@ func (s *pebbleStore) save(ctx context.Context) error {
 	manifest, err := pebble.BuildManifestWithSyncRuns(ctx, s.engine, s.payloadEncoding)
 	if err != nil {
 		return err
+	}
+	if s.foldDeadBytes > 0 {
+		manifest.SetFoldDeadBytes(s.foldDeadBytes)
 	}
 	encodeStart := time.Now()
 	if _, err := formatv3.WriteEnvelopeWithReuse(out, manifest, checkpointDir, s.payloadReuse); err != nil {
