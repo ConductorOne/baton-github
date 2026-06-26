@@ -2548,10 +2548,8 @@ func (s *syncer) loadStore(ctx context.Context) error {
 		return err
 	}
 
-	// TODO: Remove when pebble supports session store.
-	sessionStore, ok := store.(sessions.SessionStore)
-	if s.setSessionStore != nil && ok {
-		s.setSessionStore.SetSessionStore(ctx, sessionStore)
+	if s.setSessionStore != nil {
+		s.setSessionStore.SetSessionStore(ctx, store.SessionStore())
 	}
 	s.store = store
 
@@ -2907,7 +2905,7 @@ func NewSyncer(ctx context.Context, c types.ConnectorClient, opts ...SyncOpt) (S
 	s.wireCountsDBSizeProvider()
 
 	if s.externalResourceC1ZPath != "" {
-		externalC1ZReader, err := dotc1z.NewExternalC1FileReader(ctx, s.tmpDir, s.externalResourceC1ZPath)
+		externalC1ZReader, err := dotc1z.NewStore(ctx, s.externalResourceC1ZPath, dotc1z.WithTmpDir(s.tmpDir), dotc1z.WithReadOnly(true))
 		if err != nil {
 			return nil, err
 		}
