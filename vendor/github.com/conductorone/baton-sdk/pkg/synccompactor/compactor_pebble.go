@@ -19,6 +19,7 @@ import (
 	v3 "github.com/conductorone/baton-sdk/pb/c1/storage/v3"
 	"github.com/conductorone/baton-sdk/pkg/connectorstore"
 	"github.com/conductorone/baton-sdk/pkg/dotc1z"
+	"github.com/conductorone/baton-sdk/pkg/dotc1z/c1zstore"
 	enginepkg "github.com/conductorone/baton-sdk/pkg/dotc1z/engine/pebble"
 	formatv3 "github.com/conductorone/baton-sdk/pkg/dotc1z/format/v3"
 	mergepkg "github.com/conductorone/baton-sdk/pkg/synccompactor/pebble"
@@ -33,7 +34,7 @@ import (
 // This is the only supported way to choose the engine; an engine
 // passed through WithC1ZOptions does not select the compaction
 // strategy and is overridden.
-func WithEngine(engine dotc1z.Engine) Option {
+func WithEngine(engine c1zstore.Engine) Option {
 	return func(c *Compactor) {
 		c.engine = engine
 	}
@@ -339,7 +340,7 @@ func fileSizeOrZero(path string) int64 {
 // pre-static-registration era. Pebble is now registered by dotc1z init, so this
 // is a cheap sanity check.
 func ensurePebbleRegistered() error {
-	if _, ok := dotc1z.EngineDriverFor(dotc1z.EnginePebble); ok {
+	if _, ok := dotc1z.EngineDriverFor(c1zstore.EnginePebble); ok {
 		return nil
 	}
 	return dotc1z.ErrEngineNotAvailable
@@ -790,6 +791,26 @@ func (c *Compactor) compactPebble(ctx context.Context, newSyncId string) error {
 	destEng, ok := enginepkg.AsEngine(c.compactedC1z)
 	if !ok {
 		return errors.New("compactPebble: compacted store is not a pebble engine")
+	}
+
+	// runPebbleRebuild's StartNewSync→EndSync left the dest engine SEALED
+	// (writes refused, compactions paused). The merge below writes the whole
+	// compacted dataset — overlay mode through raw memtable batches — so
+	// bind the sync first: unseals the engine and resumes the compaction
+	// scheduler. Without this, L0 accumulates with no compactions granted
+	// until pebble stalls writes at L0StopWritesThreshold, permanently
+	// (nothing else resumes the scheduler mid-merge).
+	//
+	// Yes, "SetCurrentSync to restart compactions" is an odd spelling. It
+	// is deliberate: unseal/resume is not a public engine operation, because
+	// the sealed state exists precisely to guarantee "no record writes
+	// without a bound sync". Binding the sync we're about to write under is
+	// the one sanctioned way to declare that intent, and unseal+resume ride
+	// along as consequences (see Engine.SetCurrentSync / Engine.seal). An
+	// exported ResumeCompactions-style escape hatch would let callers write
+	// on a sealed engine again, recreating the very hang this fixes.
+	if err := destEng.SetCurrentSync(newSyncId); err != nil {
+		return fmt.Errorf("compactPebble: bind dest sync: %w", err)
 	}
 
 	pebbleCompactorMode := c.pebbleMode
