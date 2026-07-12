@@ -287,6 +287,7 @@ github.com/conductorone/baton-sdk/pkg/bid
 github.com/conductorone/baton-sdk/pkg/cli
 github.com/conductorone/baton-sdk/pkg/config
 github.com/conductorone/baton-sdk/pkg/connectorbuilder
+github.com/conductorone/baton-sdk/pkg/connectorclient
 github.com/conductorone/baton-sdk/pkg/connectorrunner
 github.com/conductorone/baton-sdk/pkg/connectorstore
 github.com/conductorone/baton-sdk/pkg/crypto
