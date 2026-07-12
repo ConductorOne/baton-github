@@ -264,6 +264,10 @@ var (
 		WithDescription("The path to the c1z file to sync external baton resources with"),
 		WithPersistent(true),
 		WithExportTarget(ExportTargetNone))
+	PreviousSyncC1ZField = StringField("previous-sync-c1z",
+		WithDescription("The path to the previous sync c1z file to use as a source-cache replay input"),
+		WithPersistent(true),
+		WithExportTarget(ExportTargetNone))
 	externalResourceEntitlementIdFilter = StringField("external-resource-entitlement-id-filter",
 		WithDescription("The entitlement that external users, groups must have access to sync external baton resources"),
 		WithPersistent(true),
@@ -431,6 +435,7 @@ var DefaultFields = append([]SchemaField{
 	skipEntitlementsAndGrants,
 	skipGrants,
 	externalResourceC1ZField,
+	PreviousSyncC1ZField,
 	externalResourceEntitlementIdFilter,
 	KeepPreviousSyncC1ZField,
 	diffSyncsField,

@@ -7,6 +7,8 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/session"
+	"github.com/conductorone/baton-sdk/pkg/sourcecache"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/types/tasks"
 	"github.com/conductorone/baton-sdk/pkg/uotel"
@@ -62,6 +64,46 @@ type ResourceSyncerV2Limited interface {
 
 type StaticEntitlementSyncerV2 interface {
 	StaticEntitlements(ctx context.Context, opts resource.SyncOpAttrs) ([]*v2.Entitlement, *resource.SyncOpResults, error)
+}
+
+// TypeScopedGrantsSyncer is the grants-phase analogue of
+// StaticEntitlementSyncerV2: the connector enumerates grants for a WHOLE
+// resource type instead of being called once per resource. Implement it on
+// a resource syncer whose ResourceType carries the v2.TypeScopedGrants
+// annotation; the syncer then issues ListGrants calls with an empty
+// resource id, which the builder routes here.
+//
+// The first call of a sync arrives with an empty page token (the planning
+// call); the connector may answer with rows directly and/or spawn
+// additional independent cursors by attaching a v2.SpawnCursors annotation
+// whose page tokens are delivered back through opts.PageToken, one action
+// each. Source-cache scope/replay/tombstone annotations work exactly as on
+// per-resource grants pages.
+type TypeScopedGrantsSyncer interface {
+	GrantsForResourceType(ctx context.Context, resourceTypeID string, opts resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error)
+}
+
+// syncOpAttrs assembles the per-call SyncOpAttrs handed to V2 resource
+// syncers. SourceCache is never nil: when the runner supplied no lookup
+// (source cache disabled/degraded) connectors see NoopLookup and every
+// lookup misses. Session is likewise never a nil-backed wrapper: without a
+// configured store, connectors see the erroring no-op store instead of a
+// panic on first use.
+func (b *builder) syncOpAttrs(activeSyncID string, token pagination.Token) resource.SyncOpAttrs {
+	sc := b.sourceCache
+	if sc == nil {
+		sc = sourcecache.NoopLookup{}
+	}
+	ss := b.sessionStore
+	if ss == nil {
+		ss = &session.NoOpSessionStore{}
+	}
+	return resource.SyncOpAttrs{
+		SyncID:      activeSyncID,
+		PageToken:   token,
+		Session:     WithSyncId(ss, activeSyncID),
+		SourceCache: sc,
+	}
 }
 
 // ResourceTargetedSyncer extends ResourceSyncer to add capabilities for directly syncing an individual resource
@@ -129,7 +171,7 @@ func (b *builder) ListResources(ctx context.Context, request *v2.ResourcesServic
 		Size:  int(request.GetPageSize()),
 		Token: request.GetPageToken(),
 	}
-	opts := resource.SyncOpAttrs{SyncID: request.GetActiveSyncId(), PageToken: token, Session: WithSyncId(b.sessionStore, request.GetActiveSyncId())}
+	opts := b.syncOpAttrs(request.GetActiveSyncId(), token)
 	out, retOptions, err := rb.List(ctx, request.GetParentResourceId(), opts)
 	if retOptions == nil {
 		retOptions = &resource.SyncOpResults{}
@@ -217,7 +259,7 @@ func (b *builder) ListStaticEntitlements(ctx context.Context, request *v2.Entitl
 		Size:  int(request.GetPageSize()),
 		Token: request.GetPageToken(),
 	}
-	opts := resource.SyncOpAttrs{SyncID: request.GetActiveSyncId(), PageToken: token, Session: WithSyncId(b.sessionStore, request.GetActiveSyncId())}
+	opts := b.syncOpAttrs(request.GetActiveSyncId(), token)
 	out, retOptions, err := rbse.StaticEntitlements(ctx, opts)
 	if retOptions == nil {
 		retOptions = &resource.SyncOpResults{}
@@ -265,7 +307,7 @@ func (b *builder) ListEntitlements(ctx context.Context, request *v2.Entitlements
 		Size:  int(request.GetPageSize()),
 		Token: request.GetPageToken(),
 	}
-	opts := resource.SyncOpAttrs{SyncID: request.GetActiveSyncId(), PageToken: token, Session: WithSyncId(b.sessionStore, request.GetActiveSyncId())}
+	opts := b.syncOpAttrs(request.GetActiveSyncId(), token)
 	out, retOptions, err := rb.Entitlements(ctx, request.GetResource(), opts)
 	if retOptions == nil {
 		retOptions = &resource.SyncOpResults{}
@@ -322,8 +364,29 @@ func (b *builder) ListGrants(ctx context.Context, request *v2.GrantsServiceListG
 		Size:  int(request.GetPageSize()),
 		Token: request.GetPageToken(),
 	}
-	opts := resource.SyncOpAttrs{SyncID: request.GetActiveSyncId(), PageToken: token, Session: WithSyncId(b.sessionStore, request.GetActiveSyncId())}
-	out, retOptions, err := rb.Grants(ctx, request.GetResource(), opts)
+	opts := b.syncOpAttrs(request.GetActiveSyncId(), token)
+
+	reqAnnos := annotations.Annotations(request.GetAnnotations())
+	typeScoped := reqAnnos.Contains(&v2.TypeScopedGrants{})
+
+	var out []*v2.Grant
+	var retOptions *resource.SyncOpResults
+	if typeScoped {
+		// Type-scoped grants call (see v2.TypeScopedGrants): the request
+		// annotation is the routing marker (the resource is a
+		// self-referential {type, type} stub to satisfy wire validation).
+		// Only legal against a syncer that opted in.
+		tsgs, tsOk := rb.(TypeScopedGrantsSyncer)
+		if !tsOk {
+			err = status.Errorf(codes.InvalidArgument,
+				"error: type-scoped list grants for resource type %s, but its syncer does not implement TypeScopedGrantsSyncer", rid.GetResourceType())
+			b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start), err)
+			return nil, err
+		}
+		out, retOptions, err = tsgs.GrantsForResourceType(ctx, rid.GetResourceType(), opts)
+	} else {
+		out, retOptions, err = rb.Grants(ctx, request.GetResource(), opts)
+	}
 	if retOptions == nil {
 		retOptions = &resource.SyncOpResults{}
 	}

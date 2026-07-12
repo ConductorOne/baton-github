@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -39,6 +40,9 @@ type orgResourceType struct {
 	orgs         map[string]struct{}
 	orgCache     *orgNameCache
 	syncSecrets  bool
+	// authScope isolates source-cache scopes per credential; GitHub ETag
+	// visibility is credential-specific (see source_cache.go).
+	authScope string
 }
 
 func organizationResource(
@@ -183,14 +187,42 @@ func (o *orgResourceType) orgRoleGrant(roleName string, org *v2.Resource, princi
 	}))
 }
 
+// listMembersConditional fetches one page of the org member listing for
+// one role, with source-cache revalidation (see source_cache.go for the
+// scope model). The page URL is built with a fixed query-param order so
+// the same logical page hashes to the same scope every sync.
+func (o *orgResourceType) listMembersConditional(
+	ctx context.Context,
+	orgName string,
+	role string,
+	page int,
+	opts resourceSdk.SyncOpAttrs,
+) (*conditionalPage, error) {
+	q := url.Values{}
+	q.Set("page", strconv.Itoa(page))
+	q.Set("per_page", strconv.Itoa(maxPageSize))
+	q.Set("role", role)
+	pageURL := fmt.Sprintf("orgs/%v/members?%s", orgName, q.Encode())
+	return listUsersPageConditional(ctx, o.client, opts.SourceCache, o.authScope, "org-members", pageURL, page, maxPageSize)
+}
+
 func (o *orgResourceType) Grants(
 	ctx context.Context,
 	resource *v2.Resource,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
-	bag, page, err := parsePageToken(opts.PageToken.Token, resource.Id)
-	if err != nil {
+	// The role states carry a JSON pagedListCursor token, so the bag is
+	// unmarshaled directly instead of through parsePageToken (which
+	// assumes integer tokens).
+	bag := &pagination.Bag{}
+	if err := bag.Unmarshal(opts.PageToken.Token); err != nil {
 		return nil, nil, err
+	}
+	if bag.Current() == nil {
+		bag.Push(pagination.PageState{
+			ResourceTypeID: resource.Id.ResourceType,
+			ResourceID:     resource.Id.Resource,
+		})
 	}
 
 	var (
@@ -214,33 +246,36 @@ func (o *orgResourceType) Grants(
 		if err != nil {
 			return nil, nil, err
 		}
-		listOpts := github.ListMembersOptions{
-			Role: rId,
-			ListOptions: github.ListOptions{
-				Page:    page,
-				PerPage: maxPageSize,
-			},
-		}
-		users, resp, err := o.client.Organizations.ListMembers(ctx, orgName, &listOpts)
+		cursor, err := parsePagedListCursor(bag.PageToken())
 		if err != nil {
+			return nil, nil, err
+		}
+		pageRes, err := o.listMembersConditional(ctx, orgName, rId, cursor.Page, opts)
+		if err != nil {
+			var resp *github.Response
+			if pageRes != nil {
+				resp = pageRes.Resp
+			}
 			if isNotFoundError(resp) {
 				return nil, nil, uhttp.WrapErrors(codes.NotFound, fmt.Sprintf("org: %s not found", orgName))
 			}
-			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to list org members")
+			return nil, nil, err
 		}
+		reqAnnos = pageRes.Annos
 
-		var nextPage string
-		nextPage, reqAnnos, err = parseResp(resp)
-		if err != nil {
-			return nil, nil, fmt.Errorf("github-connectorv2: failed to parse response: %w", err)
+		nextToken := ""
+		if pageRes.NextPage != 0 {
+			nextToken, err = pagedListCursor{Page: pageRes.NextPage}.marshal()
+			if err != nil {
+				return nil, nil, err
+			}
 		}
-
-		err = bag.Next(nextPage)
+		err = bag.Next(nextToken)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		for _, user := range users {
+		for _, user := range pageRes.Users {
 			ur, err := userResource(ctx, user, user.GetEmail(), nil)
 			if err != nil {
 				return nil, nil, err
@@ -257,7 +292,7 @@ func (o *orgResourceType) Grants(
 		)
 	}
 
-	pageToken, err = bag.Marshal()
+	pageToken, err := bag.Marshal()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -414,7 +449,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	return nil, nil
 }
 
-func OrgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool) *orgResourceType {
+func OrgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool, authScope string) *orgResourceType {
 	orgMap := make(map[string]struct{})
 
 	for _, o := range orgs {
@@ -428,6 +463,7 @@ func OrgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs [
 		appClient:    appClient,
 		orgCache:     orgCache,
 		syncSecrets:  syncSecrets,
+		authScope:    authScope,
 	}
 }
 

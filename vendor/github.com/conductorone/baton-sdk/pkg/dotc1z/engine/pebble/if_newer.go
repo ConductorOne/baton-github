@@ -45,7 +45,11 @@ func (e *Engine) PutGrantRecordsIfNewer(ctx context.Context, records ...*v3.Gran
 			if r == nil {
 				continue
 			}
-			key := encodeGrantKey(r.GetExternalId())
+			id, err := grantIdentityFromRecord(r)
+			if err != nil {
+				return err
+			}
+			key := encodeGrantIdentityKey(id)
 			oldVal, closer, getErr := e.db.Get(key)
 			switch {
 			case getErr == nil:
@@ -161,7 +165,11 @@ func (e *Engine) PutEntitlementRecordsIfNewer(ctx context.Context, records ...*v
 			if r == nil {
 				continue
 			}
-			key := encodeEntitlementKey(r.GetExternalId())
+			id, err := entitlementIdentityFromRecord(r)
+			if err != nil {
+				return err
+			}
+			key := encodeEntitlementIdentityKey(id)
 			oldVal, closer, getErr := e.db.Get(key)
 			switch {
 			case getErr == nil:
@@ -174,11 +182,16 @@ func (e *Engine) PutEntitlementRecordsIfNewer(ctx context.Context, records ...*v
 					closer.Close()
 					continue
 				}
-				if err := e.deleteEntitlementIndexesRaw(batch, r.GetExternalId(), oldVal); err != nil {
-					closer.Close()
-					return err
-				}
+				oldScope, scanErr := scanEntitlementSourceScopeRaw(oldVal)
 				closer.Close()
+				if scanErr != nil {
+					return scanErr
+				}
+				if oldScope != "" && oldScope != r.GetSourceScopeHash() {
+					if err := batch.Delete(encodeEntitlementBySourceScopeIndexKey(oldScope, id), nil); err != nil {
+						return err
+					}
+				}
 			case errors.Is(getErr, pebble.ErrNotFound):
 			default:
 				return fmt.Errorf("PutEntitlementRecordsIfNewer: get: %w", getErr)
@@ -190,15 +203,21 @@ func (e *Engine) PutEntitlementRecordsIfNewer(ctx context.Context, records ...*v
 			if err := batch.Set(key, val, nil); err != nil {
 				return err
 			}
-			if err := e.writeEntitlementIndexes(batch, r); err != nil {
-				return err
+			if sh := r.GetSourceScopeHash(); sh != "" {
+				if err := batch.Set(encodeEntitlementBySourceScopeIndexKey(sh, id), nil, nil); err != nil {
+					return err
+				}
 			}
 			written++
 		}
 		if written == 0 {
 			return nil
 		}
-		return batch.Commit(writeOpts(e.opts.durability))
+		if err := batch.Commit(writeOpts(e.opts.durability)); err != nil {
+			return err
+		}
+		e.noteEntitlementKeyspaceWrite()
+		return nil
 	})
 }
 

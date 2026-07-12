@@ -40,6 +40,7 @@ func RunConnector[T field.Configurable](
 		}
 
 		builderOpts = append(builderOpts, connectorbuilder.WithSessionStore(runTimeOpts.SessionStore))
+		builderOpts = append(builderOpts, connectorbuilder.WithSourceCache(runTimeOpts.SourceCacheLookup))
 
 		c, err := connectorbuilder.NewConnector(ctx, connector, builderOpts...)
 		if err != nil {

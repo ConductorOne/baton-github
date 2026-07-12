@@ -3,7 +3,9 @@ package connector
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -127,11 +129,18 @@ type GitHub struct {
 	omitArchivedRepositories bool
 	directCollaboratorsOnly  bool
 	enterprises              []string
+	// authScope is a stable, non-secret identity for the configured
+	// credential, mixed into source-cache scope signatures so two
+	// different credentials (with different member visibility) never
+	// share cached scopes. PATs use a token digest; GitHub Apps use the
+	// stable installation identity, which survives hourly installation
+	// token rotation.
+	authScope string
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
 	resourceSyncers := []connectorbuilder.ResourceSyncerV2{
-		OrgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
+		OrgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets, gh.authScope),
 		TeamBuilder(gh.client, gh.orgCache, gh.directCollaboratorsOnly),
 		UserBuilder(gh.client, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises),
 		RepositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories, gh.directCollaboratorsOnly),
@@ -254,7 +263,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 				zap.Error(err))
 		}
 	}
-	return nil, nil
+	return sourceCacheCapabilityAnnotations(), nil
 }
 
 func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annotations, error) {
@@ -279,7 +288,13 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 		}
 	}
 
-	return nil, nil
+	return sourceCacheCapabilityAnnotations(), nil
+}
+
+func sourceCacheCapabilityAnnotations() annotations.Annotations {
+	return annotations.New(v2.SourceCacheCapability_builder{
+		Mode: v2.SourceCacheCapability_MODE_READ_WRITE,
+	}.Build())
 }
 
 // newGitHubClient returns a new GitHub API client authenticated with an access token via oauth2.
@@ -346,7 +361,18 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
+		authScope:                patAuthScope(ghc.Token),
 	}, nil
+}
+
+// patAuthScope derives a stable, non-secret identity from a personal
+// access token for source-cache scope isolation. The digest is truncated
+// (it only needs to distinguish credentials, not resist collision
+// attacks) and never logged alongside anything that would identify it as
+// token-derived material.
+func patAuthScope(token string) string {
+	sum := sha256.Sum256([]byte("baton-github-auth-scope|" + token))
+	return "pat:" + hex.EncodeToString(sum[:8])
 }
 
 func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
@@ -433,6 +459,10 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
+		// The installation identity is stable across the hourly
+		// installation-token rotation, so cached scopes survive rotation
+		// (a per-token digest would go cold every hour).
+		authScope: fmt.Sprintf("app:%s:install:%d", ghc.AppId, installation.GetID()),
 	}
 	return gh, nil
 }

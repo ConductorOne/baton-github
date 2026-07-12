@@ -22,6 +22,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/metrics"
 	"github.com/conductorone/baton-sdk/pkg/retry"
 	"github.com/conductorone/baton-sdk/pkg/sdk"
+	"github.com/conductorone/baton-sdk/pkg/sourcecache"
 	"github.com/conductorone/baton-sdk/pkg/types"
 	"github.com/conductorone/baton-sdk/pkg/types/sessions"
 	"github.com/conductorone/baton-sdk/pkg/types/tasks"
@@ -76,6 +77,7 @@ type builder struct {
 	nowFunc                 func() time.Time
 	clientSecret            *jose.JSONWebKey
 	sessionStore            sessions.SessionStore
+	sourceCache             sourcecache.Lookup
 	metadataProvider        MetadataProvider
 	validateProvider        ValidateProvider
 	ticketManager           TicketManagerLimited
@@ -239,6 +241,30 @@ func WithSessionStore(ss sessions.SessionStore) Opt {
 		b.sessionStore = ss
 		return nil
 	}
+}
+
+// WithSourceCache supplies the connector-facing source-cache Lookup exposed
+// on SyncOpAttrs.SourceCache (see pkg/sourcecache). A nil lookup is
+// normalized to NoopLookup so connectors never nil-check.
+func WithSourceCache(lookup sourcecache.Lookup) Opt {
+	return func(b *builder) error {
+		if lookup == nil {
+			lookup = sourcecache.NoopLookup{}
+		}
+		b.sourceCache = lookup
+		return nil
+	}
+}
+
+// SetSourceCache implements sourcecache.SetLookup so an in-process runner
+// (the syncer, via its connector client) can install/clear the active
+// lookup per sync. Subprocess mode instead routes lookups over
+// BatonSourceCacheService and never calls this.
+func (b *builder) SetSourceCache(_ context.Context, lookup sourcecache.Lookup) {
+	if lookup == nil {
+		lookup = sourcecache.NoopLookup{}
+	}
+	b.sourceCache = lookup
 }
 
 func (b *builder) options(opts ...Opt) error {

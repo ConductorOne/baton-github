@@ -2,6 +2,8 @@ module github.com/conductorone/baton-github
 
 go 1.25.2
 
+replace github.com/conductorone/baton-sdk => /Users/matt.kaniaris/work/baton-sdk-2
+
 require (
 	github.com/conductorone/baton-sdk v0.17.0
 	github.com/deckarep/golang-set/v2 v2.9.0

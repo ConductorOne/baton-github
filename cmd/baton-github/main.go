@@ -14,5 +14,8 @@ var version = "dev"
 
 func main() {
 	ctx := context.Background()
-	config.RunConnector(ctx, "baton-github", version, cfg.Config, connector.NewLambdaConnector, connectorrunner.WithSessionStoreEnabled())
+	config.RunConnector(ctx, "baton-github", version, cfg.Config, connector.NewLambdaConnector,
+		connectorrunner.WithSessionStoreEnabled(),
+		connectorrunner.WithKeepPreviousSyncC1Z(),
+	)
 }

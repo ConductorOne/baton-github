@@ -99,10 +99,14 @@ func (e *Engine) PutResourceRecords(ctx context.Context, records ...*v3.Resource
 		if fresh {
 			opts = pebble.NoSync
 		}
-		if err := priBatch.Commit(opts); err != nil {
+		// One atomic commit: folding the index batch into the primary batch
+		// closes the durability gap where the primary commit landed but the
+		// index commit failed — a divergence that would persist in the saved
+		// artifact if the caller shipped it anyway.
+		if err := priBatch.Apply(idxBatch, nil); err != nil {
 			return err
 		}
-		return idxBatch.Commit(opts)
+		return priBatch.Commit(opts)
 	})
 }
 
@@ -147,15 +151,22 @@ func (e *Engine) DeleteResourceRecord(ctx context.Context, resourceTypeID, resou
 }
 
 func (e *Engine) writeResourceIndexes(batch *pebble.Batch, r *v3.ResourceRecord) error {
-	parent := r.GetParent()
-	if parent == nil || parent.GetResourceId() == "" {
-		return nil
+	if parent := r.GetParent(); parent != nil && parent.GetResourceId() != "" {
+		k := encodeResourceByParentIndexKey(
+			parent.GetResourceTypeId(), parent.GetResourceId(),
+			r.GetResourceTypeId(), r.GetResourceId(),
+		)
+		if err := batch.Set(k, nil, nil); err != nil {
+			return err
+		}
 	}
-	k := encodeResourceByParentIndexKey(
-		parent.GetResourceTypeId(), parent.GetResourceId(),
-		r.GetResourceTypeId(), r.GetResourceId(),
-	)
-	return batch.Set(k, nil, nil)
+	if sh := r.GetSourceScopeHash(); sh != "" {
+		k := encodeResourceBySourceScopeIndexKey(sh, r.GetResourceTypeId(), r.GetResourceId())
+		if err := batch.Set(k, nil, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *Engine) IterateResources(ctx context.Context, yield func(*v3.ResourceRecord) bool) error {
