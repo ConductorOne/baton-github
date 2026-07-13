@@ -19,6 +19,7 @@ import (
 	storage_v3 "github.com/conductorone/baton-sdk/pb/c1/storage/v3"
 	"github.com/conductorone/baton-sdk/pkg/bid"
 	"github.com/conductorone/baton-sdk/pkg/dotc1z"
+	"github.com/conductorone/baton-sdk/pkg/dotc1z/c1zstore"
 	"github.com/conductorone/baton-sdk/pkg/sourcecache"
 	"github.com/conductorone/baton-sdk/pkg/sync/expand"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
@@ -116,7 +117,7 @@ type syncer struct {
 	externalResourceEntitlementIdFilter string
 	previousSyncC1ZPath                 string
 	previousSyncC1ZPathOptional         bool
-	store                               dotc1z.C1ZStore
+	store                               c1zstore.Store
 	externalResourceReader              connectorstore.Reader
 	previousSyncReader                  connectorstore.Reader
 	connector                           types.ConnectorClient
@@ -125,7 +126,7 @@ type syncer struct {
 	transitionHandler                   func(s Action)
 	progressHandler                     func(p *Progress)
 	tmpDir                              string
-	storageEngine                       dotc1z.Engine
+	storageEngine                       c1zstore.Engine
 	skipFullSync                        bool
 	lastCheckPointTime                  time.Time
 	counts                              *progresslog.ProgressLog
@@ -155,7 +156,7 @@ var _ Syncer = (*syncer)(nil)
 // GrantStore.StoreExpandedGrants so the expander package can depend on
 // a single narrow interface without knowing about C1ZStore.
 type expanderStoreAdapter struct {
-	store dotc1z.C1ZStore
+	store c1zstore.Store
 }
 
 func (a expanderStoreAdapter) GetEntitlement(ctx context.Context, req *reader_v2.EntitlementsReaderServiceGetEntitlementRequest) (*reader_v2.EntitlementsReaderServiceGetEntitlementResponse, error) {
@@ -694,6 +695,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 		return err
 	}
 
+	s.sourceCache.contStats.logTotals(ctx)
 	l.Info("Sync complete.")
 
 	_, err = s.connector.Cleanup(ctx, v2.ConnectorServiceCleanupRequest_builder{
@@ -1049,19 +1051,31 @@ func (s *syncer) SyncResources(ctx context.Context, action *Action) error {
 // owns a span — the duplicate inflated trace span counts without adding
 // information.
 func (s *syncer) syncResources(ctx context.Context, action *Action) error {
-	req := v2.ResourcesServiceListResourcesRequest_builder{
-		ResourceTypeId: action.ResourceTypeID,
-		PageToken:      action.PageToken,
-		ActiveSyncId:   s.getActiveSyncID(),
-	}.Build()
-	if action.ParentResourceTypeID != "" && action.ParentResourceID != "" {
-		req.SetParentResourceId(v2.ResourceId_builder{
-			ResourceType: action.ParentResourceTypeID,
-			Resource:     action.ParentResourceID,
-		}.Build())
-	}
-
-	resp, err := s.connector.ListResources(ctx, req)
+	var resp *v2.ResourcesServiceListResourcesResponse
+	err := s.withSourceCacheContinuation(ctx, "sync-resources", func(extra annotations.Annotations) (listAttempt, error) {
+		req := v2.ResourcesServiceListResourcesRequest_builder{
+			ResourceTypeId: action.ResourceTypeID,
+			PageToken:      action.PageToken,
+			ActiveSyncId:   s.getActiveSyncID(),
+			Annotations:    extra,
+		}.Build()
+		if action.ParentResourceTypeID != "" && action.ParentResourceID != "" {
+			req.SetParentResourceId(v2.ResourceId_builder{
+				ResourceType: action.ParentResourceTypeID,
+				Resource:     action.ParentResourceID,
+			}.Build())
+		}
+		r, err := s.connector.ListResources(ctx, req)
+		if err != nil {
+			return listAttempt{}, err
+		}
+		resp = r
+		return listAttempt{
+			annos:     annotations.Annotations(r.GetAnnotations()),
+			rows:      len(r.GetList()),
+			nextToken: r.GetNextPageToken(),
+		}, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -1347,11 +1361,24 @@ func (s *syncer) syncEntitlementsForResource(ctx context.Context, action *Action
 
 	resource := resourceResponse.GetResource()
 
-	resp, err := s.connector.ListEntitlements(ctx, v2.EntitlementsServiceListEntitlementsRequest_builder{
-		Resource:     resource,
-		PageToken:    action.PageToken,
-		ActiveSyncId: s.getActiveSyncID(),
-	}.Build())
+	var resp *v2.EntitlementsServiceListEntitlementsResponse
+	err = s.withSourceCacheContinuation(ctx, "sync-entitlements", func(extra annotations.Annotations) (listAttempt, error) {
+		r, err := s.connector.ListEntitlements(ctx, v2.EntitlementsServiceListEntitlementsRequest_builder{
+			Resource:     resource,
+			PageToken:    action.PageToken,
+			ActiveSyncId: s.getActiveSyncID(),
+			Annotations:  extra,
+		}.Build())
+		if err != nil {
+			return listAttempt{}, err
+		}
+		resp = r
+		return listAttempt{
+			annos:     annotations.Annotations(r.GetAnnotations()),
+			rows:      len(r.GetList()),
+			nextToken: r.GetNextPageToken(),
+		}, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -1944,12 +1971,27 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 		resource = resourceResponse.GetResource()
 	}
 
-	resp, err := s.connector.ListGrants(ctx, v2.GrantsServiceListGrantsRequest_builder{
-		Resource:     resource,
-		PageToken:    action.PageToken,
-		ActiveSyncId: s.getActiveSyncID(),
-		Annotations:  reqAnnos,
-	}.Build())
+	var resp *v2.GrantsServiceListGrantsResponse
+	err := s.withSourceCacheContinuation(ctx, "sync-grants-for-resource", func(extra annotations.Annotations) (listAttempt, error) {
+		annos := make(annotations.Annotations, 0, len(reqAnnos)+len(extra))
+		annos = append(annos, reqAnnos...)
+		annos = append(annos, extra...)
+		r, err := s.connector.ListGrants(ctx, v2.GrantsServiceListGrantsRequest_builder{
+			Resource:     resource,
+			PageToken:    action.PageToken,
+			ActiveSyncId: s.getActiveSyncID(),
+			Annotations:  annos,
+		}.Build())
+		if err != nil {
+			return listAttempt{}, err
+		}
+		resp = r
+		return listAttempt{
+			annos:     annotations.Annotations(r.GetAnnotations()),
+			rows:      len(r.GetList()),
+			nextToken: r.GetNextPageToken(),
+		}, nil
+	})
 	if err != nil {
 		return fmt.Errorf("sync-grants-for-resource: error listing grants: %w", err)
 	}
@@ -2063,16 +2105,40 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 
 	s.handleProgress(ctx, action, len(grants))
 
-	if resp.GetNextPageToken() == "" {
+	if typeScoped {
+		// Cursors don't map 1:1 to resources (one cursor can cover many
+		// groups and may also emit cross-type grants), so the per-resource
+		// "N of M resources covered" accounting is meaningless here and
+		// would trip the "more grant resources than resources" warning on
+		// healthy syncs. Count raw grant rows instead.
+		s.counts.SetGrantsCountOnly(resourceID.GetResourceType())
+		s.counts.AddGrantsProgress(resourceID.GetResourceType(), len(grants))
+		s.counts.LogGrantsProgress(ctx, resourceID.GetResourceType())
+	} else if resp.GetNextPageToken() == "" && !action.Spawned {
+		// A resource counts as covered exactly once: when its ORIGIN
+		// action's page chain ends. Spawned sibling cursors for the same
+		// resource also end with an empty token but must not count, or a
+		// resource with N spawned pages would count N times and trip the
+		// progress anomaly warning on healthy syncs.
 		s.counts.AddGrantsProgress(resourceID.GetResourceType(), 1)
 		s.counts.LogGrantsProgress(ctx, resourceID.GetResourceType())
 	}
 
-	// SpawnCursors: a type-scoped response may enqueue sibling cursors for
-	// the same resource type (e.g. one per connector-defined shard). Each
-	// runs as its own action — scheduled, rate-limited, and checkpointed
-	// like any other pagination. Only meaningful on type-scoped calls;
-	// per-resource responses carrying it are a connector bug.
+	// SpawnCursors: the response may enqueue sibling cursors — each runs
+	// as its own action, scheduled by the worker pool, rate-limited, and
+	// checkpointed like any other pagination.
+	//
+	//   - Type-scoped calls: one cursor per connector-defined shard (e.g.
+	//     50-id delta chunks); actions carry only the resource type.
+	//   - Per-resource calls: parallel page fan-out for page-numbered APIs
+	//     (the connector knows every page URL from page one, so a warm
+	//     sync can revalidate all pages concurrently instead of serially);
+	//     actions carry the resource identity.
+	//
+	// Spawned cursors are ORDINARY pages that happen to be enqueued
+	// eagerly: the SDK assumes nothing about replay — a spawned page may
+	// hit its lookup and replay, miss and fetch cold (page boundary
+	// shifted since last sync), and may chain further via NextPageToken.
 	spawn := &v2.SpawnCursors{}
 	hasSpawn, err := respAnnos.Pick(spawn)
 	if err != nil {
@@ -2080,22 +2146,24 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 	}
 	var spawned []Action
 	if hasSpawn {
-		if !typeScoped {
-			l.Warn("sync-grants-for-resource: SpawnCursors on a per-resource grants response; ignored",
-				zap.String("resource_type_id", action.ResourceTypeID),
-				zap.String("resource_id", action.ResourceID))
-		} else {
-			for _, tok := range spawn.GetPageTokens() {
-				if tok == "" {
-					continue
-				}
-				spawned = append(spawned, Action{Op: SyncGrantsOp, ResourceTypeID: action.ResourceTypeID, PageToken: tok})
+		for _, tok := range spawn.GetPageTokens() {
+			if tok == "" {
+				continue
 			}
-			l.Debug("sync-grants-for-resource: spawned type-scoped grant cursors",
-				zap.String("resource_type_id", action.ResourceTypeID),
-				zap.Int("cursors", len(spawned)),
-				zap.Int64("estimated_total", spawn.GetEstimatedTotal()))
+			spawned = append(spawned, Action{
+				Op:             SyncGrantsOp,
+				ResourceTypeID: action.ResourceTypeID,
+				ResourceID:     action.ResourceID, // empty on type-scoped actions
+				PageToken:      tok,
+				Spawned:        true,
+			})
 		}
+		l.Debug("sync-grants-for-resource: spawned sibling grant cursors",
+			zap.String("resource_type_id", action.ResourceTypeID),
+			zap.String("resource_id", action.ResourceID),
+			zap.Bool("type_scoped", typeScoped),
+			zap.Int("cursors", len(spawned)),
+			zap.Int64("estimated_total", spawn.GetEstimatedTotal()))
 	}
 
 	return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken(), spawned...)
@@ -2975,7 +3043,7 @@ func WithProgressHandler(f func(s *Progress)) SyncOpt {
 
 // WithConnectorStore sets the connector store to use. This is the preferred option.
 // Either this or WithC1ZPath must be provided to create a new syncer.
-func WithConnectorStore(store dotc1z.C1ZStore) SyncOpt {
+func WithConnectorStore(store c1zstore.Store) SyncOpt {
 	return func(s *syncer) {
 		s.store = store
 	}
@@ -2997,7 +3065,7 @@ func WithTmpDir(path string) SyncOpt {
 
 // WithStorageEngine selects the dotc1z storage engine when opening the c1z
 // file via WithC1ZPath. Empty uses the baton-sdk default.
-func WithStorageEngine(engine dotc1z.Engine) SyncOpt {
+func WithStorageEngine(engine c1zstore.Engine) SyncOpt {
 	return func(s *syncer) {
 		s.storageEngine = engine
 	}

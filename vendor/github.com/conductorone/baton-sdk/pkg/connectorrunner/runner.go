@@ -13,7 +13,7 @@ import (
 
 	"github.com/conductorone/baton-sdk/pkg/bid"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
-	"github.com/conductorone/baton-sdk/pkg/dotc1z"
+	"github.com/conductorone/baton-sdk/pkg/dotc1z/c1zstore"
 	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/conductorone/baton-sdk/pkg/healthcheck"
 	"github.com/conductorone/baton-sdk/pkg/synccompactor"
@@ -422,7 +422,7 @@ type runnerConfig struct {
 	syncDifferConfig                      *syncDifferConfig
 	syncCompactorConfig                   *syncCompactorConfig
 	skipFullSync                          bool
-	storageEngine                         dotc1z.Engine
+	storageEngine                         c1zstore.Engine
 	workerCount                           int
 	targetedSyncResourceIDs               []string
 	externalResourceC1Z                   string
@@ -670,7 +670,7 @@ func WithWorkerCount(workerCount int) Option {
 	}
 }
 
-func WithStorageEngine(engine dotc1z.Engine) Option {
+func WithStorageEngine(engine c1zstore.Engine) Option {
 	return func(ctx context.Context, cfg *runnerConfig) error {
 		cfg.storageEngine = engine
 		return nil
@@ -808,6 +808,25 @@ func WithKeepPreviousSyncC1ZRuntimeOptIn() Option {
 		cfg.keepPreviousSyncC1ZEnabled = true
 		return nil
 	}
+}
+
+// DeclaresPreviousSyncCapability reports whether opts include the connector
+// author's replay declaration (WithKeepPreviousSyncC1Z). Used at
+// command-definition time to decide whether the replay CLI flags
+// (--previous-sync-c1z / --keep-previous-sync-c1z) appear in help: they are
+// hidden for the overwhelming majority of connectors that don't support
+// replay, and surfaced only for the ones whose author baked the capability
+// into their RunConnector options. Options are applied to a scratch config;
+// they are plain setters, so this is side-effect free.
+func DeclaresPreviousSyncCapability(ctx context.Context, opts ...Option) bool {
+	cfg := &runnerConfig{}
+	for _, o := range opts {
+		if o == nil {
+			continue
+		}
+		_ = o(ctx, cfg)
+	}
+	return cfg.keepPreviousSyncC1ZCapable
 }
 
 func WithDiffSyncs(c1zPath string, baseSyncID string, newSyncID string) Option {

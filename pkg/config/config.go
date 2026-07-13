@@ -94,6 +94,13 @@ var Config = field.NewConfiguration(
 		syncSecrets,
 		omitArchivedRepositories,
 		directCollaboratorsOnly,
+		// Default to a small worker pool: the source-cache warm path fans
+		// member pages out via SpawnCursors, and cold syncs parallelize
+		// per-resource work. 4 keeps sustained request rate well under
+		// GitHub's secondary (points-per-minute) limits; the SDK limiter
+		// backs off on 429/secondary responses regardless. --workers/
+		// BATON_WORKERS still override.
+		field.WithConnectorDefault(field.WorkerCountField, 4),
 	},
 	field.WithConnectorDisplayName("GitHub v2"),
 	field.WithHelpUrl("/docs/baton/github-v2"),

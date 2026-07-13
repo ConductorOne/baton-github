@@ -15,10 +15,15 @@
 //
 // Invariant that keeps replay safe: a connector must only emit
 // SourceCacheReplay for a scope whose validator it received from THIS sync's
-// Lookup. When source cache is disabled or degraded (no capability, no
-// usable previous sync, unsupported storage engine) the SDK installs
-// NoopLookup, every lookup misses, and a well-behaved connector naturally
-// falls back to full fetch.
+// Lookup. The lookup need not happen in the same call that emits the
+// replay: a planning call may batch-resolve many scopes and pass the
+// verdicts to sibling cursors through SpawnCursors page tokens — that
+// satisfies the invariant, because the validator still originates from the
+// consuming sync. What's forbidden is a validator that outlives a sync
+// (connector-side caches, config, upstream echoes). When source cache is
+// disabled or degraded (no capability, no usable previous sync, unsupported
+// storage engine) the SDK installs NoopLookup, every lookup misses, and a
+// well-behaved connector naturally falls back to full fetch.
 //
 // Replay equivalence: a cached sync must reproduce what a full resync
 // would produce. Replayed rows are verbatim copies of the previous sync's

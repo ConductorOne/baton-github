@@ -176,12 +176,20 @@ func ghFuzzEnvInt(name string, def int) int {
 }
 
 func TestGitHubSourceCacheChurnFuzz(t *testing.T) {
+	for _, workers := range []int{0, 4} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			runGitHubChurnFuzz(t, workers)
+		})
+	}
+}
+
+func runGitHubChurnFuzz(t *testing.T, workers int) {
 	ctx, err := logging.Init(t.Context())
 	require.NoError(t, err)
 
 	seed := int64(ghFuzzEnvInt("BATON_FUZZ_SEED", 20260711))
 	rounds := ghFuzzEnvInt("BATON_FUZZ_ROUNDS", 8)
-	t.Logf("churn fuzz: seed=%d rounds=%d (override with BATON_FUZZ_SEED / BATON_FUZZ_ROUNDS)", seed, rounds)
+	t.Logf("churn fuzz: seed=%d rounds=%d workers=%d (override with BATON_FUZZ_SEED / BATON_FUZZ_ROUNDS)", seed, rounds, workers)
 
 	mock := newMockGitHubOrg(t)
 
@@ -195,6 +203,7 @@ func TestGitHubSourceCacheChurnFuzz(t *testing.T) {
 	}
 
 	h := newGHSyncHarness(ctx, t, mock)
+	h.workers = workers
 	f := &ghFuzzRun{t: t, m: mock, rng: rand.New(rand.NewSource(seed))}
 	ops := ghFuzzOps()
 

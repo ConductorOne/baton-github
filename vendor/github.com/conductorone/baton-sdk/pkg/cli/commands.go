@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/conductorone/baton-sdk/pkg/dotc1z/c1zstore"
 	"github.com/conductorone/baton-sdk/pkg/types"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/maypok86/otter/v2"
@@ -32,7 +33,6 @@ import (
 	baton_v1 "github.com/conductorone/baton-sdk/pb/c1/connectorapi/baton/v1"
 	"github.com/conductorone/baton-sdk/pkg/connectorrunner"
 	"github.com/conductorone/baton-sdk/pkg/crypto"
-	"github.com/conductorone/baton-sdk/pkg/dotc1z"
 	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/conductorone/baton-sdk/pkg/logging"
 	"github.com/conductorone/baton-sdk/pkg/session"
@@ -438,13 +438,20 @@ func MakeMainCommand[T field.Configurable](
 			}
 		}
 
-		if v.GetBool(field.ParallelSyncField.GetName()) {
-			opts = append(opts, connectorrunner.WithWorkerCount(-1))
-		}
-
+		// Worker count resolves through viper with no zero sentinel in the
+		// default chain: explicit flag > env (BATON_WORKERS) > config file >
+		// connector default (field.WithConnectorDefault on WorkerCountField)
+		// > shared default (0). A resolved 0 — explicit or defaulted — means
+		// sequential, which is the runner's zero-value behavior (normalized
+		// to one worker downstream), so no option is appended; -1 means
+		// auto-detect. The deprecated --parallel-sync only applies when
+		// workers resolved to 0.
 		workers := v.GetInt(field.WorkerCountField.GetName())
-		if workers != 0 {
+		switch {
+		case workers != 0:
 			opts = append(opts, connectorrunner.WithWorkerCount(workers))
+		case v.GetBool(field.ParallelSyncField.GetName()):
+			opts = append(opts, connectorrunner.WithWorkerCount(-1))
 		}
 
 		c1zTmpDir := tempdir.Resolve(v.GetString("c1z-temp-dir"))
@@ -509,7 +516,7 @@ func MakeMainCommand[T field.Configurable](
 			return err
 		}
 		if storageEngine != "" {
-			opts = append(opts, connectorrunner.WithStorageEngine(dotc1z.Engine(storageEngine)))
+			opts = append(opts, connectorrunner.WithStorageEngine(c1zstore.Engine(storageEngine)))
 		}
 
 		taskConcurrency := v.GetInt(field.TaskConcurrencyField.GetName())

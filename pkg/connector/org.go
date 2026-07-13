@@ -187,23 +187,100 @@ func (o *orgResourceType) orgRoleGrant(roleName string, org *v2.Resource, princi
 	}))
 }
 
-// listMembersConditional fetches one page of the org member listing for
-// one role, with source-cache revalidation (see source_cache.go for the
-// scope model). The page URL is built with a fixed query-param order so
-// the same logical page hashes to the same scope every sync.
-func (o *orgResourceType) listMembersConditional(
-	ctx context.Context,
-	orgName string,
-	role string,
-	page int,
-	opts resourceSdk.SyncOpAttrs,
-) (*conditionalPage, error) {
+// orgMembersPageURL builds one page's URL with a fixed query-param order
+// so the same logical page hashes to the same scope every sync.
+func orgMembersPageURL(orgName, role string, page int) string {
 	q := url.Values{}
 	q.Set("page", strconv.Itoa(page))
 	q.Set("per_page", strconv.Itoa(maxPageSize))
 	q.Set("role", role)
-	pageURL := fmt.Sprintf("orgs/%v/members?%s", orgName, q.Encode())
-	return listUsersPageConditional(ctx, o.client, opts.SourceCache, o.authScope, "org-members", pageURL, page, maxPageSize)
+	return fmt.Sprintf("orgs/%v/members?%s", orgName, q.Encode())
+}
+
+// listMembersConditional fetches one page of the org member listing for
+// one role, with source-cache revalidation (see source_cache.go for the
+// scope model, the horizon clamp, and token-carried validators).
+func (o *orgResourceType) listMembersConditional(
+	ctx context.Context,
+	orgName string,
+	role string,
+	cursor pagedListCursor,
+	opts resourceSdk.SyncOpAttrs,
+) (*conditionalPage, error) {
+	pageURL := orgMembersPageURL(orgName, role, cursor.Page)
+	return listUsersPageConditional(ctx, o.client, opts.SourceCache, o.authScope, "org-members",
+		pageURL, cursor, maxPageSize)
+}
+
+// cursorForResolvedPage builds a page cursor carrying the page's
+// validator resolution from the origin's batched walk, so the page does
+// no lookup of its own (zero ask/answer bounces on the Lambda
+// continuation). Unqueried pages get an unresolved cursor (single-lookup
+// fallback).
+func cursorForResolvedPage(page int, horizon int, resolved map[int]resolvedPage) pagedListCursor {
+	c := pagedListCursor{Page: page, Horizon: horizon}
+	r, ok := resolved[page]
+	if !ok {
+		return c
+	}
+	if r.Found {
+		c.Resolution = cursorValidatorHit
+		c.Etag = r.Validator
+	} else {
+		c.Resolution = cursorValidatorMiss
+	}
+	return c
+}
+
+// spawnMemberPageCursors resolves one role collection's stored page chain
+// (a single batched lookup — one ask bounce on the Lambda continuation)
+// and computes the spawn set: on a warm sync the connector emits one
+// sibling cursor per stored page 2..horizon and the SDK worker pool
+// revalidates them concurrently instead of one round trip per page
+// serially. Each token is a self-contained single-state pagination bag
+// (the resource identity rides the spawned action) carrying the page's
+// validator, so siblings do no lookups of their own.
+//
+// Returns the page-1 cursor (with its own resolution embedded), the
+// marshaled sibling tokens (nil when there is no stored chain — cold
+// syncs paginate serially exactly as before), or an error, which may
+// wrap sourcecache.ErrLookupDeferred and must propagate.
+func (o *orgResourceType) spawnMemberPageCursors(
+	ctx context.Context,
+	orgName string,
+	role string,
+	opts resourceSdk.SyncOpAttrs,
+) (pagedListCursor, []string, error) {
+	resolved, horizon, err := resolveStoredPageChain(ctx, o.client, opts.SourceCache, o.authScope, "org-members",
+		func(page int) string { return orgMembersPageURL(orgName, role, page) })
+	if err != nil {
+		return pagedListCursor{}, nil, err
+	}
+	if horizon < 2 {
+		// One stored page or none: nothing to fan out. Page 1 still
+		// carries its own resolution (and the real horizon, for the
+		// past-horizon miss propagation on chains) so no further lookups
+		// happen.
+		return cursorForResolvedPage(1, horizon, resolved), nil, nil
+	}
+	tokens := make([]string, 0, horizon-1)
+	for p := 2; p <= horizon; p++ {
+		cursorTok, err := cursorForResolvedPage(p, horizon, resolved).marshal()
+		if err != nil {
+			return pagedListCursor{}, nil, err
+		}
+		sibling := &pagination.Bag{}
+		sibling.Push(pagination.PageState{
+			ResourceTypeID: role,
+			Token:          cursorTok,
+		})
+		tok, err := sibling.Marshal()
+		if err != nil {
+			return pagedListCursor{}, nil, err
+		}
+		tokens = append(tokens, tok)
+	}
+	return cursorForResolvedPage(1, horizon, resolved), tokens, nil
 }
 
 func (o *orgResourceType) Grants(
@@ -250,7 +327,22 @@ func (o *orgResourceType) Grants(
 		if err != nil {
 			return nil, nil, err
 		}
-		pageRes, err := o.listMembersConditional(ctx, orgName, rId, cursor.Page, opts)
+
+		// The collection's first call resolves the stored chain in one
+		// batched lookup and fans out: spawn one sibling cursor per stored
+		// page (each carrying its validator, so siblings do no lookups),
+		// and adopt the horizon so this page's own chain never continues
+		// into sibling-owned pages. Spawned and chained cursors carry a
+		// resolution/horizon already and never re-spawn.
+		var spawnTokens []string
+		if cursor.Page == 1 && cursor.Horizon == 0 && cursor.Resolution == "" {
+			cursor, spawnTokens, err = o.spawnMemberPageCursors(ctx, orgName, rId, opts)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+
+		pageRes, err := o.listMembersConditional(ctx, orgName, rId, cursor, opts)
 		if err != nil {
 			var resp *github.Response
 			if pageRes != nil {
@@ -262,10 +354,25 @@ func (o *orgResourceType) Grants(
 			return nil, nil, err
 		}
 		reqAnnos = pageRes.Annos
+		if len(spawnTokens) > 0 {
+			reqAnnos.Append(v2.SpawnCursors_builder{
+				PageTokens: spawnTokens,
+			}.Build())
+		}
 
 		nextToken := ""
 		if pageRes.NextPage != 0 {
-			nextToken, err = pagedListCursor{Page: pageRes.NextPage}.marshal()
+			nextCursor := pagedListCursor{Page: pageRes.NextPage, Horizon: cursor.Horizon}
+			// Chained pages beyond the stored chain are known misses (the
+			// chain is contiguous): a cold page's continuation, and the
+			// probe past the horizon. Carrying the miss skips their
+			// lookups; if ever wrong it merely forgoes a conditional
+			// request and fetches cold — never stale.
+			if cursor.Resolution == cursorValidatorMiss ||
+				(cursor.Horizon > 0 && pageRes.NextPage > cursor.Horizon) {
+				nextCursor.Resolution = cursorValidatorMiss
+			}
+			nextToken, err = nextCursor.marshal()
 			if err != nil {
 				return nil, nil, err
 			}

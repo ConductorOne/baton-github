@@ -37,6 +37,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/connectorclient"
 	"github.com/conductorone/baton-sdk/pkg/dotc1z"
+	"github.com/conductorone/baton-sdk/pkg/dotc1z/c1zstore"
 	"github.com/conductorone/baton-sdk/pkg/logging"
 	"github.com/conductorone/baton-sdk/pkg/sourcecache"
 	sdkSync "github.com/conductorone/baton-sdk/pkg/sync"
@@ -404,6 +405,9 @@ type ghSyncHarness struct {
 	cc     types.ConnectorClient
 	tmpDir string
 	syncN  int
+	// workers > 0 runs syncs on a parallel worker pool; spawned sibling
+	// cursors (SpawnCursors fan-out) then revalidate concurrently.
+	workers int
 }
 
 func newGHSyncHarness(ctx context.Context, t *testing.T, mock *mockGitHubOrg) *ghSyncHarness {
@@ -480,7 +484,7 @@ func (h *ghSyncHarness) runSync(name string, prevPath string) string {
 	path := filepath.Join(h.tmpDir, fmt.Sprintf("%02d-%s.c1z", h.syncN, name))
 
 	store, err := dotc1z.NewStore(h.ctx, path,
-		dotc1z.WithEngine(dotc1z.EnginePebble),
+		dotc1z.WithEngine(c1zstore.EnginePebble),
 		dotc1z.WithTmpDir(h.tmpDir),
 	)
 	require.NoError(h.t, err)
@@ -489,6 +493,9 @@ func (h *ghSyncHarness) runSync(name string, prevPath string) string {
 		sdkSync.WithConnectorStore(store),
 		sdkSync.WithTmpDir(h.tmpDir),
 		sdkSync.WithSyncResourceTypes([]string{"org"}),
+	}
+	if h.workers > 0 {
+		opts = append(opts, sdkSync.WithWorkerCount(h.workers))
 	}
 	if prevPath != "" {
 		opts = append(opts, sdkSync.WithPreviousSyncC1ZPath(prevPath))
@@ -506,7 +513,7 @@ func (h *ghSyncHarness) runSync(name string, prevPath string) string {
 func (h *ghSyncHarness) snapshot(path string) map[string]string {
 	h.t.Helper()
 	store, err := dotc1z.NewStore(h.ctx, path,
-		dotc1z.WithEngine(dotc1z.EnginePebble),
+		dotc1z.WithEngine(c1zstore.EnginePebble),
 		dotc1z.WithReadOnly(true),
 		dotc1z.WithTmpDir(h.tmpDir),
 	)
@@ -606,6 +613,14 @@ func grantCount(snap map[string]string) int {
 // --- the scenarios -----------------------------------------------------------
 
 func TestGitHubSourceCacheReplayEndToEnd(t *testing.T) {
+	for _, workers := range []int{0, 4} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			runGitHubReplayScenarios(t, workers)
+		})
+	}
+}
+
+func runGitHubReplayScenarios(t *testing.T, workers int) {
 	ctx, err := logging.Init(t.Context())
 	require.NoError(t, err)
 
@@ -622,6 +637,7 @@ func TestGitHubSourceCacheReplayEndToEnd(t *testing.T) {
 	}
 
 	h := newGHSyncHarness(ctx, t, mock)
+	h.workers = workers
 
 	// --- Sync 1: cold ---------------------------------------------------------
 	sync1 := h.runSync("cold", "")
@@ -682,14 +698,15 @@ func TestGitHubSourceCacheReplayEndToEnd(t *testing.T) {
 
 	// --- Sync 5: removal shifts pages left --------------------------------------
 	// Removing the FIRST member shifts every member page's bytes left; the
-	// member count drops to exactly 300, so the previous page-4 scope is
-	// simply never visited and its row does not carry over (the member it
-	// held now lives on page 3, fetched fresh).
+	// member count drops to exactly 300. With spawn fan-out the stored
+	// page-4 scope is still revalidated by its sibling cursor — it answers
+	// 200 with an empty body (its row moved to page 3, fetched fresh) and
+	// persists an empty-page validator.
 	mock.removeMember(1)
 	_ = mock.snapshotCounts()
 	sync5 := h.runSync("warm-remove", sync4b)
 	c5 := mock.snapshotCounts()
-	require.Equal(t, 3, c5["members-200"], "all three member pages shift and re-fetch")
+	require.Equal(t, 4, c5["members-200"], "three shifted member pages + the now-empty stored page 4 re-fetch")
 	require.Equal(t, 1, c5["members-304"], "admin page still replays")
 	control5 := h.runSync("control-remove", "")
 	h.requireEquivalent(sync5, control5, "removal")
@@ -704,13 +721,16 @@ func TestGitHubSourceCacheReplayEndToEnd(t *testing.T) {
 	// Every conditional request answers 200: the warm sync degrades to
 	// exactly a cold sync (fail toward cold), and the NEXT round is warm
 	// again off the new validators.
-	// State: 299 regular members (3 pages: 100/100/99) + 11 admins (1 page).
+	// State: 299 regular members (3 pages: 100/100/99) + 11 admins (1 page),
+	// plus the sticky empty page-4 scope from sync 5 (an empty stored page
+	// keeps revalidating — one free 304 per sync — until a page boundary
+	// shift changes its bytes).
 	mock.evictEtags()
 	_ = mock.snapshotCounts()
 	sync7 := h.runSync("warm-evicted", sync6)
 	c7 := mock.snapshotCounts()
 	require.Zero(t, c7["members-304"], "evicted validators can never 304")
-	require.Equal(t, 4, c7["members-200"], "eviction degrades to a full cold fetch")
+	require.Equal(t, 5, c7["members-200"], "eviction degrades to a full cold fetch (incl. the stored empty page)")
 	control7 := h.runSync("control-evicted", "")
 	h.requireEquivalent(sync7, control7, "total validator eviction")
 
@@ -719,7 +739,7 @@ func TestGitHubSourceCacheReplayEndToEnd(t *testing.T) {
 	sync8 := h.runSync("warm-recovered", sync7)
 	c8 := mock.snapshotCounts()
 	require.Zero(t, c8["members-200"], "post-eviction round is fully warm again")
-	require.Equal(t, 4, c8["members-304"])
+	require.Equal(t, 5, c8["members-304"])
 	control8 := h.runSync("control-recovered", "")
 	h.requireEquivalent(sync8, control8, "recovery after eviction")
 
@@ -730,7 +750,7 @@ func TestGitHubSourceCacheReplayEndToEnd(t *testing.T) {
 	sync9 := h.runSync("warm-chain", sync8)
 	c9 := mock.snapshotCounts()
 	require.Zero(t, c9["members-200"])
-	require.Equal(t, 4, c9["members-304"])
+	require.Equal(t, 5, c9["members-304"])
 	control9 := h.runSync("control-chain", "")
 	h.requireEquivalent(sync9, control9, "replay-only sync as replay source")
 }

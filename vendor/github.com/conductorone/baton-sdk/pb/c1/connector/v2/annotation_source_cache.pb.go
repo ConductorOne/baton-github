@@ -9,6 +9,7 @@
 package v2
 
 import (
+	_ "github.com/envoyproxy/protoc-gen-validate/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -459,11 +460,371 @@ func (b0 SourceCacheReplay_builder) Build() *SourceCacheReplay {
 	return m0
 }
 
+// SourceCacheLookupOffer is attached by the SDK to list REQUESTS when the
+// syncer can answer source-cache lookup asks: the connector declared
+// SourceCacheCapability and a warm previous-sync lookup is installed.
+// Its presence is the connector's permission to answer with
+// SourceCacheLookupAsk instead of rows. Connectors with a direct lookup
+// (in-process, subprocess) never need to defer and may ignore it.
+type SourceCacheLookupOffer struct {
+	state         protoimpl.MessageState `protogen:"hybrid.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourceCacheLookupOffer) Reset() {
+	*x = SourceCacheLookupOffer{}
+	mi := &file_c1_connector_v2_annotation_source_cache_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceCacheLookupOffer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceCacheLookupOffer) ProtoMessage() {}
+
+func (x *SourceCacheLookupOffer) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_connector_v2_annotation_source_cache_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type SourceCacheLookupOffer_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 SourceCacheLookupOffer_builder) Build() *SourceCacheLookupOffer {
+	m0 := &SourceCacheLookupOffer{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
+// SourceCacheLookupAsk is attached to a list RESPONSE in place of rows:
+// the connector needs previous-sync validators before it can serve the
+// page. An ask response must carry NO rows, NO next page token, and no
+// other source-cache annotations; the syncer consumes it (it never
+// reaches page handling), resolves every query, and re-invokes the same
+// request with SourceCacheLookupAnswers attached.
+//
+// Only legal on responses to requests that carried
+// SourceCacheLookupOffer. Bounces are capped per action; a connector
+// that keeps asking past the cap fails the sync loudly.
+type SourceCacheLookupAsk struct {
+	state         protoimpl.MessageState        `protogen:"hybrid.v1"`
+	Queries       []*SourceCacheLookupAsk_Query `protobuf:"bytes,1,rep,name=queries,proto3" json:"queries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourceCacheLookupAsk) Reset() {
+	*x = SourceCacheLookupAsk{}
+	mi := &file_c1_connector_v2_annotation_source_cache_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceCacheLookupAsk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceCacheLookupAsk) ProtoMessage() {}
+
+func (x *SourceCacheLookupAsk) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_connector_v2_annotation_source_cache_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *SourceCacheLookupAsk) GetQueries() []*SourceCacheLookupAsk_Query {
+	if x != nil {
+		return x.Queries
+	}
+	return nil
+}
+
+func (x *SourceCacheLookupAsk) SetQueries(v []*SourceCacheLookupAsk_Query) {
+	x.Queries = v
+}
+
+type SourceCacheLookupAsk_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Queries []*SourceCacheLookupAsk_Query
+}
+
+func (b0 SourceCacheLookupAsk_builder) Build() *SourceCacheLookupAsk {
+	m0 := &SourceCacheLookupAsk{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.Queries = b.Queries
+	return m0
+}
+
+// SourceCacheLookupAnswers is attached by the SDK to the re-invoked
+// REQUEST, carrying the resolution of a prior ask's queries.
+//
+// An ABSENT query (asked but not answered — e.g. dropped to the answer
+// size budget) is distinct from found=false: not-found means the previous
+// sync has no entry (fetch fresh); absent means unresolved (the connector
+// may ask again, subject to the bounce cap). Not-found answers are always
+// complete for the queried set — only found answers with large etags are
+// ever dropped to budget.
+type SourceCacheLookupAnswers struct {
+	state         protoimpl.MessageState             `protogen:"hybrid.v1"`
+	Answers       []*SourceCacheLookupAnswers_Answer `protobuf:"bytes,1,rep,name=answers,proto3" json:"answers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourceCacheLookupAnswers) Reset() {
+	*x = SourceCacheLookupAnswers{}
+	mi := &file_c1_connector_v2_annotation_source_cache_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceCacheLookupAnswers) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceCacheLookupAnswers) ProtoMessage() {}
+
+func (x *SourceCacheLookupAnswers) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_connector_v2_annotation_source_cache_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *SourceCacheLookupAnswers) GetAnswers() []*SourceCacheLookupAnswers_Answer {
+	if x != nil {
+		return x.Answers
+	}
+	return nil
+}
+
+func (x *SourceCacheLookupAnswers) SetAnswers(v []*SourceCacheLookupAnswers_Answer) {
+	x.Answers = v
+}
+
+type SourceCacheLookupAnswers_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Answers []*SourceCacheLookupAnswers_Answer
+}
+
+func (b0 SourceCacheLookupAnswers_builder) Build() *SourceCacheLookupAnswers {
+	m0 := &SourceCacheLookupAnswers{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.Answers = b.Answers
+	return m0
+}
+
+type SourceCacheLookupAsk_Query struct {
+	state protoimpl.MessageState `protogen:"hybrid.v1"`
+	// One of the sourcecache.RowKind values: "resources",
+	// "entitlements", "grants".
+	RowKind       string `protobuf:"bytes,1,opt,name=row_kind,json=rowKind,proto3" json:"row_kind,omitempty"`
+	ScopeHash     string `protobuf:"bytes,2,opt,name=scope_hash,json=scopeHash,proto3" json:"scope_hash,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourceCacheLookupAsk_Query) Reset() {
+	*x = SourceCacheLookupAsk_Query{}
+	mi := &file_c1_connector_v2_annotation_source_cache_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceCacheLookupAsk_Query) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceCacheLookupAsk_Query) ProtoMessage() {}
+
+func (x *SourceCacheLookupAsk_Query) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_connector_v2_annotation_source_cache_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *SourceCacheLookupAsk_Query) GetRowKind() string {
+	if x != nil {
+		return x.RowKind
+	}
+	return ""
+}
+
+func (x *SourceCacheLookupAsk_Query) GetScopeHash() string {
+	if x != nil {
+		return x.ScopeHash
+	}
+	return ""
+}
+
+func (x *SourceCacheLookupAsk_Query) SetRowKind(v string) {
+	x.RowKind = v
+}
+
+func (x *SourceCacheLookupAsk_Query) SetScopeHash(v string) {
+	x.ScopeHash = v
+}
+
+type SourceCacheLookupAsk_Query_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	// One of the sourcecache.RowKind values: "resources",
+	// "entitlements", "grants".
+	RowKind   string
+	ScopeHash string
+}
+
+func (b0 SourceCacheLookupAsk_Query_builder) Build() *SourceCacheLookupAsk_Query {
+	m0 := &SourceCacheLookupAsk_Query{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.RowKind = b.RowKind
+	x.ScopeHash = b.ScopeHash
+	return m0
+}
+
+type SourceCacheLookupAnswers_Answer struct {
+	state     protoimpl.MessageState `protogen:"hybrid.v1"`
+	RowKind   string                 `protobuf:"bytes,1,opt,name=row_kind,json=rowKind,proto3" json:"row_kind,omitempty"`
+	ScopeHash string                 `protobuf:"bytes,2,opt,name=scope_hash,json=scopeHash,proto3" json:"scope_hash,omitempty"`
+	Found     bool                   `protobuf:"varint,3,opt,name=found,proto3" json:"found,omitempty"`
+	// The previous sync's validator; empty when found is false. Cap
+	// matches the lookup RPC (Graph delta tokens run long).
+	Etag          string `protobuf:"bytes,4,opt,name=etag,proto3" json:"etag,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourceCacheLookupAnswers_Answer) Reset() {
+	*x = SourceCacheLookupAnswers_Answer{}
+	mi := &file_c1_connector_v2_annotation_source_cache_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceCacheLookupAnswers_Answer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceCacheLookupAnswers_Answer) ProtoMessage() {}
+
+func (x *SourceCacheLookupAnswers_Answer) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_connector_v2_annotation_source_cache_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *SourceCacheLookupAnswers_Answer) GetRowKind() string {
+	if x != nil {
+		return x.RowKind
+	}
+	return ""
+}
+
+func (x *SourceCacheLookupAnswers_Answer) GetScopeHash() string {
+	if x != nil {
+		return x.ScopeHash
+	}
+	return ""
+}
+
+func (x *SourceCacheLookupAnswers_Answer) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
+func (x *SourceCacheLookupAnswers_Answer) GetEtag() string {
+	if x != nil {
+		return x.Etag
+	}
+	return ""
+}
+
+func (x *SourceCacheLookupAnswers_Answer) SetRowKind(v string) {
+	x.RowKind = v
+}
+
+func (x *SourceCacheLookupAnswers_Answer) SetScopeHash(v string) {
+	x.ScopeHash = v
+}
+
+func (x *SourceCacheLookupAnswers_Answer) SetFound(v bool) {
+	x.Found = v
+}
+
+func (x *SourceCacheLookupAnswers_Answer) SetEtag(v string) {
+	x.Etag = v
+}
+
+type SourceCacheLookupAnswers_Answer_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	RowKind   string
+	ScopeHash string
+	Found     bool
+	// The previous sync's validator; empty when found is false. Cap
+	// matches the lookup RPC (Graph delta tokens run long).
+	Etag string
+}
+
+func (b0 SourceCacheLookupAnswers_Answer_builder) Build() *SourceCacheLookupAnswers_Answer {
+	m0 := &SourceCacheLookupAnswers_Answer{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.RowKind = b.RowKind
+	x.ScopeHash = b.ScopeHash
+	x.Found = b.Found
+	x.Etag = b.Etag
+	return m0
+}
+
 var File_c1_connector_v2_annotation_source_cache_proto protoreflect.FileDescriptor
 
 const file_c1_connector_v2_annotation_source_cache_proto_rawDesc = "" +
 	"\n" +
-	"-c1/connector/v2/annotation_source_cache.proto\x12\x0fc1.connector.v2\"\x9e\x01\n" +
+	"-c1/connector/v2/annotation_source_cache.proto\x12\x0fc1.connector.v2\x1a\x17validate/validate.proto\"\x9e\x01\n" +
 	"\x15SourceCacheCapability\x12?\n" +
 	"\x04mode\x18\x01 \x01(\x0e2+.c1.connector.v2.SourceCacheCapability.ModeR\x04mode\"D\n" +
 	"\x04Mode\x12\x14\n" +
@@ -484,23 +845,47 @@ const file_c1_connector_v2_annotation_source_cache_proto_rawDesc = "" +
 	"\aoverlay\x18\x03 \x01(\bR\aoverlay\x12\x1f\n" +
 	"\vdeleted_ids\x18\x04 \x03(\tR\n" +
 	"deletedIds\x122\n" +
-	"\x15deleted_principal_ids\x18\x05 \x03(\tR\x13deletedPrincipalIdsB6Z4github.com/conductorone/baton-sdk/pb/c1/connector/v2b\x06proto3"
+	"\x15deleted_principal_ids\x18\x05 \x03(\tR\x13deletedPrincipalIds\"\x18\n" +
+	"\x16SourceCacheLookupOffer\"\xc4\x01\n" +
+	"\x14SourceCacheLookupAsk\x12R\n" +
+	"\aqueries\x18\x01 \x03(\v2+.c1.connector.v2.SourceCacheLookupAsk.QueryB\v\xfaB\b\x92\x01\x05\b\x01\x10\x80 R\aqueries\x1aX\n" +
+	"\x05Query\x12$\n" +
+	"\brow_kind\x18\x01 \x01(\tB\t\xfaB\x06r\x04 \x01(@R\arowKind\x12)\n" +
+	"\n" +
+	"scope_hash\x18\x02 \x01(\tB\n" +
+	"\xfaB\ar\x05 \x01(\x80\x02R\tscopeHash\"\xfa\x01\n" +
+	"\x18SourceCacheLookupAnswers\x12J\n" +
+	"\aanswers\x18\x01 \x03(\v20.c1.connector.v2.SourceCacheLookupAnswers.AnswerR\aanswers\x1a\x91\x01\n" +
+	"\x06Answer\x12$\n" +
+	"\brow_kind\x18\x01 \x01(\tB\t\xfaB\x06r\x04 \x01(@R\arowKind\x12)\n" +
+	"\n" +
+	"scope_hash\x18\x02 \x01(\tB\n" +
+	"\xfaB\ar\x05 \x01(\x80\x02R\tscopeHash\x12\x14\n" +
+	"\x05found\x18\x03 \x01(\bR\x05found\x12 \n" +
+	"\x04etag\x18\x04 \x01(\tB\f\xfaB\tr\a(\x80\x80\x04\xd0\x01\x01R\x04etagB6Z4github.com/conductorone/baton-sdk/pb/c1/connector/v2b\x06proto3"
 
 var file_c1_connector_v2_annotation_source_cache_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_c1_connector_v2_annotation_source_cache_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_c1_connector_v2_annotation_source_cache_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_c1_connector_v2_annotation_source_cache_proto_goTypes = []any{
-	(SourceCacheCapability_Mode)(0), // 0: c1.connector.v2.SourceCacheCapability.Mode
-	(*SourceCacheCapability)(nil),   // 1: c1.connector.v2.SourceCacheCapability
-	(*SourceCacheScope)(nil),        // 2: c1.connector.v2.SourceCacheScope
-	(*SourceCacheReplay)(nil),       // 3: c1.connector.v2.SourceCacheReplay
+	(SourceCacheCapability_Mode)(0),         // 0: c1.connector.v2.SourceCacheCapability.Mode
+	(*SourceCacheCapability)(nil),           // 1: c1.connector.v2.SourceCacheCapability
+	(*SourceCacheScope)(nil),                // 2: c1.connector.v2.SourceCacheScope
+	(*SourceCacheReplay)(nil),               // 3: c1.connector.v2.SourceCacheReplay
+	(*SourceCacheLookupOffer)(nil),          // 4: c1.connector.v2.SourceCacheLookupOffer
+	(*SourceCacheLookupAsk)(nil),            // 5: c1.connector.v2.SourceCacheLookupAsk
+	(*SourceCacheLookupAnswers)(nil),        // 6: c1.connector.v2.SourceCacheLookupAnswers
+	(*SourceCacheLookupAsk_Query)(nil),      // 7: c1.connector.v2.SourceCacheLookupAsk.Query
+	(*SourceCacheLookupAnswers_Answer)(nil), // 8: c1.connector.v2.SourceCacheLookupAnswers.Answer
 }
 var file_c1_connector_v2_annotation_source_cache_proto_depIdxs = []int32{
 	0, // 0: c1.connector.v2.SourceCacheCapability.mode:type_name -> c1.connector.v2.SourceCacheCapability.Mode
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	7, // 1: c1.connector.v2.SourceCacheLookupAsk.queries:type_name -> c1.connector.v2.SourceCacheLookupAsk.Query
+	8, // 2: c1.connector.v2.SourceCacheLookupAnswers.answers:type_name -> c1.connector.v2.SourceCacheLookupAnswers.Answer
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_c1_connector_v2_annotation_source_cache_proto_init() }
@@ -514,7 +899,7 @@ func file_c1_connector_v2_annotation_source_cache_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_c1_connector_v2_annotation_source_cache_proto_rawDesc), len(file_c1_connector_v2_annotation_source_cache_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   3,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

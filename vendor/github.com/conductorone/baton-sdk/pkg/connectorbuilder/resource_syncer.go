@@ -2,6 +2,7 @@ package connectorbuilder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -106,6 +107,71 @@ func (b *builder) syncOpAttrs(activeSyncID string, token pagination.Token) resou
 	}
 }
 
+// continuationOpAttrs builds SyncOpAttrs for a list RPC, selecting the
+// source-cache lookup by topology:
+//
+//   - a runner-supplied lookup (in-process interface, subprocess loopback
+//     gRPC) always wins: those topologies answer lookups directly and
+//     never bounce;
+//   - otherwise, when the request carries SourceCacheLookupOffer (and/or
+//     SourceCacheLookupAnswers from a previous bounce), a per-request
+//     ContinuationLookup is installed — it serves answered scopes and
+//     defers the rest via ErrLookupDeferred;
+//   - otherwise NoopLookup (today's behavior).
+//
+// The returned ContinuationLookup is nil when the continuation is not in
+// play for this request.
+func (b *builder) continuationOpAttrs(activeSyncID string, token pagination.Token, reqAnnos annotations.Annotations) (resource.SyncOpAttrs, *sourcecache.ContinuationLookup, error) {
+	attrs := b.syncOpAttrs(activeSyncID, token)
+	if b.sourceCache != nil {
+		return attrs, nil, nil
+	}
+	answersMsg := &v2.SourceCacheLookupAnswers{}
+	hasAnswers, err := reqAnnos.Pick(answersMsg)
+	if err != nil {
+		return attrs, nil, fmt.Errorf("error parsing source-cache lookup answers annotation: %w", err)
+	}
+	if !hasAnswers && !reqAnnos.Contains(&v2.SourceCacheLookupOffer{}) {
+		return attrs, nil, nil
+	}
+	var answers []sourcecache.Answer
+	if hasAnswers {
+		answers = sourcecache.AnswersFromProto(answersMsg)
+	}
+	cl := sourcecache.NewContinuationLookup(answers)
+	attrs.SourceCache = cl
+	return attrs, cl, nil
+}
+
+// continuationOutcome inspects a list handler's result when a
+// ContinuationLookup was installed.
+//
+// Returns (askAnnos, deferred, misuseErr):
+//   - deferred=true: the handler deferred on recorded scopes. Respond with
+//     askAnnos (the SourceCacheLookupAsk), NO rows, NO next page token,
+//     and no failure metrics — this is a protocol turn, not a failure.
+//   - misuseErr != nil: the handler swallowed a deferred lookup (scopes
+//     were recorded but no ErrLookupDeferred propagated). Loud failure:
+//     silently continuing past a deferral re-asks forever and dies at the
+//     bounce cap in production, so it must fail here, visibly.
+//   - all-zero: the handler resolved normally; use its result as-is.
+func continuationOutcome(cl *sourcecache.ContinuationLookup, handlerErr error) (annotations.Annotations, bool, error) {
+	if cl == nil {
+		return nil, false, nil
+	}
+	asked := cl.Asked()
+	if errors.Is(handlerErr, sourcecache.ErrLookupDeferred) && len(asked) > 0 {
+		annos := annotations.Annotations{}
+		annos.Update(sourcecache.AskProto(asked))
+		return annos, true, nil
+	}
+	if handlerErr == nil && len(asked) > 0 {
+		return nil, false, status.Errorf(codes.Internal,
+			"connector swallowed a deferred source-cache lookup (%d scope(s) asked, no error propagated): ErrLookupDeferred must be returned — wrap with %%w, never swallow", len(asked))
+	}
+	return nil, false, nil
+}
+
 // ResourceTargetedSyncer extends ResourceSyncer to add capabilities for directly syncing an individual resource
 //
 // Implementing this interface indicates the connector supports calling "get" on a resource
@@ -171,10 +237,24 @@ func (b *builder) ListResources(ctx context.Context, request *v2.ResourcesServic
 		Size:  int(request.GetPageSize()),
 		Token: request.GetPageToken(),
 	}
-	opts := b.syncOpAttrs(request.GetActiveSyncId(), token)
+	opts, contLookup, err := b.continuationOpAttrs(request.GetActiveSyncId(), token, annotations.Annotations(request.GetAnnotations()))
+	if err != nil {
+		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start), err)
+		return nil, err
+	}
 	out, retOptions, err := rb.List(ctx, request.GetParentResourceId(), opts)
 	if retOptions == nil {
 		retOptions = &resource.SyncOpResults{}
+	}
+
+	askAnnos, deferred, misuseErr := continuationOutcome(contLookup, err)
+	if misuseErr != nil {
+		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start), misuseErr)
+		return nil, misuseErr
+	}
+	if deferred {
+		b.m.RecordTaskSuccess(ctx, tt, b.nowFunc().Sub(start))
+		return v2.ResourcesServiceListResourcesResponse_builder{Annotations: askAnnos}.Build(), nil
 	}
 
 	resp := v2.ResourcesServiceListResourcesResponse_builder{
@@ -307,10 +387,24 @@ func (b *builder) ListEntitlements(ctx context.Context, request *v2.Entitlements
 		Size:  int(request.GetPageSize()),
 		Token: request.GetPageToken(),
 	}
-	opts := b.syncOpAttrs(request.GetActiveSyncId(), token)
+	opts, contLookup, err := b.continuationOpAttrs(request.GetActiveSyncId(), token, annotations.Annotations(request.GetAnnotations()))
+	if err != nil {
+		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start), err)
+		return nil, err
+	}
 	out, retOptions, err := rb.Entitlements(ctx, request.GetResource(), opts)
 	if retOptions == nil {
 		retOptions = &resource.SyncOpResults{}
+	}
+
+	askAnnos, deferred, misuseErr := continuationOutcome(contLookup, err)
+	if misuseErr != nil {
+		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start), misuseErr)
+		return nil, misuseErr
+	}
+	if deferred {
+		b.m.RecordTaskSuccess(ctx, tt, b.nowFunc().Sub(start))
+		return v2.EntitlementsServiceListEntitlementsResponse_builder{Annotations: askAnnos}.Build(), nil
 	}
 
 	resp := v2.EntitlementsServiceListEntitlementsResponse_builder{
@@ -364,9 +458,13 @@ func (b *builder) ListGrants(ctx context.Context, request *v2.GrantsServiceListG
 		Size:  int(request.GetPageSize()),
 		Token: request.GetPageToken(),
 	}
-	opts := b.syncOpAttrs(request.GetActiveSyncId(), token)
-
 	reqAnnos := annotations.Annotations(request.GetAnnotations())
+	opts, contLookup, err := b.continuationOpAttrs(request.GetActiveSyncId(), token, reqAnnos)
+	if err != nil {
+		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start), err)
+		return nil, err
+	}
+
 	typeScoped := reqAnnos.Contains(&v2.TypeScopedGrants{})
 
 	var out []*v2.Grant
@@ -389,6 +487,16 @@ func (b *builder) ListGrants(ctx context.Context, request *v2.GrantsServiceListG
 	}
 	if retOptions == nil {
 		retOptions = &resource.SyncOpResults{}
+	}
+
+	askAnnos, deferred, misuseErr := continuationOutcome(contLookup, err)
+	if misuseErr != nil {
+		b.m.RecordTaskFailure(ctx, tt, b.nowFunc().Sub(start), misuseErr)
+		return nil, misuseErr
+	}
+	if deferred {
+		b.m.RecordTaskSuccess(ctx, tt, b.nowFunc().Sub(start))
+		return v2.GrantsServiceListGrantsResponse_builder{Annotations: askAnnos}.Build(), nil
 	}
 
 	resp := v2.GrantsServiceListGrantsResponse_builder{

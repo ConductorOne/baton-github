@@ -350,3 +350,654 @@ var _ interface {
 	Cause() error
 	ErrorName() string
 } = SourceCacheReplayValidationError{}
+
+// Validate checks the field values on SourceCacheLookupOffer with the rules
+// defined in the proto definition for this message. If any rules are
+// violated, the first error encountered is returned, or nil if there are no violations.
+func (m *SourceCacheLookupOffer) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on SourceCacheLookupOffer with the rules
+// defined in the proto definition for this message. If any rules are
+// violated, the result is a list of violation errors wrapped in
+// SourceCacheLookupOfferMultiError, or nil if none found.
+func (m *SourceCacheLookupOffer) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *SourceCacheLookupOffer) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if len(errors) > 0 {
+		return SourceCacheLookupOfferMultiError(errors)
+	}
+
+	return nil
+}
+
+// SourceCacheLookupOfferMultiError is an error wrapping multiple validation
+// errors returned by SourceCacheLookupOffer.ValidateAll() if the designated
+// constraints aren't met.
+type SourceCacheLookupOfferMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m SourceCacheLookupOfferMultiError) Error() string {
+	msgs := make([]string, 0, len(m))
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m SourceCacheLookupOfferMultiError) AllErrors() []error { return m }
+
+// SourceCacheLookupOfferValidationError is the validation error returned by
+// SourceCacheLookupOffer.Validate if the designated constraints aren't met.
+type SourceCacheLookupOfferValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e SourceCacheLookupOfferValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e SourceCacheLookupOfferValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e SourceCacheLookupOfferValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e SourceCacheLookupOfferValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e SourceCacheLookupOfferValidationError) ErrorName() string {
+	return "SourceCacheLookupOfferValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e SourceCacheLookupOfferValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sSourceCacheLookupOffer.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = SourceCacheLookupOfferValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = SourceCacheLookupOfferValidationError{}
+
+// Validate checks the field values on SourceCacheLookupAsk with the rules
+// defined in the proto definition for this message. If any rules are
+// violated, the first error encountered is returned, or nil if there are no violations.
+func (m *SourceCacheLookupAsk) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on SourceCacheLookupAsk with the rules
+// defined in the proto definition for this message. If any rules are
+// violated, the result is a list of violation errors wrapped in
+// SourceCacheLookupAskMultiError, or nil if none found.
+func (m *SourceCacheLookupAsk) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *SourceCacheLookupAsk) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if l := len(m.GetQueries()); l < 1 || l > 4096 {
+		err := SourceCacheLookupAskValidationError{
+			field:  "Queries",
+			reason: "value must contain between 1 and 4096 items, inclusive",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	for idx, item := range m.GetQueries() {
+		_, _ = idx, item
+
+		if all {
+			switch v := interface{}(item).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, SourceCacheLookupAskValidationError{
+						field:  fmt.Sprintf("Queries[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, SourceCacheLookupAskValidationError{
+						field:  fmt.Sprintf("Queries[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(item).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return SourceCacheLookupAskValidationError{
+					field:  fmt.Sprintf("Queries[%v]", idx),
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	}
+
+	if len(errors) > 0 {
+		return SourceCacheLookupAskMultiError(errors)
+	}
+
+	return nil
+}
+
+// SourceCacheLookupAskMultiError is an error wrapping multiple validation
+// errors returned by SourceCacheLookupAsk.ValidateAll() if the designated
+// constraints aren't met.
+type SourceCacheLookupAskMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m SourceCacheLookupAskMultiError) Error() string {
+	msgs := make([]string, 0, len(m))
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m SourceCacheLookupAskMultiError) AllErrors() []error { return m }
+
+// SourceCacheLookupAskValidationError is the validation error returned by
+// SourceCacheLookupAsk.Validate if the designated constraints aren't met.
+type SourceCacheLookupAskValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e SourceCacheLookupAskValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e SourceCacheLookupAskValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e SourceCacheLookupAskValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e SourceCacheLookupAskValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e SourceCacheLookupAskValidationError) ErrorName() string {
+	return "SourceCacheLookupAskValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e SourceCacheLookupAskValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sSourceCacheLookupAsk.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = SourceCacheLookupAskValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = SourceCacheLookupAskValidationError{}
+
+// Validate checks the field values on SourceCacheLookupAnswers with the rules
+// defined in the proto definition for this message. If any rules are
+// violated, the first error encountered is returned, or nil if there are no violations.
+func (m *SourceCacheLookupAnswers) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on SourceCacheLookupAnswers with the
+// rules defined in the proto definition for this message. If any rules are
+// violated, the result is a list of violation errors wrapped in
+// SourceCacheLookupAnswersMultiError, or nil if none found.
+func (m *SourceCacheLookupAnswers) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *SourceCacheLookupAnswers) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	for idx, item := range m.GetAnswers() {
+		_, _ = idx, item
+
+		if all {
+			switch v := interface{}(item).(type) {
+			case interface{ ValidateAll() error }:
+				if err := v.ValidateAll(); err != nil {
+					errors = append(errors, SourceCacheLookupAnswersValidationError{
+						field:  fmt.Sprintf("Answers[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			case interface{ Validate() error }:
+				if err := v.Validate(); err != nil {
+					errors = append(errors, SourceCacheLookupAnswersValidationError{
+						field:  fmt.Sprintf("Answers[%v]", idx),
+						reason: "embedded message failed validation",
+						cause:  err,
+					})
+				}
+			}
+		} else if v, ok := interface{}(item).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return SourceCacheLookupAnswersValidationError{
+					field:  fmt.Sprintf("Answers[%v]", idx),
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
+	}
+
+	if len(errors) > 0 {
+		return SourceCacheLookupAnswersMultiError(errors)
+	}
+
+	return nil
+}
+
+// SourceCacheLookupAnswersMultiError is an error wrapping multiple validation
+// errors returned by SourceCacheLookupAnswers.ValidateAll() if the designated
+// constraints aren't met.
+type SourceCacheLookupAnswersMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m SourceCacheLookupAnswersMultiError) Error() string {
+	msgs := make([]string, 0, len(m))
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m SourceCacheLookupAnswersMultiError) AllErrors() []error { return m }
+
+// SourceCacheLookupAnswersValidationError is the validation error returned by
+// SourceCacheLookupAnswers.Validate if the designated constraints aren't met.
+type SourceCacheLookupAnswersValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e SourceCacheLookupAnswersValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e SourceCacheLookupAnswersValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e SourceCacheLookupAnswersValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e SourceCacheLookupAnswersValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e SourceCacheLookupAnswersValidationError) ErrorName() string {
+	return "SourceCacheLookupAnswersValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e SourceCacheLookupAnswersValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sSourceCacheLookupAnswers.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = SourceCacheLookupAnswersValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = SourceCacheLookupAnswersValidationError{}
+
+// Validate checks the field values on SourceCacheLookupAsk_Query with the
+// rules defined in the proto definition for this message. If any rules are
+// violated, the first error encountered is returned, or nil if there are no violations.
+func (m *SourceCacheLookupAsk_Query) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on SourceCacheLookupAsk_Query with the
+// rules defined in the proto definition for this message. If any rules are
+// violated, the result is a list of violation errors wrapped in
+// SourceCacheLookupAsk_QueryMultiError, or nil if none found.
+func (m *SourceCacheLookupAsk_Query) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *SourceCacheLookupAsk_Query) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if l := len(m.GetRowKind()); l < 1 || l > 64 {
+		err := SourceCacheLookupAsk_QueryValidationError{
+			field:  "RowKind",
+			reason: "value length must be between 1 and 64 bytes, inclusive",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	if l := len(m.GetScopeHash()); l < 1 || l > 256 {
+		err := SourceCacheLookupAsk_QueryValidationError{
+			field:  "ScopeHash",
+			reason: "value length must be between 1 and 256 bytes, inclusive",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	if len(errors) > 0 {
+		return SourceCacheLookupAsk_QueryMultiError(errors)
+	}
+
+	return nil
+}
+
+// SourceCacheLookupAsk_QueryMultiError is an error wrapping multiple
+// validation errors returned by SourceCacheLookupAsk_Query.ValidateAll() if
+// the designated constraints aren't met.
+type SourceCacheLookupAsk_QueryMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m SourceCacheLookupAsk_QueryMultiError) Error() string {
+	msgs := make([]string, 0, len(m))
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m SourceCacheLookupAsk_QueryMultiError) AllErrors() []error { return m }
+
+// SourceCacheLookupAsk_QueryValidationError is the validation error returned
+// by SourceCacheLookupAsk_Query.Validate if the designated constraints aren't met.
+type SourceCacheLookupAsk_QueryValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e SourceCacheLookupAsk_QueryValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e SourceCacheLookupAsk_QueryValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e SourceCacheLookupAsk_QueryValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e SourceCacheLookupAsk_QueryValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e SourceCacheLookupAsk_QueryValidationError) ErrorName() string {
+	return "SourceCacheLookupAsk_QueryValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e SourceCacheLookupAsk_QueryValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sSourceCacheLookupAsk_Query.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = SourceCacheLookupAsk_QueryValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = SourceCacheLookupAsk_QueryValidationError{}
+
+// Validate checks the field values on SourceCacheLookupAnswers_Answer with the
+// rules defined in the proto definition for this message. If any rules are
+// violated, the first error encountered is returned, or nil if there are no violations.
+func (m *SourceCacheLookupAnswers_Answer) Validate() error {
+	return m.validate(false)
+}
+
+// ValidateAll checks the field values on SourceCacheLookupAnswers_Answer with
+// the rules defined in the proto definition for this message. If any rules
+// are violated, the result is a list of violation errors wrapped in
+// SourceCacheLookupAnswers_AnswerMultiError, or nil if none found.
+func (m *SourceCacheLookupAnswers_Answer) ValidateAll() error {
+	return m.validate(true)
+}
+
+func (m *SourceCacheLookupAnswers_Answer) validate(all bool) error {
+	if m == nil {
+		return nil
+	}
+
+	var errors []error
+
+	if l := len(m.GetRowKind()); l < 1 || l > 64 {
+		err := SourceCacheLookupAnswers_AnswerValidationError{
+			field:  "RowKind",
+			reason: "value length must be between 1 and 64 bytes, inclusive",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	if l := len(m.GetScopeHash()); l < 1 || l > 256 {
+		err := SourceCacheLookupAnswers_AnswerValidationError{
+			field:  "ScopeHash",
+			reason: "value length must be between 1 and 256 bytes, inclusive",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
+
+	// no validation rules for Found
+
+	if m.GetEtag() != "" {
+
+		if len(m.GetEtag()) > 65536 {
+			err := SourceCacheLookupAnswers_AnswerValidationError{
+				field:  "Etag",
+				reason: "value length must be at most 65536 bytes",
+			}
+			if !all {
+				return err
+			}
+			errors = append(errors, err)
+		}
+
+	}
+
+	if len(errors) > 0 {
+		return SourceCacheLookupAnswers_AnswerMultiError(errors)
+	}
+
+	return nil
+}
+
+// SourceCacheLookupAnswers_AnswerMultiError is an error wrapping multiple
+// validation errors returned by SourceCacheLookupAnswers_Answer.ValidateAll()
+// if the designated constraints aren't met.
+type SourceCacheLookupAnswers_AnswerMultiError []error
+
+// Error returns a concatenation of all the error messages it wraps.
+func (m SourceCacheLookupAnswers_AnswerMultiError) Error() string {
+	msgs := make([]string, 0, len(m))
+	for _, err := range m {
+		msgs = append(msgs, err.Error())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// AllErrors returns a list of validation violation errors.
+func (m SourceCacheLookupAnswers_AnswerMultiError) AllErrors() []error { return m }
+
+// SourceCacheLookupAnswers_AnswerValidationError is the validation error
+// returned by SourceCacheLookupAnswers_Answer.Validate if the designated
+// constraints aren't met.
+type SourceCacheLookupAnswers_AnswerValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e SourceCacheLookupAnswers_AnswerValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e SourceCacheLookupAnswers_AnswerValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e SourceCacheLookupAnswers_AnswerValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e SourceCacheLookupAnswers_AnswerValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e SourceCacheLookupAnswers_AnswerValidationError) ErrorName() string {
+	return "SourceCacheLookupAnswers_AnswerValidationError"
+}
+
+// Error satisfies the builtin error interface
+func (e SourceCacheLookupAnswers_AnswerValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sSourceCacheLookupAnswers_Answer.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = SourceCacheLookupAnswers_AnswerValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = SourceCacheLookupAnswers_AnswerValidationError{}

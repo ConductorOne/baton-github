@@ -90,24 +90,40 @@ func (b0 TypeScopedGrants_builder) Build() *TypeScopedGrants {
 	return m0
 }
 
-// SpawnCursors is attached to a type-scoped ListGrants response to enqueue
-// additional independent cursors for the same resource type. Each token is
-// delivered back to the connector as the page token of its own action —
-// scheduled by the syncer's worker pool, rate-limited, and checkpointed
-// like any other pagination.
+// SpawnCursors is attached to a ListGrants response to enqueue additional
+// independent sibling cursors. Each token is delivered back to the
+// connector as the page token of its own action — scheduled by the
+// syncer's worker pool, rate-limited, and checkpointed like any other
+// pagination. Honored on BOTH type-scoped and per-resource ListGrants
+// responses; the spawned actions inherit the response's resource identity
+// (type only for type-scoped calls, type+resource for per-resource calls).
 //
-// Typical use: the first (planning) call computes shard assignments — e.g.
-// one 50-id delta filter chunk per cursor — returns no rows, and spawns
-// one cursor per shard. Cold enumeration then parallelizes across shards
-// instead of serializing through one stream.
+// Typical uses:
+//
+//   - Type-scoped planning: the first call computes shard assignments —
+//     e.g. one 50-id delta filter chunk per cursor — returns no rows, and
+//     spawns one cursor per shard. Cold enumeration then parallelizes
+//     across shards instead of serializing through one stream.
+//   - Per-resource parallel warm revalidation (page-numbered APIs): on the
+//     first page of a collection the connector already knows every other
+//     page's URL and stored validator, so it answers page one and spawns
+//     pages 2..N; the worker pool revalidates them concurrently instead
+//     of paying one round trip per page serially.
+//
+// Spawned cursors are ORDINARY pages that happen to be enqueued eagerly.
+// The SDK assumes nothing about how they resolve: a spawned page may hit
+// its source-cache lookup and replay, miss and fetch cold (e.g. a page
+// boundary shifted since the last sync), and may continue a chain via its
+// response's next page token. Any page of a fan-out may itself spawn.
+//
+// Progress accounting counts a resource as covered when its ORIGIN
+// action's chain ends; spawned siblings never double-count it.
 //
 // Tokens are opaque to the SDK. They must be self-contained: a cursor may
 // execute after a suspend/resume, on a different worker, so anything the
 // connector needs to serve the cursor must be inside the token (or
-// re-derivable from it).
-//
-// Honored only on responses to type-scoped ListGrants calls; ignored (with
-// a warning) elsewhere.
+// re-derivable from it) — for per-resource spawns the resource identity
+// rides the action, so tokens only need the page coordinate.
 type SpawnCursors struct {
 	state protoimpl.MessageState `protogen:"hybrid.v1"`
 	// Page tokens for the sibling cursors to enqueue, one action each.

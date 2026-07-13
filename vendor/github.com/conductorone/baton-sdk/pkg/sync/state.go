@@ -202,6 +202,15 @@ type Action struct {
 	ResourceID           string   `json:"resource_id,omitempty"`
 	ParentResourceTypeID string   `json:"parent_resource_type_id,omitempty"`
 	ParentResourceID     string   `json:"parent_resource_id,omitempty"`
+
+	// Spawned marks an action enqueued by a connector's SpawnCursors
+	// annotation (a sibling cursor) rather than by the syncer's own
+	// planners. Progress accounting uses it: per-resource grant coverage
+	// counts a resource once, when its ORIGIN action's chain ends —
+	// spawned siblings (and their NextPage continuations, which inherit
+	// the action) don't count, or one resource would count N times.
+	// omitempty keeps old checkpointed sync tokens decoding unchanged.
+	Spawned bool `json:"spawned,omitempty"`
 }
 
 var _ State = &state{}

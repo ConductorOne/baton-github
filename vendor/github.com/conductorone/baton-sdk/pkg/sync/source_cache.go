@@ -45,6 +45,14 @@ type syncerSourceCache struct {
 	prev dotc1z.SourceCacheStore
 	// prevReader is the same store as prev, typed for ReplaySourceCache.
 	prevReader connectorstore.Reader
+	// lookup is the connector-facing lookup built from prev (NoopLookup
+	// when prev is nil). The syncer also uses it to answer lookup asks
+	// from connectors on single-shot transports (the ask/answer
+	// continuation); both paths see identical results by construction.
+	lookup sourcecache.Lookup
+	// contStats accumulates ask/answer continuation counters for the
+	// sync-complete log line.
+	contStats *continuationStats
 }
 
 // prevStoreLookup adapts the previous store's manifest to the
@@ -122,6 +130,8 @@ func (s *syncer) configureSourceCache(ctx context.Context, resp *v2.ConnectorSer
 	if s.sourceCache.prev != nil {
 		lookup = prevStoreLookup{prev: s.sourceCache.prev, logOnce: &stdsync.Once{}}
 	}
+	s.sourceCache.lookup = lookup
+	s.sourceCache.contStats = &continuationStats{}
 	if canSetLookup {
 		setLookup.SetSourceCache(ctx, lookup)
 	} else {

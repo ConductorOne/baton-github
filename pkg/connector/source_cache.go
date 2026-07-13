@@ -97,10 +97,42 @@ func decodeValidator(v string) (etag string, rows int, ok bool) {
 	return etag, n, true
 }
 
+// Validator resolution states carried by pagedListCursor. Unresolved
+// (empty) means "do a lookup for this page"; the other two mean the
+// origin's batched lookup already resolved it, so the page does NO lookup
+// of its own — on the Lambda ask/answer continuation that is the
+// difference between zero bounces and one bounce per page.
+const (
+	// cursorValidatorHit: Etag holds the stored validator verbatim.
+	cursorValidatorHit = "hit"
+	// cursorValidatorMiss: the previous sync has no entry for this page
+	// (known from the origin's contiguous-chain walk); fetch cold.
+	cursorValidatorMiss = "miss"
+)
+
 // pagedListCursor is the bag token for a source-cached paged listing.
 // Page is 1-based; page 0/empty token means page 1.
+//
+// Horizon is the spawn horizon: the last page of this collection covered
+// by a spawned sibling cursor this sync (see resolveStoredPageChain).
+// Pages ≤ Horizon are sibling-owned, so a page's own chain never
+// continues into them — without this clamp the origin's chain and a
+// sibling would both serve the same page. It rides the token (not a
+// lookup re-derivation) so it is exact even if the stored manifest has
+// gaps, and survives suspend/resume on any worker.
+//
+// Resolution/Etag carry the page's validator resolution from the
+// origin's batched lookup (see the constants above). Carrying validators
+// through connector-authored tokens within one sync is blessed by the
+// source-cache contract: the replay invariant is "validator came from
+// THIS SYNC's lookup", not "from this action's lookup". Old tokens
+// without these fields decode as unresolved and behave exactly as
+// before.
 type pagedListCursor struct {
-	Page int `json:"page"`
+	Page       int    `json:"page"`
+	Horizon    int    `json:"horizon,omitempty"`
+	Resolution string `json:"res,omitempty"`
+	Etag       string `json:"etag,omitempty"`
 }
 
 func parsePagedListCursor(token string) (pagedListCursor, error) {
@@ -146,7 +178,12 @@ type conditionalPage struct {
 // for the same logical page (fixed query-param order, explicit page and
 // per_page). kind names the endpoint family within the scope signature.
 // perPage must equal the per_page baked into pageURL; it drives the
-// full-page chain-continuation check on a 304.
+// full-page chain-continuation check on a 304. cursor supplies the page
+// number, the sibling horizon clamp, and — when the origin's batched
+// walk already resolved it — the page's validator, in which case no
+// lookup happens here at all (zero ask/answer bounces on the Lambda
+// continuation). An unresolved cursor (legacy checkpointed token) falls
+// back to a single lookup.
 func listUsersPageConditional(
 	ctx context.Context,
 	client *github.Client,
@@ -154,26 +191,40 @@ func listUsersPageConditional(
 	authScope string,
 	kind string,
 	pageURL string,
-	page int,
+	cursor pagedListCursor,
 	perPage int,
 ) (*conditionalPage, error) {
 	req, err := client.NewRequest(http.MethodGet, pageURL, nil)
 	if err != nil {
 		return nil, err
 	}
+	page, horizon := cursor.Page, cursor.Horizon
 
 	scope := sourcecache.HashScope(pageScopeSig(kind, authScope, req.URL.String()))
 	if lookup == nil {
 		lookup = sourcecache.NoopLookup{}
 	}
-	entry, found, err := lookup.LookupPreviousSourceCache(ctx, sourcecache.RowKindGrants, scope)
-	if err != nil {
-		return nil, err
+	storedValidator, found := "", false
+	switch cursor.Resolution {
+	case cursorValidatorHit:
+		storedValidator, found = cursor.Etag, true
+	case cursorValidatorMiss:
+		// Known cold; skip the lookup.
+	default:
+		entry, entryFound, err := lookup.LookupPreviousSourceCache(ctx, sourcecache.RowKindGrants, scope)
+		if err != nil {
+			// May wrap sourcecache.ErrLookupDeferred (ask/answer
+			// continuation); must propagate unswallowed.
+			return nil, err
+		}
+		if entryFound {
+			storedValidator, found = entry.ETag, true
+		}
 	}
 	prevEtag, prevRows := "", 0
 	validatorOK := false
 	if found {
-		prevEtag, prevRows, validatorOK = decodeValidator(entry.ETag)
+		prevEtag, prevRows, validatorOK = decodeValidator(storedValidator)
 	}
 	// A hit with a decodable validator makes the request conditional; any
 	// miss or malformed validator degrades to a plain (cold) fetch.
@@ -202,9 +253,14 @@ func listUsersPageConditional(
 			// answers with fresh rows or an empty 200 that ends the chain.
 			next = page + 1
 		}
+		if next != 0 && next <= horizon {
+			// A spawned sibling owns that page; chaining into it would
+			// serve it twice.
+			next = 0
+		}
 		annos.Append(v2.SourceCacheReplay_builder{
 			ScopeHash: scope,
-			Etag:      entry.ETag,
+			Etag:      storedValidator,
 		}.Build())
 		return &conditionalPage{Replayed: true, NextPage: next, Annos: annos, Resp: resp}, nil
 	}
@@ -229,5 +285,92 @@ func listUsersPageConditional(
 		ScopeHash: scope,
 		Etag:      scopeEtag,
 	}.Build())
-	return &conditionalPage{Users: users, NextPage: resp.NextPage, Annos: annos, Resp: resp}, nil
+	next := resp.NextPage
+	if next != 0 && next <= horizon {
+		// Sibling-owned page (see the 304 branch): the sibling
+		// revalidates it independently, fresh or replayed.
+		next = 0
+	}
+	return &conditionalPage{Users: users, NextPage: next, Annos: annos, Resp: resp}, nil
+}
+
+// storedChainBatchSize is how many pages one LookupMany batch covers.
+// On the Lambda ask/answer continuation each batch costs one bounce
+// (bounce cap: 4), so the batch size bounds the resolvable chain:
+// 3 batches × 256 pages ≈ 76k members per role before the origin action
+// would fail the cap — far beyond any real GitHub collection. Validators
+// are ~150 bytes encoded, so a full batch is well under the transport's
+// answer budget (no truncation re-asks).
+const storedChainBatchSize = 256
+
+// storedChainBatchCap bounds the total walk; guards a pathological
+// manifest (and stays a batch short of the continuation's bounce cap).
+const storedChainBatchCap = 3
+
+// resolvedPage is one page's validator resolution from the origin's
+// batched walk, embeddable into a pagedListCursor.
+type resolvedPage struct {
+	Page int
+	// Found + Validator mirror the manifest answer for the page's scope.
+	Found     bool
+	Validator string
+}
+
+// resolveStoredPageChain resolves the collection's stored page chain in
+// LookupMany batches, starting at page 1. It returns the resolution for
+// every page 1..horizon+1 that was queried, and the horizon: the last
+// page of the CONTIGUOUS stored chain (0 = nothing stored, cold sync).
+//
+// One call resolves everything the sync needs for this collection —
+// page 1's own validator, every sibling's validator (carried to the
+// spawned cursors so siblings do no lookups of their own), and the
+// horizon. On the Lambda continuation the whole walk costs one ask
+// bounce per batch; in-process it is a loop of local point-reads.
+func resolveStoredPageChain(
+	ctx context.Context,
+	client *github.Client,
+	lookup sourcecache.Lookup,
+	authScope string,
+	kind string,
+	pageURLFor func(page int) string,
+) (map[int]resolvedPage, int, error) {
+	resolved := map[int]resolvedPage{}
+	if lookup == nil {
+		lookup = sourcecache.NoopLookup{}
+	}
+
+	horizon := 0
+	chainBroken := false
+	for batch := 0; batch < storedChainBatchCap && !chainBroken; batch++ {
+		first := batch*storedChainBatchSize + 1
+		queries := make([]sourcecache.Query, 0, storedChainBatchSize)
+		pages := make([]int, 0, storedChainBatchSize)
+		for p := first; p < first+storedChainBatchSize; p++ {
+			req, err := client.NewRequest(http.MethodGet, pageURLFor(p), nil)
+			if err != nil {
+				return nil, 0, err
+			}
+			queries = append(queries, sourcecache.Query{
+				RowKind:   sourcecache.RowKindGrants,
+				ScopeHash: sourcecache.HashScope(pageScopeSig(kind, authScope, req.URL.String())),
+			})
+			pages = append(pages, p)
+		}
+		answers, err := sourcecache.LookupMany(ctx, lookup, queries)
+		if err != nil {
+			// May wrap sourcecache.ErrLookupDeferred; propagate.
+			return nil, 0, err
+		}
+		for i, a := range answers {
+			p := pages[i]
+			resolved[p] = resolvedPage{Page: p, Found: a.Found, Validator: a.ETag}
+			if !a.Found && !chainBroken {
+				chainBroken = true
+			}
+			if a.Found && !chainBroken {
+				horizon = p
+			}
+		}
+	}
+	return resolved, horizon, nil
 }
