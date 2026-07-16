@@ -40,6 +40,9 @@ type Adapter struct {
 
 	// embedded Unimplemented stubs for the gRPC service surfaces we
 	// implement partially. Each implemented method overrides the stub.
+	// GrantsReaderServiceServer is deliberately NOT stubbed: the Adapter
+	// implements it in full, and adapter_reader.go asserts the complete
+	// contract — re-adding the stub would make that assertion vacuous.
 	v2.UnimplementedResourceTypesServiceServer
 	reader_v2.UnimplementedResourceTypesReaderServiceServer
 	v2.UnimplementedResourcesServiceServer
@@ -47,7 +50,6 @@ type Adapter struct {
 	v2.UnimplementedEntitlementsServiceServer
 	reader_v2.UnimplementedEntitlementsReaderServiceServer
 	v2.UnimplementedGrantsServiceServer
-	reader_v2.UnimplementedGrantsReaderServiceServer
 	reader_v2.UnimplementedSyncsReaderServiceServer
 
 	mu      sync.Mutex
@@ -75,9 +77,10 @@ func NewAdapter(e *Engine) *Adapter {
 // Compile-time checks for the full Writer interface and the optional
 // connectorstore capabilities that SQLite's *C1File also exposes.
 var (
-	_ connectorstore.Writer                      = (*Adapter)(nil)
-	_ connectorstore.LatestFinishedSyncIDFetcher = (*Adapter)(nil)
-	_ connectorstore.DBSizeProvider              = (*Adapter)(nil)
+	_ connectorstore.Writer                       = (*Adapter)(nil)
+	_ connectorstore.LatestFinishedSyncIDFetcher  = (*Adapter)(nil)
+	_ connectorstore.DBSizeProvider               = (*Adapter)(nil)
+	_ connectorstore.EntitlementGrantDigestReader = (*Adapter)(nil)
 )
 
 // === sync lifecycle ===
@@ -343,6 +346,25 @@ func (e *Engine) endSyncFinalize(ctx context.Context, existing *v3.SyncRunRecord
 		}
 		if err := e.clearDeferredIdxPending(); err != nil {
 			return fmt.Errorf("EndSync: clear deferred index marker: %w", err)
+		}
+	} else if e.GrantDigestIndexEnabled() {
+		// The deferred pass didn't run (no grant went through the
+		// deferred index paths — inline-index writes like PutGrantRecords
+		// never arm the marker). RepairMissingGrantDigests reduces to a
+		// full BuildGrantDigests-equivalent scan for the common case (a
+		// brand-new sync always has grantDigestsPresent false, since
+		// ResetForNewSync excised the digest keyspace at StartNewSync) —
+		// no behavior change there. It only does LESS work when this
+		// EndSync is a second call on an already-digested sync that was
+		// rebound via SetCurrentSync rather than started fresh (grant
+		// expansion's own follow-up sync is exactly this shape): trusting
+		// a still-valid whole-file root outright, or rebuilding only the
+		// entitlements invalidated since the prior seal, instead of
+		// rescanning every grant in the file again. Build failures are
+		// downgraded to a loud digest-state drop inside; an error
+		// surfacing here (cancellation, drop failure) is fatal.
+		if err := e.RepairMissingGrantDigests(ctx); err != nil {
+			return fmt.Errorf("EndSync: repair grant digests: %w", err)
 		}
 	}
 	updated := v3.SyncRunRecord_builder{

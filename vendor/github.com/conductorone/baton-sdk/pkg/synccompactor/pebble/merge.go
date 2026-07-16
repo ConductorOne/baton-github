@@ -33,11 +33,61 @@ type FoldStats struct {
 	// DeadBytes sums len(key)+len(value) of each overridden incumbent
 	// plus len(key) of each of its stale derived index keys.
 	DeadBytes int64
+	// AddedByBucket counts records admitted with no incumbent, keyed by
+	// bucket name (resource_types, resources, entitlements, grants).
+	AddedByBucket map[string]int64
+	// ReplacedByBucket counts strictly-newer overrides per bucket name.
+	// Sums to OverriddenRecords.
+	ReplacedByBucket map[string]int64
+	// GrantWrites counts every grant record actually written to dest —
+	// both fresh admissions (no incumbent at the key) and strictly-
+	// newer overrides. Byte-identical resubmissions and not-strictly-
+	// newer candidates are NOT counted (mergeBucketRawIfNewer's no-op
+	// fast paths). The fold compactor uses this to decide whether the
+	// grants keyspace changed at all: when it's zero across a whole
+	// fold, the base's already-correct grant-digest state was never
+	// touched and needs no rebuild (see compactPebbleFold).
+	GrantWrites int64
+	// TouchedGrantPartitions is the set of entitlement partitions
+	// (enginepkg.GrantPartitionFromPrimaryKey) that had at least one
+	// grant actually written to dest, under the same counting rule as
+	// GrantWrites. The fold compactor uses this to invalidate and
+	// repair EXACTLY the entitlements a fold touched
+	// (Engine.InvalidateGrantDigestPartitions +
+	// Engine.RepairMissingGrantDigests), instead of the whole file.
+	TouchedGrantPartitions map[string]struct{}
 }
 
 func (s *FoldStats) Add(o FoldStats) {
 	s.OverriddenRecords += o.OverriddenRecords
 	s.DeadBytes += o.DeadBytes
+	for bucket, n := range o.AddedByBucket {
+		s.bumpAdded(bucket, n)
+	}
+	for bucket, n := range o.ReplacedByBucket {
+		s.bumpReplaced(bucket, n)
+	}
+	s.GrantWrites += o.GrantWrites
+	for p := range o.TouchedGrantPartitions {
+		if s.TouchedGrantPartitions == nil {
+			s.TouchedGrantPartitions = make(map[string]struct{}, len(o.TouchedGrantPartitions))
+		}
+		s.TouchedGrantPartitions[p] = struct{}{}
+	}
+}
+
+func (s *FoldStats) bumpAdded(bucket string, n int64) {
+	if s.AddedByBucket == nil {
+		s.AddedByBucket = make(map[string]int64, 4)
+	}
+	s.AddedByBucket[bucket] += n
+}
+
+func (s *FoldStats) bumpReplaced(bucket string, n int64) {
+	if s.ReplacedByBucket == nil {
+		s.ReplacedByBucket = make(map[string]int64, 4)
+	}
+	s.ReplacedByBucket[bucket] += n
 }
 
 // MergeInto folds every source's primary records into dest under
@@ -70,6 +120,22 @@ func (s *FoldStats) Add(o FoldStats) {
 // the already-written (earlier source, or pre-existing dest) record is
 // kept. Callers pass sources newest-first so the tie winner matches the
 // SQLite fold.
+//
+// MergeInto does NOT touch grant-digest state itself. The fold dest
+// starts as a byte copy of a SEALED base, which carries an already-
+// CORRECT grant hash index and digests; this merge mutates grants
+// through the raw DB handle without maintaining either (nothing does,
+// outside the seal-time build), so once ANY grant write lands the
+// dest's digest state is stale relative to it. Rather than drop it
+// pre-emptively on every call — which would force a full from-scratch
+// digest rebuild even for a fold that changes nothing, defeating
+// fold's whole point of doing O(partials) work, not O(base) — callers
+// inspect the returned FoldStats.GrantWrites: zero means the grants
+// keyspace was never touched and the base's digest state is still
+// exactly correct, left alone; nonzero means the caller must rebuild
+// (Engine.BuildGrantDigests rebuilds both keyspaces atomically from
+// scratch, so no separate drop is needed even then — see
+// compactPebbleFold).
 func MergeInto(ctx context.Context, dest *enginepkg.Engine, sources []SourceSync, destSyncID string) (FoldStats, error) {
 	var stats FoldStats
 	if dest == nil {
@@ -211,6 +277,7 @@ func mergeBucketRawIfNewer(ctx context.Context, dest *enginepkg.Engine, src *peb
 			// spliced base frames. Its stale index keys are counted by
 			// delIndexKey as forEachIndexKeyFromRaw enumerates them.
 			stats.OverriddenRecords++
+			stats.bumpReplaced(bucket.name, 1)
 			stats.DeadBytes += int64(len(key)) + int64(len(oldVal))
 			if err := forEachIndexKeyFromRaw(bucket, key, lower, oldVal, &scratch, nil, delIndexKey); err != nil {
 				closer.Close()
@@ -218,11 +285,21 @@ func mergeBucketRawIfNewer(ctx context.Context, dest *enginepkg.Engine, src *peb
 			}
 			closer.Close()
 		case errors.Is(getErr, pebble.ErrNotFound):
+			stats.bumpAdded(bucket.name, 1)
 		default:
 			return stats, fmt.Errorf("get incumbent: %w", getErr)
 		}
 		if err := batch.Set(key, value, nil); err != nil {
 			return stats, err
+		}
+		if bucket.id == runBucketGrants {
+			stats.GrantWrites++
+			if partition, ok := enginepkg.GrantPartitionFromPrimaryKey(key); ok {
+				if stats.TouchedGrantPartitions == nil {
+					stats.TouchedGrantPartitions = map[string]struct{}{}
+				}
+				stats.TouchedGrantPartitions[partition] = struct{}{}
+			}
 		}
 		if err := forEachIndexKeyFromRaw(bucket, key, lower, value, &scratch, nil, setIndexKey); err != nil {
 			return stats, err
