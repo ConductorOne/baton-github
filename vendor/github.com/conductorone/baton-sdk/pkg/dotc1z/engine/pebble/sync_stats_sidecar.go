@@ -10,7 +10,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v3 "github.com/conductorone/baton-sdk/pb/c1/storage/v3"
+	"github.com/conductorone/baton-sdk/pkg/dotc1z/c1zstore"
 	"github.com/conductorone/baton-sdk/pkg/dotc1z/engine/pebble/codec"
+	"github.com/conductorone/baton-sdk/pkg/dotc1z/engine/pebble/internal/rawdb"
 )
 
 // Sync-stats sidecar. Populated by EndFreshSync (one full pass
@@ -26,8 +28,10 @@ import (
 //
 // Older c1z files (or files written by a pre-sidecar SDK) will be
 // missing this key. Stats() falls back to the legacy iterate-and-
-// count path in that case, and the on-Open migration framework
-// backfills the sidecar on writable opens so the next call is fast.
+// count path in that case. There is currently no on-Open backfill —
+// the indexMigrations registry is intentionally empty (see
+// TestSyncStatsSidecarBackfillOnOpen's skip note) — so a missing
+// sidecar stays missing until a migration is registered.
 
 // encodeSyncStatsKey returns the engine-meta key for the single
 // sync's SyncStatsRecord. The file holds one sync, so this is a fixed
@@ -91,15 +95,16 @@ func (e *Engine) writeSyncStats(ctx context.Context, rec *v3.SyncStatsRecord) er
 	// Flush→Checkpoint window (a WAL-only record landing mid-window would
 	// be truncated out of the saved snapshot).
 	return e.withWriteAllowSealed(func() error {
-		return e.db.Set(encodeSyncStatsKey(), val, pebble.Sync)
+		return e.db.MetaSet(encodeSyncStatsKey(), val, pebble.Sync)
 	})
 }
 
 // computeSyncStats does one full pass over the per-record-type
 // keyspaces for syncID and builds a SyncStatsRecord. This is the
-// O(N) work the sidecar is designed to avoid on read — only the
-// EndFreshSync write path and the on-Open migration backfill
-// invoke it.
+// O(N) work the sidecar is designed to avoid on read — only
+// PersistSyncStats (EndSync's sidecar write, when no stashed record
+// exists) invokes it. There is no on-Open backfill caller: the
+// indexMigrations registry is intentionally empty.
 //
 // This intentionally scans raw Pebble key/value ranges instead of using
 // Iterate*BySync. Counting keys and shallow-scanning only the grant grouping
@@ -258,16 +263,30 @@ func (e *Engine) takeDeferredGrantStats(syncID string) *deferredGrantStats {
 // syncID. Exposed for the EndFreshSync caller and the on-Open
 // migration backfill. If a caller-computed record was stashed for
 // this sync (StashComputedSyncStats), it is persisted instead of
-// re-scanning the keyspaces.
+// re-scanning the keyspaces. Timing / call stats from the syncer's
+// token on the sync_run record are overlaid before write.
 func (e *Engine) PersistSyncStats(ctx context.Context, syncID string) error {
 	if rec := e.takeStashedSyncStats(syncID); rec != nil {
+		e.applyTokenStatsFromSyncRun(ctx, syncID, rec)
 		return e.PersistComputedSyncStats(ctx, syncID, rec)
 	}
 	rec, err := e.computeSyncStats(ctx, syncID)
 	if err != nil {
 		return err
 	}
+	e.applyTokenStatsFromSyncRun(ctx, syncID, rec)
 	return e.writeSyncStats(ctx, rec)
+}
+
+// applyTokenStatsFromSyncRun loads the sync_run's sync_token and lifts
+// step_durations_ms / connector_call_stats / session_store_stats into
+// rec. Failures are ignored — row counts remain usable without them.
+func (e *Engine) applyTokenStatsFromSyncRun(ctx context.Context, syncID string, rec *v3.SyncStatsRecord) {
+	sr, err := e.GetSyncRunRecord(ctx, syncID)
+	if err != nil || sr == nil {
+		return
+	}
+	c1zstore.ApplySyncTokenStatsRecord(rec, sr.GetSyncToken())
 }
 
 // StashComputedSyncStats registers a caller-computed stats record to be
@@ -314,7 +333,7 @@ func (e *Engine) PersistComputedSyncStats(ctx context.Context, syncID string, re
 	return e.writeSyncStats(ctx, rec)
 }
 
-func countKeyRange(ctx context.Context, db *pebble.DB, lower []byte, upper []byte, visit func(key []byte, value []byte) error) (int64, error) {
+func countKeyRange(ctx context.Context, db *rawdb.DB, lower []byte, upper []byte, visit func(key []byte, value []byte) error) (int64, error) {
 	iter, err := db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return 0, err

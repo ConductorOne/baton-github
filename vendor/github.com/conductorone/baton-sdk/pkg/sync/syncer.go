@@ -158,6 +158,8 @@ type syncer struct {
 	syncID                              string
 	skipEGForResourceType               syncMap[string, bool]
 	skipEntitlementsForResourceType     syncMap[string, bool]
+	scheduledResourceTypes              syncMap[string, bool]
+	ingestFilterStats                   ingestFilterStats
 	skipEntitlementsAndGrants           bool
 	skipGrants                          bool
 	resourceTypeTraits                  syncMap[string, []v2.ResourceType_Trait]
@@ -871,6 +873,8 @@ func (s *syncer) Sync(ctx context.Context) error {
 		return s.returnSyncError(l, span, err)
 	}
 
+	s.logIngestFilterSummary(ctx)
+
 	// Force a checkpoint to clear completed actions & entitlement graph in sync_token.
 	s.state.ClearEntitlementGraph(ctx)
 	s.state.ClearExclusionGroupTracking(ctx)
@@ -1558,15 +1562,21 @@ func (s *syncer) syncEntitlementsForResource(ctx context.Context, action *Action
 	if err != nil {
 		return err
 	}
-	if err := s.validateEntitlementExclusionGroups(resp.GetList()); err != nil {
+	// Filter before exclusion-group validation: a dropped entitlement must not
+	// mutate exclusion-group state or fail the sync as if it had been ingested.
+	entitlements, err := s.filterFreshEntitlements(ctx, resp.GetList())
+	if err != nil {
+		return fmt.Errorf("sync-entitlements: filtering disabled-type references: %w", err)
+	}
+	if err := s.validateEntitlementExclusionGroups(entitlements); err != nil {
 		return err
 	}
-	err = s.store.PutEntitlements(ctx, resp.GetList()...)
+	err = s.store.PutEntitlements(ctx, entitlements...)
 	if err != nil {
 		return err
 	}
 
-	s.handleProgress(ctx, action, len(resp.GetList()))
+	s.handleProgress(ctx, action, len(entitlements))
 	if resp.GetNextPageToken() == "" {
 		s.counts.AddEntitlementsProgress(resourceID.ResourceType, 1)
 		s.counts.LogEntitlementsProgress(ctx, resourceID.GetResourceType())
@@ -1721,31 +1731,17 @@ func (s *syncer) syncAssetsForResource(ctx context.Context, action *Action) erro
 
 	rAnnos := annotations.Annotations(resourceResponse.GetResource().GetAnnotations())
 
-	userTrait := &v2.UserTrait{}
-	ok, err := rAnnos.Pick(userTrait)
-	if err != nil {
-		return err
-	}
-	if ok {
-		assetRefs = append(assetRefs, userTrait.GetIcon())
-	}
-
-	grpTrait := &v2.GroupTrait{}
-	ok, err = rAnnos.Pick(grpTrait)
-	if err != nil {
-		return err
-	}
-	if ok {
-		assetRefs = append(assetRefs, grpTrait.GetIcon())
-	}
+	// Icons live on the resource; resource.GetIcon falls back to the
+	// deprecated trait-level icons for resources emitted by older connectors.
+	assetRefs = append(assetRefs, resource.GetIcon(resourceResponse.GetResource()))
 
 	appTrait := &v2.AppTrait{}
-	ok, err = rAnnos.Pick(appTrait)
+	ok, err := rAnnos.Pick(appTrait)
 	if err != nil {
 		return err
 	}
 	if ok {
-		assetRefs = append(assetRefs, appTrait.GetIcon(), appTrait.GetLogo())
+		assetRefs = append(assetRefs, appTrait.GetLogo())
 	}
 
 	for _, assetRef := range assetRefs {
@@ -2099,6 +2095,33 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 			}
 			g.SetAnnotations(append(annos, insertAny))
 		}
+
+		// Collect grant-discovered resources before fresh-ingest filtering:
+		// a resource of a scheduled type is a legitimate discovery (uplift
+		// creates an AppResource for it) even when the discovering grant is
+		// dropped for an unscheduled principal type. Resources of unscheduled
+		// types are skipped — uplift can't resolve their type, so the row
+		// would be dead data.
+		for _, g := range grants {
+			resource := g.GetEntitlement().GetResource()
+			ok, err := s.filterFreshGrantResource(ctx, resource)
+			if err != nil {
+				return fmt.Errorf("sync-grants-for-resource: filtering grant-discovered resource: %w", err)
+			}
+			if !ok {
+				continue
+			}
+			bid, err := bid.MakeBid(resource)
+			if err != nil {
+				return err
+			}
+			resourcesToInsertMap[bid] = resource
+		}
+	}
+
+	grants, err = s.filterFreshGrants(ctx, grants)
+	if err != nil {
+		return fmt.Errorf("sync-grants-for-resource: filtering disabled-type references: %w", err)
 	}
 
 	for _, grant := range grants {
@@ -2108,15 +2131,6 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 		}
 		if grantAnnos.ContainsAny(&v2.ExternalResourceMatchAll{}, &v2.ExternalResourceMatch{}, &v2.ExternalResourceMatchID{}) {
 			s.state.SetHasExternalResourcesGrants()
-		}
-
-		if insertResourceGrants {
-			resource := grant.GetEntitlement().GetResource()
-			bid, err := bid.MakeBid(resource)
-			if err != nil {
-				return err
-			}
-			resourcesToInsertMap[bid] = resource
 		}
 
 		if !s.state.ShouldFetchRelatedResources() {
@@ -2714,7 +2728,7 @@ func (s *syncer) processGrantsWithExternalPrincipals(ctx context.Context, princi
 							continue
 						}
 					}
-					profileVal, ok := resource.GetProfileStringValue(userTrait.GetProfile(), matchExternalResource.GetKey())
+					profileVal, ok := resource.GetProfileStringValue(resource.GetProfile(userPrincipal), matchExternalResource.GetKey())
 					if ok && strings.EqualFold(profileVal, matchExternalResource.GetValue()) {
 						newGrant := newGrantForExternalPrincipal(grant, userPrincipal)
 						expandedGrants = append(expandedGrants, newGrant)
@@ -2722,12 +2736,7 @@ func (s *syncer) processGrantsWithExternalPrincipals(ctx context.Context, princi
 				}
 			case v2.ResourceType_TRAIT_GROUP:
 				for _, groupPrincipal := range groupPrincipals {
-					groupTrait, err := resource.GetGroupTrait(groupPrincipal)
-					if err != nil {
-						l.Error("error getting group trait", zap.Any("groupPrincipal", groupPrincipal))
-						continue
-					}
-					profileVal, ok := resource.GetProfileStringValue(groupTrait.GetProfile(), matchExternalResource.GetKey())
+					profileVal, ok := resource.GetProfileStringValue(resource.GetProfile(groupPrincipal), matchExternalResource.GetKey())
 					if ok && strings.EqualFold(profileVal, matchExternalResource.GetValue()) {
 						newGrant := newGrantForExternalPrincipal(grant, groupPrincipal)
 						newGrantAnnos := annotations.Annotations(newGrant.GetAnnotations())

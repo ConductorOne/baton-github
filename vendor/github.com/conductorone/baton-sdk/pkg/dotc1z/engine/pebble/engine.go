@@ -17,6 +17,7 @@ import (
 
 	v3 "github.com/conductorone/baton-sdk/pb/c1/storage/v3"
 	"github.com/conductorone/baton-sdk/pkg/dotc1z/engine/pebble/codec"
+	"github.com/conductorone/baton-sdk/pkg/dotc1z/engine/pebble/internal/rawdb"
 )
 
 // Engine is the v3 Pebble-backed storage engine. Methods are
@@ -27,10 +28,18 @@ import (
 //   - Close() releases all resources. After Close, all methods return
 //     ErrEngineClosing.
 type Engine struct {
-	db         *pebble.DB
+	// db is the write choke point: the raw *pebble.DB lives inside
+	// internal/rawdb and is reachable only through rawdb's exported,
+	// purpose-named operations (reads are passed through liberally).
+	// See the rawdb package doc for the enforcement model.
+	db         *rawdb.DB
 	dbDir      string
 	opts       *Options
 	pebbleOpts *pebble.Options
+	// resolvedFS is rawdb's Open-time FS resolution (WithVFS override
+	// or vfs.Default), snapshotted so fs() stays valid after Close
+	// nils db — see fs().
+	resolvedFS vfs.FS
 
 	// currentSync is the engine's open sync_id (raw 20-byte KSUID).
 	// Set by StartNewSync / ResumeSync / SetCurrentSync. Empty when
@@ -104,15 +113,10 @@ type Engine struct {
 	// built" instead of trusting nodes a crashed build half-committed.
 	grantDigestBuildPending atomic.Bool
 
-	// Test seams for the digest build/repair tests: a hook fired at
-	// named points inside buildGrantDigestsFromSpill
-	// (grant_digest_build_crash_test.go) and a batch flush-threshold
-	// override — shared by the build's fold and the streaming partition
-	// repair (repairOneGrantDigestPartitionLocked) — so a small test
-	// dataset exercises the mid-stream commit paths. Nil/zero in
-	// production.
-	testDigestBuildHook      func(stage string) error
-	testDigestNodeFlushBytes int
+	// test holds every test-only injection seam, sequestered on one
+	// field so hooks don't accumulate on the production struct. All
+	// zero in production; see testSeams (test_seams.go).
+	test testSeams
 
 	// synthLayer is the open wave-scoped layer session, if any (see
 	// BeginSynthesizedGrantLayer). Single producer: the expansion driver
@@ -198,7 +202,19 @@ func Open(ctx context.Context, dir string, opts ...Option) (*Engine, error) {
 
 	pebbleOpts := newPebbleOptions(o)
 
-	db, err := pebble.Open(dir, pebbleOpts)
+	// DELIBERATE ASYMMETRY (do not "fix"): rawdb gets the UNWRAPPED FS
+	// (o.vfs, nil → vfs.Default), while pebble.Open internally wraps
+	// its clone of pebbleOpts.FS with disk-health middleware. So the
+	// DB's own IO is health-monitored but engine-managed IO through
+	// fs() (staged SSTs, checkpoint WAL cleanup) is not — exactly
+	// main's split, where staging was plain os.* (pinned in PR-1
+	// review: "only pebble's own IO gets the disk-health wrap").
+	// Passing the wrapped FS here would put staging writes under
+	// pebble's stall escalation (Logger.Fatalf on slow disks) — a
+	// production behavior change, not a cleanup. Both objects sit on
+	// the same underlying filesystem, so files interoperate; the
+	// MemFS lifecycle test pins that.
+	db, err := rawdb.Open(dir, pebbleOpts, o.vfs)
 	if err != nil {
 		// pebble.Open failure path: we minted a Cache (when no shared
 		// cache was supplied) and won't reach Engine.Close. Unref it
@@ -215,9 +231,36 @@ func Open(ctx context.Context, dir string, opts ...Option) (*Engine, error) {
 		dbDir:      dir,
 		opts:       o,
 		pebbleOpts: pebbleOpts,
+		resolvedFS: db.FS(),
 	}
 	if s, ok := pebbleOpts.Experimental.CompactionScheduler.(*pausableCompactionScheduler); ok {
 		e.compactionScheduler = s
+	}
+	// Wire the record derivers: the key-format functions rawdb's typed
+	// record ops (StageGrant*/StageResource*/...) derive their
+	// obligations with. rawdb owns the composition — WHAT a record
+	// mutation must stage together, unforgettable by construction — and
+	// these closures own the byte formats (this package's keyspace ABI,
+	// pinned by its splice tests) plus the engine-state gates (digest
+	// armed probe, deferred-marker crash contract).
+	if err := db.SetRecordDerivers(rawdb.RecordDerivers{
+		GrantKeyValid: func(primaryKey []byte) bool {
+			_, ok := splitGrantPrimaryKey(primaryKey)
+			return ok
+		},
+		GrantByPrincipalKey:          appendGrantByPrincipalKeyFromPrimary,
+		GrantNeedsExpansionKey:       appendGrantByNeedsExpansionKeyFromPrimary,
+		StageGrantDigestInvalidation: e.stageGrantDigestInvalidationFromPrimaryKey,
+		ArmDeferredGrantIndex:        e.markDeferredIdxPending,
+		ResourceParent:               scanResourceParentRaw,
+		ResourceByParentKey:          encodeResourceByParentIndexKey,
+		GrantPrimaryPrefix:           []byte{versionV3, typeGrant},
+		ResourcePrimaryPrefix:        []byte{versionV3, typeResource},
+		EntitlementPrimaryPrefix:     []byte{versionV3, typeEntitlement},
+		ResourceTypePrimaryPrefix:    []byte{versionV3, typeResourceType},
+	}); err != nil {
+		_ = e.Close()
+		return nil, err
 	}
 	// Enforce the single-sync key-layout contract before touching any
 	// keys: reject an old multi-sync-layout file (which the current
@@ -314,7 +357,7 @@ func (e *Engine) Close() error {
 	// harden. A no-op when the memtable is already empty.
 	var err error
 	if !e.opts.readOnly {
-		if ferr := e.db.Flush(); ferr != nil {
+		if ferr := e.db.FlushMemtables(); ferr != nil {
 			err = fmt.Errorf("flush during close: %w", ferr)
 		}
 	}
@@ -500,11 +543,12 @@ func (e *Engine) EndFreshSync(ctx context.Context) error {
 			return nil
 		}
 		// Flush the memtable (turns NoSync-buffered writes into on-disk
-		// SSTs) and let pebble.LogData with Sync force-fsync the WAL tail.
-		if err := e.db.Flush(); err != nil {
+		// SSTs) and force-fsync the WAL tail (rawdb.WALSyncPoint =
+		// pebble.LogData(nil, Sync)).
+		if err := e.db.FlushMemtables(); err != nil {
 			return fmt.Errorf("EndFreshSync: flush: %w", err)
 		}
-		if err := e.db.LogData(nil, pebble.Sync); err != nil {
+		if err := e.db.WALSyncPoint(); err != nil {
 			return fmt.Errorf("EndFreshSync: fsync WAL: %w", err)
 		}
 		e.clearCurrentSync()
@@ -653,13 +697,30 @@ func (e *Engine) CurrentDBSizeBytes() (int64, error) {
 	return total, nil
 }
 
-// DB returns the underlying *pebble.DB. Exported for the
-// synccompactor/pebble package; callers must not Close it directly
-// (use Engine.Close) and must respect the engine's lifecycle. Returns
-// nil after Close. Callers that write the entitlement keyspace through
-// this handle (ingests, excises) must call InvalidateBareIDLookups
-// afterwards.
-func (e *Engine) DB() *pebble.DB { return e.db }
+// DB returns the engine's rawdb handle — the write choke point's
+// EXPLICIT EXEMPTION SURFACE. Exported for the synccompactor/pebble
+// package, whose merge/fold/overlay machinery writes the record
+// keyspaces outside the engine's writeMu barrier (fenced by call
+// ordering: the merge completes before the store's save/CheckpointTo
+// runs — see the checkpointMu inventory). The handle is *MergeDB
+// (= rawdb.MergeView) — deliberately NARROWER than *rawdb.DB: it
+// carries only the reads, bulk range ops, and the FoldBatch
+// constructor (the compactor's raw record-write conduit, fenced to
+// pkg/synccompactor/pebble by meta-test), so an external caller
+// cannot reach typed record staging
+// (NewRecordBatch) or session/meta/digest writes outside the engine's
+// lifecycle barrier — not even by type assertion, since the concrete
+// view has nothing more to recover. The raw *pebble.DB stays
+// unreachable (UnsafeForTesting is runtime-gated to tests). Callers
+// must respect the engine's lifecycle; returns nil after Close.
+// Callers that write the entitlement keyspace through this handle
+// (ingests, excises) must call InvalidateBareIDLookups afterwards.
+func (e *Engine) DB() *MergeDB {
+	if e.db == nil {
+		return nil
+	}
+	return e.db.MergeView()
+}
 
 // InvalidateBareIDLookups invalidates the lazily built bare-id lookup
 // state (see lookup.go). Engine write paths call this internally; it is
@@ -669,6 +730,51 @@ func (e *Engine) InvalidateBareIDLookups() { e.noteEntitlementKeyspaceWrite() }
 // MigratedOnOpen reports whether this Open ran the in-place id-index
 // migration (see migratedOnOpen).
 func (e *Engine) MigratedOnOpen() bool { return e.migratedOnOpen }
+
+// fs returns the filesystem the engine performs its own IO through:
+// the WithVFS override when set, vfs.Default otherwise. This must be
+// the same FS the pebble.DB reads from — the staged SSTs the engine
+// hands to Ingest/IngestAndExcise are resolved through the DB's FS.
+//
+// Snapshotted from the rawdb handle at Open (resolvedFS) rather than
+// read through e.db on every call: Close nils e.db, but cleanup paths
+// legitimately outlive it — a retained BulkSyncImport's Abort/Finish
+// tears down its staging dirs through fs() after the engine closed
+// (review finding, external parity round: the e.db.FS() form
+// nil-panicked there, where main's opts-based fs() was safe). The
+// snapshot is a copy of rawdb's one resolution, not a second decision.
+func (e *Engine) fs() vfs.FS {
+	return e.resolvedFS
+}
+
+// prepareStagingDir mints a unique staging directory via os.MkdirTemp
+// and mirrors it onto the engine FS. SST files staged for ingest are
+// created through e.fs() (the pebble.DB resolves ingest paths through
+// that FS), while spill-chunk scratch is plain OS IO — so the directory
+// must exist on both. On the default FS the MkdirAll is a no-op.
+//
+// Portability note: mirroring a host temp path onto a MemFS assumes
+// "/" separators (MemFS only splits on "/"). WithVFS with a MemFS is a
+// test-only configuration and the tests are unix-only; a Windows port
+// would need to stage under fs.PathJoin'd relative paths instead.
+func (e *Engine) prepareStagingDir(tmpDir, pattern string) (string, error) {
+	dir, err := os.MkdirTemp(tmpDir, pattern)
+	if err != nil {
+		return "", err
+	}
+	if err := e.fs().MkdirAll(dir, 0o755); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	return dir, nil
+}
+
+// removeStagingDir removes a staging directory from both filesystems
+// it exists on (see prepareStagingDir). Cleanup-path best effort.
+func (e *Engine) removeStagingDir(dir string) {
+	_ = e.fs().RemoveAll(dir)
+	_ = os.RemoveAll(dir)
+}
 
 // CheckpointTo writes a self-contained Pebble directory snapshot to
 // destDir. destDir must not exist yet. Pebble creates it and
@@ -715,16 +821,31 @@ func (e *Engine) CheckpointTo(ctx context.Context, destDir string) error {
 	}
 
 	if e.opts.readOnly {
-		return copyReadOnlyDBDir(e.dbDir, destDir)
+		return copyReadOnlyDBDir(e.fs(), e.dbDir, destDir)
 	}
 
-	if err := e.db.Flush(); err != nil {
+	if err := e.db.FlushMemtables(); err != nil {
 		return fmt.Errorf("checkpoint flush: %w", err)
 	}
 	if err := e.db.Checkpoint(destDir); err != nil {
 		return fmt.Errorf("checkpoint db %s: %w", destDir, err)
 	}
-	if err := truncateCheckpointWALs(destDir); err != nil {
+	if err := truncateCheckpointWALs(e.fs(), destDir); err != nil {
+		// The checkpoint itself succeeded, so destDir exists; a caller
+		// that retries CheckpointTo with the same path would otherwise
+		// hard-fail pebble Checkpoint's dest-must-not-exist contract.
+		// Removal keeps the failure retryable (the clone-sync caller
+		// uses a fresh temp dir either way). If the removal ALSO fails
+		// — plausible, since whatever broke the truncate may still be
+		// broken — same-path retryability is NOT restored, so the
+		// cleanup failure rides along in the returned error instead of
+		// being swallowed.
+		if rmErr := e.fs().RemoveAll(destDir); rmErr != nil {
+			return errors.Join(
+				fmt.Errorf("checkpoint truncate WALs: %w", err),
+				fmt.Errorf("cleanup of %s also failed (retry needs a fresh dest or manual removal): %w", destDir, rmErr),
+			)
+		}
 		return fmt.Errorf("checkpoint truncate WALs: %w", err)
 	}
 
@@ -733,14 +854,15 @@ func (e *Engine) CheckpointTo(ctx context.Context, destDir string) error {
 
 // copyReadOnlyDBDir clones a read-only Pebble directory tree into
 // destDir. destDir must not exist yet, matching db.Checkpoint's
-// contract.
-func copyReadOnlyDBDir(srcDir, destDir string) error {
-	if _, err := os.Stat(destDir); err == nil {
+// contract. pfs is the engine FS (Engine.fs()) — the source tree was
+// written through it and the clone must land where the destination
+// open will look.
+func copyReadOnlyDBDir(pfs vfs.FS, srcDir, destDir string) error {
+	if _, err := pfs.Stat(destDir); err == nil {
 		return &os.PathError{Op: "checkpoint", Path: destDir, Err: fs.ErrExist}
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	pfs := vfs.Default
 	// Skip LOCK: the source engine holds an exclusive lock on it (on
 	// Windows the same process cannot reopen it for read). The clone
 	// gets a fresh LOCK when Pebble opens destDir.
@@ -777,16 +899,46 @@ func copyReadOnlyDBDir(srcDir, destDir string) error {
 // (replay reads a clean EOF), whereas deleting the file would change
 // the file set pebble's open sequence discovers and validates against
 // the manifest's minUnflushedLogNum.
-func truncateCheckpointWALs(destDir string) error {
-	entries, err := os.ReadDir(destDir)
+//
+// pfs is the engine FS (Engine.fs()) — db.Checkpoint wrote the
+// checkpoint through it, so the WALs to truncate live there, not
+// necessarily on the host filesystem. vfs has no Truncate, and
+// vfs.Default.Create is REMOVE-then-recreate (not O_TRUNC — see its
+// hard-link rationale), so "Create the WAL path directly" could
+// unlink a WAL and then fail the recreate, which is exactly the
+// delete-changes-the-discovered-file-set hazard the truncate-not-
+// delete policy above exists to avoid. Instead the zero-byte
+// replacement is built at a side name and Rename'd over the WAL:
+// the original survives every failure before the rename, and the
+// rename replaces the path atomically on both the default FS and
+// MemFS.
+func truncateCheckpointWALs(pfs vfs.FS, destDir string) error {
+	names, err := pfs.List(destDir)
 	if err != nil {
 		return err
 	}
-	for _, ent := range entries {
-		if ent.IsDir() || filepath.Ext(ent.Name()) != ".log" {
+	for _, name := range names {
+		if filepath.Ext(name) != ".log" {
 			continue
 		}
-		if err := os.Truncate(filepath.Join(destDir, ent.Name()), 0); err != nil {
+		path := pfs.PathJoin(destDir, name)
+		if info, err := pfs.Stat(path); err != nil || info.IsDir() {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		tmp := path + ".trunc"
+		f, err := pfs.Create(tmp, vfs.WriteCategoryUnspecified)
+		if err != nil {
+			return err
+		}
+		if err := f.Close(); err != nil {
+			_ = pfs.Remove(tmp)
+			return err
+		}
+		if err := pfs.Rename(tmp, path); err != nil {
+			_ = pfs.Remove(tmp)
 			return err
 		}
 	}

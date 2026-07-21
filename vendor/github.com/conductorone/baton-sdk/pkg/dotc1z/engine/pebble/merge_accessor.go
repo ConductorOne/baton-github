@@ -11,6 +11,30 @@ import (
 	v3 "github.com/conductorone/baton-sdk/pb/c1/storage/v3"
 	"github.com/conductorone/baton-sdk/pkg/connectorstore"
 	"github.com/conductorone/baton-sdk/pkg/dotc1z/engine/pebble/codec"
+	"github.com/conductorone/baton-sdk/pkg/dotc1z/engine/pebble/internal/rawdb"
+)
+
+// FoldBatch and MergeDB are exported aliases for the choke point's
+// fold-exempt batch and the narrowed compactor handle (internal/
+// rawdb). The synccompactor/pebble package — the choke point's one
+// sanctioned external client, via Engine.DB() — needs to NAME these
+// types in struct fields and signatures, which the internal-package
+// import fence forbids; an alias is referable without the import.
+//
+// MergeDB (= rawdb.MergeView) carries reads, LSM stats, the bulk
+// range/ingest ops, and the fold-exempt batch — and nothing else:
+// typed record staging (NewRecordBatch) and the session/meta/digest
+// write families are not on it, so the documented DB() exemption
+// cannot quietly grow into a second engine write path that bypasses
+// the lifecycle barrier. It is deliberately a CONCRETE struct, not an
+// interface over *rawdb.DB — an interface's dynamic type would let a
+// caller recover the omitted write families with a structural type
+// assertion (review finding, delta round). UnsafeForTesting stays
+// reachable for test fixtures; its testing.Testing() runtime gate
+// makes it inert in production.
+type (
+	FoldBatch = rawdb.FoldBatch
+	MergeDB   = rawdb.MergeView
 )
 
 // engineAccessor is implemented by *Adapter and by pkg/dotc1z's Pebble
@@ -78,8 +102,7 @@ func ReadSyncStatsRecord(ctx context.Context, e *Engine, syncID string) (*v3.Syn
 
 // SyncStatsFromRecord converts the engine-internal stats sidecar shape
 // into the public reader stats type used by C1ZStore APIs and compactor
-// planning. The public type intentionally has no assets field, so assets
-// remain available only on the sidecar record.
+// planning.
 func SyncStatsFromRecord(stats *v3.SyncStatsRecord) *reader_v2.SyncStats {
 	if stats == nil {
 		return nil
@@ -89,10 +112,34 @@ func SyncStatsFromRecord(stats *v3.SyncStatsRecord) *reader_v2.SyncStats {
 		Resources:                  stats.GetResources(),
 		Entitlements:               stats.GetEntitlements(),
 		Grants:                     stats.GetGrants(),
+		Assets:                     stats.GetAssets(),
 		ResourcesByResourceType:    stats.GetResourcesByResourceType(),
 		EntitlementsByResourceType: stats.GetEntitlementsByResourceType(),
 		GrantsByResourceType:       stats.GetGrantsByEntitlementResourceType(),
+		StepDurationsMs:            stats.GetStepDurationsMs(),
+		ConnectorCallStats:         storageCallStatsToReader(stats.GetConnectorCallStats()),
+		SessionStoreStats:          storageCallStatsToReader(stats.GetSessionStoreStats()),
 	}.Build()
+}
+
+func storageCallStatsToReader(in map[string]*v3.CallStat) map[string]*reader_v2.CallStat {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]*reader_v2.CallStat, len(in))
+	for k, v := range in {
+		if v == nil {
+			continue
+		}
+		out[k] = reader_v2.CallStat_builder{
+			Count:    v.GetCount(),
+			TotalMs:  v.GetTotalMs(),
+			MaxMs:    v.GetMaxMs(),
+			Errors:   v.GetErrors(),
+			Timeouts: v.GetTimeouts(),
+		}.Build()
+	}
+	return out
 }
 
 func CachedSyncStats(ctx context.Context, e *Engine, syncID string) (*reader_v2.SyncStats, bool, error) {
