@@ -12,6 +12,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -207,6 +209,17 @@ func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 	}, nil
 }
 
+// allowNonAdminOrgs reports whether the org-admin requirement is relaxed
+// (BATON_GITHUB_ALLOW_NON_ADMIN=true). EXPERIMENTAL escape hatch for
+// read-only sync testing with a member-level token: org member listings
+// are fully readable by any org member, but admin-only surfaces
+// (invitations, org roles, secrets) and provisioning will fail or come
+// back partial. Do not use in production.
+func allowNonAdminOrgs() bool {
+	v, _ := strconv.ParseBool(os.Getenv("BATON_GITHUB_ALLOW_NON_ADMIN"))
+	return v
+}
+
 // Validate hits the GitHub API to validate that the configured credentials are still valid.
 func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error) {
 	if gh.appClient != nil {
@@ -238,7 +251,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		}
 
 		// Only sync orgs that we are an admin for
-		if strings.ToLower(membership.GetRole()) != orgRoleAdmin {
+		if strings.ToLower(membership.GetRole()) != orgRoleAdmin && !allowNonAdminOrgs() {
 			if filterOrgs {
 				err := fmt.Errorf("access token must be an admin on the %s organization", o)
 				return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: credentials validation failed", err)

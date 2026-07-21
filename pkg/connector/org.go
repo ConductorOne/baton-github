@@ -135,8 +135,9 @@ func (o *orgResourceType) List(
 			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get org membership")
 		}
 
-		// Only sync orgs that we are an admin for
-		if strings.ToLower(membership.GetRole()) != orgRoleAdmin {
+		// Only sync orgs that we are an admin for (relaxed by the
+		// experimental BATON_GITHUB_ALLOW_NON_ADMIN escape hatch).
+		if strings.ToLower(membership.GetRole()) != orgRoleAdmin && !allowNonAdminOrgs() {
 			continue
 		}
 
