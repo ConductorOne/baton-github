@@ -2,9 +2,11 @@ package connector
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	entitlement2 "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -79,4 +81,116 @@ func TestRepository(t *testing.T) {
 		require.Nil(t, err)
 		require.Empty(t, revokeAnnotations)
 	})
+}
+
+// TestRepositoryGrantsOrgBasePermissionExpansion is a regression test for the
+// empty default_repository_permission bug: when GitHub omits the field (the
+// credential lacks org-owner visibility), the connector used to assume "read"
+// and emit expandable org-member pull grants on every repo — inventing access
+// for every org member. It drives Grants() end-to-end with
+// direct-collaborators-only enabled.
+//
+// Seeded mock IDs: org 12, repo 34, user 56.
+func TestRepositoryGrantsOrgBasePermissionExpansion(t *testing.T) {
+	ctx := context.Background()
+
+	memberEntitlementID := "org:12:member"
+
+	// listAllGrants pages through Grants() until the page token is exhausted.
+	listAllGrants := func(t *testing.T, builder *repositoryResourceType, repository *v2.Resource) []*v2.Grant {
+		t.Helper()
+		var grants []*v2.Grant
+		pToken := pagination.Token{}
+		for {
+			nextGrants, results, err := builder.Grants(ctx, repository, resourceSdk.SyncOpAttrs{
+				PageToken: pToken,
+				Session:   &noOpSessionStore{},
+			})
+			require.NoError(t, err)
+			grants = append(grants, nextGrants...)
+			if results.NextPageToken == "" {
+				return grants
+			}
+			pToken.Token = results.NextPageToken
+		}
+	}
+
+	// memberExpansionGrants returns grants whose GrantExpandable annotation
+	// expands the org:12:member entitlement — i.e. repo access inferred from
+	// org membership via the base permission.
+	memberExpansionGrants := func(t *testing.T, grants []*v2.Grant) []*v2.Grant {
+		t.Helper()
+		var rv []*v2.Grant
+		for _, g := range grants {
+			expandable := &v2.GrantExpandable{}
+			annos := annotations.Annotations(g.GetAnnotations())
+			found, err := annos.Pick(expandable)
+			require.NoError(t, err)
+			if found && slices.Contains(expandable.GetEntitlementIds(), memberEntitlementID) {
+				rv = append(rv, g)
+			}
+		}
+		return rv
+	}
+
+	setup := func(t *testing.T) (*mocks.MockGitHub, *repositoryResourceType, *v2.Resource) {
+		t.Helper()
+		mgh := mocks.NewMockGitHub()
+		githubOrganization, githubRepository, _, githubUser, _, _ := mgh.Seed()
+		// Seed a direct collaborator so the collaborator page succeeds.
+		mgh.AddRepositoryCollaborator(githubRepository.GetID(), githubUser.GetID())
+
+		githubClient := github.NewClient(mgh.Server())
+		builder := RepositoryBuilder(githubClient, newOrgNameCache(githubClient), false, true /* directCollaboratorsOnly */)
+
+		organization, err := organizationResource(ctx, githubOrganization, nil, false)
+		require.NoError(t, err)
+		repository, err := repositoryResource(ctx, githubRepository, organization.Id)
+		require.NoError(t, err)
+		return mgh, builder, repository
+	}
+
+	t.Run("missing default_repository_permission fails closed", func(t *testing.T) {
+		_, builder, repository := setup(t)
+		// The seeded org omits default_repository_permission, like GitHub does
+		// for credentials without admin:org / Organization Administration.
+		grants := listAllGrants(t, builder, repository)
+
+		require.NotEmpty(t, grants, "expected admin-expansion and direct-collaborator grants")
+		require.Empty(t, memberExpansionGrants(t, grants),
+			"an omitted default_repository_permission must not invent org-member repo grants")
+	})
+
+	t.Run("read default_repository_permission still expands members to pull", func(t *testing.T) {
+		mgh, builder, repository := setup(t)
+		mgh.SetOrgDefaultRepoPermission(12, "read")
+		grants := listAllGrants(t, builder, repository)
+
+		memberGrants := memberExpansionGrants(t, grants)
+		require.Len(t, memberGrants, 1, "base permission read should expand org members to exactly pull")
+		require.Equal(t, "repository:34:pull:org:12", memberGrants[0].GetId())
+	})
+}
+
+func TestOrgBasePermissionToRepoPermissions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		basePerm string
+		want     []string
+	}{
+		{name: "none skips member expansion", basePerm: "none", want: nil},
+		{name: "empty skips member expansion", basePerm: "", want: nil},
+		{name: "read grants pull", basePerm: "read", want: []string{repoPermissionPull}},
+		{name: "write grants pull triage push", basePerm: "write", want: []string{repoPermissionPull, repoPermissionTriage, repoPermissionPush}},
+		{name: "admin grants all levels", basePerm: "admin", want: []string{repoPermissionPull, repoPermissionTriage, repoPermissionPush, repoPermissionMaintain, repoPermissionAdmin}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, orgBasePermissionToRepoPermissions(tc.basePerm))
+		})
+	}
 }

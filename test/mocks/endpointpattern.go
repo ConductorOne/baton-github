@@ -22,6 +22,11 @@ var GetOrganizationById = mock.EndpointPattern{
 	Method:  "GET",
 }
 
+var GetOrgsByOrg = mock.EndpointPattern{
+	Pattern: "/orgs/{org}",
+	Method:  "GET",
+}
+
 var GetRepositoryById = mock.EndpointPattern{
 	Pattern: "/repositories/{repository_id}",
 	Method:  "GET",
