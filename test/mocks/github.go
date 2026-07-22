@@ -234,6 +234,20 @@ func (mgh MockGitHub) getOrganization(
 	}
 }
 
+// getOrganizationByName handles GET /orgs/{org}. The mock pretends slugs and
+// IDs are interchangeable (see getCrossTableId), so "organization-12" resolves
+// to org ID 12.
+func (mgh MockGitHub) getOrganizationByName(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	id, err := getCrossTableId(w, variables, "org")
+	if err != nil {
+		return
+	}
+	writeResource(w, strconv.FormatInt(id, 10), mgh.organizations)
+}
+
 func (mgh MockGitHub) getRepository(
 	w http.ResponseWriter,
 	variables map[string]string,
@@ -725,6 +739,7 @@ func addEndpointHandler(
 func (mgh MockGitHub) Server() *http.Client {
 	routesMap := map[mock.EndpointPattern]handler{
 		GetOrganizationById:                                                 mgh.getOrganization,
+		GetOrgsByOrg:                                                        mgh.getOrganizationByName,
 		GetOrganizationsTeamsMembersByTeamId:                                mgh.getMembers,
 		GetOrganizationsTeamByTeamId:                                        mgh.getTeam,
 		GetOrganizationsTeamsMembershipsByTeamIdByUsername:                  mgh.getTeamMembership,
@@ -771,6 +786,24 @@ func (mgh *MockGitHub) AddUserToOrgRole(roleID int64, userID int64) {
 		mgh.orgRoles[roleID] = mapset.NewSet[int64]()
 	}
 	mgh.orgRoles[roleID].Add(userID)
+}
+
+// SetOrgDefaultRepoPermission sets default_repository_permission on a mock org
+// for testing purposes. When unset, the org payload omits the field, matching
+// what GitHub returns to credentials without org-owner visibility.
+func (mgh *MockGitHub) SetOrgDefaultRepoPermission(orgID int64, permission string) {
+	org := mgh.organizations[orgID]
+	org.DefaultRepoPermission = github.Ptr(permission)
+	mgh.organizations[orgID] = org
+}
+
+// AddRepositoryCollaborator adds a user as a direct repository collaborator
+// for testing purposes.
+func (mgh *MockGitHub) AddRepositoryCollaborator(repoID int64, userID int64) {
+	if _, ok := mgh.repositoryMemberships[repoID]; !ok {
+		mgh.repositoryMemberships[repoID] = mapset.NewSet[int64]()
+	}
+	mgh.repositoryMemberships[repoID].Add(userID)
 }
 
 // AddMembership adds a user to a team for testing purposes.

@@ -548,7 +548,14 @@ func orgBasePermissionSessionKey(orgID string) string {
 
 // getOrgBasePermission fetches the org's default_repository_permission, caching in the session.
 // Returns "read", "write", "admin", or "none".
+//
+// An empty/absent field is treated as "none" (fail closed). GitHub only returns
+// default_repository_permission to org owners / tokens with admin:org (or the
+// GitHub App Organization Administration permission). An omitted field means
+// "unknown", not GitHub's create-org default of "read" — assuming "read" would
+// invent pull grants for every org member on every repo.
 func (o *repositoryResourceType) getOrgBasePermission(ctx context.Context, ss sessions.SessionStore, orgName string, orgResourceID *v2.ResourceId) (string, error) {
+	l := ctxzap.Extract(ctx)
 	key := orgBasePermissionSessionKey(orgResourceID.Resource)
 	cached, found, err := session.GetJSON[string](ctx, ss, key)
 	if err != nil {
@@ -565,7 +572,13 @@ func (o *repositoryResourceType) getOrgBasePermission(ctx context.Context, ss se
 
 	perm := org.GetDefaultRepoPermission()
 	if perm == "" {
-		perm = readConst // GitHub default
+		l.Debug(
+			"baton-github: org default_repository_permission missing or empty; skipping org-member repo expansion (treating as none). "+
+				"Grant the credential org-owner visibility (admin:org / Organization Administration) to sync base-permission grants accurately.",
+			zap.String("org", orgName),
+			zap.String("org_id", orgResourceID.Resource),
+		)
+		perm = "none"
 	}
 
 	if err := session.SetJSON(ctx, ss, key, perm); err != nil {
