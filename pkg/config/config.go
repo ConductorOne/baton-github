@@ -70,7 +70,10 @@ var (
 		field.WithDisplayName("Optimize sync for large organizations"),
 		field.WithDescription(
 			"Reduces API calls by using grant expansion for team-based repo access "+
-				"and skipping per-team detail fetches. Recommended for large orgs.",
+				"and skipping per-team detail fetches. Recommended for large orgs. "+
+				"Requires the credential to be able to read the org's default repository permission "+
+				"(admin:org scope or the Organization Administration read permission); "+
+				"validation and syncs fail without it.",
 		),
 	)
 	orgField = field.StringField(

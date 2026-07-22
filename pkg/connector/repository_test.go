@@ -12,6 +12,8 @@ import (
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/conductorone/baton-github/test"
 	"github.com/conductorone/baton-github/test/mocks"
@@ -163,8 +165,20 @@ func TestRepositoryGrantsOrgBasePermissionExpansion(t *testing.T) {
 			Session:   &noOpSessionStore{},
 		})
 		require.ErrorContains(t, err, "default_repository_permission")
+		require.Equal(t, codes.PermissionDenied, status.Code(err),
+			"missing default_repository_permission is a credential permission problem, not a transient failure")
 		require.Empty(t, grants,
 			"an omitted default_repository_permission must not produce grants")
+	})
+
+	t.Run("none default_repository_permission emits no member expansion grants", func(t *testing.T) {
+		mgh, builder, repository := setup(t)
+		mgh.SetOrgDefaultRepoPermission(12, "none")
+		grants := listAllGrants(t, builder, repository)
+
+		require.NotEmpty(t, grants, "admin expansion and direct collaborators are still emitted")
+		require.Empty(t, memberExpansionGrants(t, grants),
+			"base permission none must not expand org members into repo access")
 	})
 
 	t.Run("read default_repository_permission still expands members to pull", func(t *testing.T) {

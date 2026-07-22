@@ -576,13 +576,14 @@ func (o *repositoryResourceType) getOrgBasePermission(ctx context.Context, ss se
 
 	perm := org.GetDefaultRepoPermission()
 	if perm == "" {
-		return "", fmt.Errorf(
-			"baton-github: org %q did not return default_repository_permission; "+
+		err := fmt.Errorf(
+			"org %q did not return default_repository_permission; "+
 				"direct-collaborators-only requires it to sync org-member repo access correctly. "+
-				"Grant the credential org-owner visibility (admin:org scope or the GitHub App Organization Administration permission), "+
-				"or disable direct-collaborators-only",
+				"Grant the credential org-owner visibility (admin:org scope, the GitHub App Organization Administration permission, "+
+				"or fine-grained PAT organization Administration read access), or disable direct-collaborators-only",
 			orgName,
 		)
+		return "", uhttp.WrapErrors(codes.PermissionDenied, "baton-github: failed to determine org base permission", err)
 	}
 
 	if err := session.SetJSON(ctx, ss, key, perm); err != nil {
