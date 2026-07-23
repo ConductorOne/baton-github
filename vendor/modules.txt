@@ -1,5 +1,5 @@
-# filippo.io/age v1.2.1
-## explicit; go 1.19
+# filippo.io/age v1.3.1
+## explicit; go 1.24.0
 filippo.io/age
 filippo.io/age/agessh
 filippo.io/age/internal/bech32
@@ -9,6 +9,12 @@ filippo.io/age/internal/stream
 ## explicit; go 1.20
 filippo.io/edwards25519
 filippo.io/edwards25519/field
+# filippo.io/hpke v0.4.0
+## explicit; go 1.24.0
+filippo.io/hpke
+filippo.io/hpke/crypto
+filippo.io/hpke/crypto/ecdh
+filippo.io/hpke/internal/byteorder
 # github.com/DataDog/zstd v1.5.7
 ## explicit; go 1.14
 github.com/DataDog/zstd
@@ -266,7 +272,7 @@ github.com/cockroachdb/swiss
 # github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06
 ## explicit; go 1.19
 github.com/cockroachdb/tokenbucket
-# github.com/conductorone/baton-sdk v0.19.1
+# github.com/conductorone/baton-sdk v0.20.1
 ## explicit; go 1.25.2
 github.com/conductorone/baton-sdk/internal/connector
 github.com/conductorone/baton-sdk/pb/c1/c1z/v1
@@ -291,6 +297,7 @@ github.com/conductorone/baton-sdk/pkg/connectorrunner
 github.com/conductorone/baton-sdk/pkg/connectorstore
 github.com/conductorone/baton-sdk/pkg/crypto
 github.com/conductorone/baton-sdk/pkg/crypto/providers
+github.com/conductorone/baton-sdk/pkg/crypto/providers/age
 github.com/conductorone/baton-sdk/pkg/crypto/providers/jwk
 github.com/conductorone/baton-sdk/pkg/dotc1z
 github.com/conductorone/baton-sdk/pkg/dotc1z/c1zstore
