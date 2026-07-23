@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -99,6 +100,38 @@ func TestInvitationDelete(t *testing.T) {
 		require.Equal(t, "/orgs/test-org-12/invitations/5551212", gotPath,
 			"CancelInvite must address org=test-org-12 and id=5551212")
 		require.False(t, annos.Contains(&v2.ResourceDoesNotExist{}))
+	})
+
+	t.Run("multi-org: 404 plus a non-404 error withholds the marker but keeps success", func(t *testing.T) {
+		// One configured org reports the invitation already absent (404) while
+		// another returns a transient 5xx (state undetermined). The pre-existing
+		// behavior returns success (isRemoved is set by the 404), but absence was
+		// not authoritatively confirmed everywhere, so no marker is emitted.
+		const secondOrg = "test-org-99"
+		client := mock.NewMockedHTTPClient(
+			mock.WithRequestMatchHandler(
+				mock.DeleteOrgsInvitationsByOrgByInvitationId,
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if strings.Contains(r.URL.Path, secondOrg) {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					w.WriteHeader(http.StatusNotFound)
+				}),
+			),
+		)
+
+		gh := github.NewClient(client)
+		b := InvitationBuilder(InvitationBuilderParams{
+			client:   gh,
+			orgCache: newOrgNameCache(gh),
+			orgs:     []string{invitationTestOrgLogin, secondOrg},
+		})
+
+		annos, err := b.Delete(ctx, invitationResID("5551212"))
+		require.NoError(t, err)
+		require.False(t, annos.Contains(&v2.ResourceDoesNotExist{}),
+			"an unresolved non-404 error means absence was not confirmed: no marker")
 	})
 
 	t.Run("malformed invitation id errors before any API call", func(t *testing.T) {
