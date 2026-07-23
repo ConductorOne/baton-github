@@ -257,6 +257,8 @@ func invitationProfile(t *testing.T, r *v2.Resource) map[string]any {
 	ut, err := resourceSdk.GetUserTrait(r)
 	require.NoError(t, err)
 	require.NotNil(t, ut)
-	require.NotNil(t, ut.Profile)
-	return ut.Profile.AsMap()
+	// profile is now a Resource-level attribute; read it via GetProfile.
+	profile := resourceSdk.GetProfile(r)
+	require.NotNil(t, profile)
+	return profile.AsMap()
 }

@@ -53,9 +53,9 @@ func orgRoleResource(
 		role.Name,
 		resourceTypeOrgRole,
 		role.ID,
-		[]resourceSdk.RoleTraitOption{
-			resourceSdk.WithRoleProfile(profile),
-		},
+		[]resourceSdk.RoleTraitOption{},
+		// profile has moved from RoleTrait to a Resource-level attribute.
+		resourceSdk.WithResourceProfile(profile),
 		resourceSdk.WithParentResourceID(org.Id),
 		resourceSdk.WithAnnotation(
 			&v2.V1Identifier{Id: fmt.Sprintf("org_role:%d", role.ID)},

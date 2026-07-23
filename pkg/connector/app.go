@@ -39,7 +39,9 @@ func appResource(ctx context.Context, installation *github.Installation, parentR
 
 	opts := []resourceSdk.ResourceOption{
 		resourceSdk.WithParentResourceID(parentResourceID),
-		resourceSdk.WithAppTrait(resourceSdk.WithAppProfile(profile)),
+		resourceSdk.WithAppTrait(),
+		// profile has moved from AppTrait to a Resource-level attribute.
+		resourceSdk.WithResourceProfile(profile),
 		resourceSdk.WithNHIType(v2.NonHumanIdentityTrait_NHI_TYPE_APP_REGISTRATION, "github.app"),
 	}
 	if installation.HTMLURL != nil {
