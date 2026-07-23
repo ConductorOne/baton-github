@@ -346,14 +346,16 @@ func (i *invitationResourceType) Delete(ctx context.Context, resourceId *v2.Reso
 	}
 
 	var (
-		isRemoved = false
-		resp      *github.Response
+		isRemoved    = false
+		wasCancelled = false
+		resp         *github.Response
 	)
 
 	for _, org := range orgs {
 		resp, err = i.client.Organizations.CancelInvite(ctx, org, invitationID)
 		if err == nil {
 			isRemoved = true
+			wasCancelled = true
 			continue
 		}
 		if isNotFoundError(resp) {
@@ -374,6 +376,18 @@ func (i *invitationResourceType) Delete(ctx context.Context, resourceId *v2.Reso
 
 	var annotations annotations.Annotations
 	annotations.WithRateLimiting(restApiRateLimit)
+	if !wasCancelled {
+		// No active cancellation succeeded, yet the invitation is considered
+		// removed: the provider authoritatively reported it already absent
+		// (404) for a well-formed invitation id against a configured org.
+		// Emit the typed already-absent marker so a delete retried after a
+		// crash is classified as success rather than an ambiguous NotFound
+		// (SPEC-09a; baton-sdk#1033). An active cancellation is ordinary
+		// success and intentionally carries no marker. A future baton-sdk
+		// bump can replace this direct construction with
+		// resource.ResourceDoesNotExistAnnotations().
+		annotations.Append(&v2.ResourceDoesNotExist{})
+	}
 	return annotations, nil
 }
 
