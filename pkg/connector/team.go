@@ -45,7 +45,9 @@ func teamResource(team *github.Team, orgID int64, parentResourceID *v2.ResourceI
 		team.GetName(),
 		resourceTypeTeam,
 		team.GetID(),
-		[]rType.GroupTraitOption{rType.WithGroupProfile(profile)},
+		[]rType.GroupTraitOption{},
+		// profile has moved from GroupTrait to a Resource-level attribute.
+		rType.WithResourceProfile(profile),
 		rType.WithAnnotation(
 			&v2.ExternalLink{Url: team.GetURL()},
 			&v2.V1Identifier{Id: fmt.Sprintf("team:%d", team.GetID())},
@@ -159,12 +161,10 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, op
 		return nil, nil, err
 	}
 
-	teamTrait, err := rType.GetGroupTrait(resource)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	orgID, ok := rType.GetProfileInt64Value(teamTrait.Profile, "orgID")
+	// profile has moved from GroupTrait to a Resource-level attribute; read it
+	// via GetProfile, which resolves the resource-level value (with a
+	// trait-level fallback for older data).
+	orgID, ok := rType.GetProfileInt64Value(rType.GetProfile(resource), "orgID")
 	if !ok {
 		return nil, nil, fmt.Errorf("error fetching orgID from team profile")
 	}
@@ -280,12 +280,9 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 			return nil, err
 		}
 	case resourceTypeTeam.Id:
-		groupTrait, err := rType.GetGroupTrait(entitlement.Resource)
-		if err != nil {
-			return nil, err
-		}
-
-		orgID, ok := rType.GetProfileInt64Value(groupTrait.Profile, "orgID")
+		// profile has moved from GroupTrait to a Resource-level attribute; read
+		// it via GetProfile (resource-level value, with a trait-level fallback).
+		orgID, ok := rType.GetProfileInt64Value(rType.GetProfile(entitlement.Resource), "orgID")
 		if !ok {
 			return nil, fmt.Errorf("error fetching orgID from team profile")
 		}

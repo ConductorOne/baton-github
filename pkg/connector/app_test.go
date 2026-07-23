@@ -36,12 +36,14 @@ func TestAppResource(t *testing.T) {
 	require.Equal(t, v2.NonHumanIdentityTrait_NHI_TYPE_APP_REGISTRATION, nhi.GetNhiType())
 	require.Equal(t, "github.app", nhi.GetNhiDetail())
 
-	app, err := resourceSdk.GetAppTrait(resource)
+	_, err = resourceSdk.GetAppTrait(resource)
 	require.NoError(t, err)
-	appID, ok := resourceSdk.GetProfileInt64Value(app.GetProfile(), "app_id")
+	// profile is now a Resource-level attribute; read it via GetProfile.
+	profile := resourceSdk.GetProfile(resource)
+	appID, ok := resourceSdk.GetProfileInt64Value(profile, "app_id")
 	require.True(t, ok)
 	require.Equal(t, int64(7), appID)
-	login, ok := resourceSdk.GetProfileStringValue(app.GetProfile(), "account_login")
+	login, ok := resourceSdk.GetProfileStringValue(profile, "account_login")
 	require.True(t, ok)
 	require.Equal(t, "acme", login)
 }

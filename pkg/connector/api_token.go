@@ -26,8 +26,12 @@ func apiTokenResource(ctx context.Context, token *github.PersonalAccessToken) (*
 		options = append(options, resourceSdk.WithSecretLastUsedAt(token.TokenLastUsedAt.Time))
 	}
 
+	// created_at has moved from SecretTrait to a Resource-level attribute, so
+	// set it via the resource-level option instead of the deprecated
+	// WithSecretCreatedAt trait option.
+	var resourceOpts []resourceSdk.ResourceOption
 	if token.AccessGrantedAt != nil {
-		options = append(options, resourceSdk.WithSecretCreatedAt(token.AccessGrantedAt.Time))
+		resourceOpts = append(resourceOpts, resourceSdk.WithResourceCreatedAt(token.AccessGrantedAt.Time))
 	}
 
 	if token.TokenExpiresAt != nil {
@@ -38,6 +42,7 @@ func apiTokenResource(ctx context.Context, token *github.PersonalAccessToken) (*
 		resourceTypeApiToken,
 		token.GetID(),
 		options,
+		resourceOpts...,
 	)
 	if err != nil {
 		return nil, err

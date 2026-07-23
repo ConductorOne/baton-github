@@ -48,8 +48,14 @@ func userResource(ctx context.Context, user *github.User, userEmail string, extr
 
 	userTrait := []resource.UserTraitOption{
 		resource.WithEmail(userEmail, true),
-		resource.WithUserProfile(profile),
-		resource.WithStatus(v2.UserTrait_Status_STATUS_ENABLED),
+	}
+
+	// profile, status, and icon have moved from UserTrait to Resource-level
+	// attributes. NewUserTrait still defaults the (unset) trait status to
+	// ENABLED, so the enabled semantics are preserved on both levels.
+	resourceOpts := []resource.ResourceOption{
+		resource.WithResourceProfile(profile),
+		resource.WithResourceStatus(v2.Status_RESOURCE_STATUS_ENABLED, ""),
 	}
 
 	for _, email := range extraEmails {
@@ -57,7 +63,7 @@ func userResource(ctx context.Context, user *github.User, userEmail string, extr
 	}
 
 	if user.GetAvatarURL() != "" {
-		userTrait = append(userTrait, resource.WithUserIcon(&v2.AssetRef{
+		resourceOpts = append(resourceOpts, resource.WithResourceIcon(&v2.AssetRef{
 			Id: user.GetAvatarURL(),
 		}))
 	}
@@ -70,15 +76,17 @@ func userResource(ctx context.Context, user *github.User, userEmail string, extr
 		}))
 	}
 
+	resourceOpts = append(resourceOpts, resource.WithAnnotation(
+		&v2.ExternalLink{Url: user.GetHTMLURL()},
+		&v2.V1Identifier{Id: strconv.FormatInt(user.GetID(), 10)},
+	))
+
 	ret, err := resource.NewUserResource(
 		displayName,
 		resourceTypeUser,
 		user.GetID(),
 		userTrait,
-		resource.WithAnnotation(
-			&v2.ExternalLink{Url: user.GetHTMLURL()},
-			&v2.V1Identifier{Id: strconv.FormatInt(user.GetID(), 10)},
-		),
+		resourceOpts...,
 	)
 	if err != nil {
 		return nil, err
