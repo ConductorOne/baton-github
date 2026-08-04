@@ -145,11 +145,18 @@ type syncer struct {
 	c1zPath                             string
 	externalResourceC1ZPath             string
 	externalResourceEntitlementIdFilter string
-	previousSyncC1ZPath                 string
-	previousSyncC1ZPathOptional         bool
-	store                               c1zstore.Store
-	externalResourceReader              connectorstore.Reader
-	previousSyncReader                  connectorstore.Reader
+	// externalResourceTraits are the resource type traits that this
+	// connector wants synced from the external resource source and made
+	// available to the External Identity Matcher (see externalMatchTraits,
+	// set via WithExternalResourceTraits). When left empty the matcher
+	// falls back to TRAIT_USER/TRAIT_GROUP, preserving pre-CE-975 behavior
+	// for callers that never opt in.
+	externalResourceTraits      []v2.ResourceType_Trait
+	previousSyncC1ZPath         string
+	previousSyncC1ZPathOptional bool
+	store                       c1zstore.Store
+	externalResourceReader      connectorstore.Reader
+	previousSyncReader          connectorstore.Reader
 	// Ingestion-invariant state (see ingest_invariants.go):
 	// childSchedule is the monotone record backing invariant I4;
 	// resourcesPhaseRanHere gates I4 to processes that actually ran the
@@ -179,18 +186,33 @@ type syncer struct {
 	// seal leaves the artifact unverified instead of claiming
 	// verification over data a resume will rewrite.
 	pendingInvariantVerification *c1zstore.IngestInvariantVerification
-	connector                    types.ConnectorClient
-	state                        State
-	runDuration                  time.Duration
-	transitionHandler            func(s Action)
-	progressHandler              func(p *Progress)
-	tmpDir                       string
-	storageEngine                c1zstore.Engine
-	skipFullSync                 bool
-	lastCheckPointTime           time.Time
-	counts                       *progresslog.ProgressLog
-	targetedSyncResources        []*v2.Resource
-	onlyExpandGrants             bool
+	// checkpointInterval throttles non-forced checkpoints (default
+	// minCheckpointInterval). The checkpoint-cut verification harness
+	// sets it to zero so every loop-top checkpoint durably commits,
+	// making each one an enumerable crash-cut point.
+	checkpointInterval time.Duration
+	// testCheckpointHook, when non-nil, observes every durably written
+	// checkpoint token. The cut harness uses it to count checkpoints
+	// and to simulate a crash immediately after a chosen one. Nil in
+	// production: one pointer check.
+	testCheckpointHook func(token string)
+	// testQueueAudit, when non-nil, records every parallelActionQueue
+	// event (seed/dequeue/commit/abort/done) for post-hoc verification
+	// of the queue contract. Nil in production: one pointer check per
+	// queue operation.
+	testQueueAudit        *queueAudit
+	connector             types.ConnectorClient
+	state                 State
+	runDuration           time.Duration
+	transitionHandler     func(s Action)
+	progressHandler       func(p *Progress)
+	tmpDir                string
+	storageEngine         c1zstore.Engine
+	skipFullSync          bool
+	lastCheckPointTime    time.Time
+	counts                *progresslog.ProgressLog
+	targetedSyncResources []*v2.Resource
+	onlyExpandGrants      bool
 	// compactionMergedStore marks the store as a pre-sealed artifact
 	// this process did not collect (WithCompactionMergedStore — the
 	// compactor's keep-newer merge and rollback-expansion's replay):
@@ -198,24 +220,30 @@ type syncer struct {
 	// merge and soften hard arms to aggregated warnings. Distinct from
 	// onlyExpandGrants, which changes WHAT syncs and carries no
 	// invariant policy on its own.
-	compactionMergedStore           bool
-	dontExpandGrants                bool
-	syncID                          string
-	skipEGForResourceType           syncMap[string, bool]
-	skipEntitlementsForResourceType syncMap[string, bool]
-	scheduledResourceTypes          syncMap[string, bool]
-	ingestFilterStats               ingestFilterStats
-	skipEntitlementsAndGrants       bool
-	skipGrants                      bool
-	resourceTypeTraits              syncMap[string, []v2.ResourceType_Trait]
-	syncType                        connectorstore.SyncType
-	injectSyncIDAnnotation          bool
-	setSessionStore                 sessions.SetSessionStore
-	syncResourceTypes               []string
-	workerCount                     int // If 1, sync is sequential (default). If > 1, sync operations are done in parallel.
-	metricsHandler                  metrics.Handler
-	syncIdentity                    uotel.SyncIdentity
-	recordStats                     bool
+	compactionMergedStore                 bool
+	dontExpandGrants                      bool
+	syncID                                string
+	skipEGForResourceType                 syncMap[string, bool]
+	skipEntitlementsForResourceType       syncMap[string, bool]
+	typeScopedGrantsForResourceType       syncMap[string, bool]
+	typeScopedEntitlementsForResourceType syncMap[string, bool]
+	scheduledResourceTypes                syncMap[string, bool]
+	ingestFilterStats                     ingestFilterStats
+	skipEntitlementsAndGrants             bool
+	skipGrants                            bool
+	resourceTypeTraits                    syncMap[string, []v2.ResourceType_Trait]
+	syncType                              connectorstore.SyncType
+	injectSyncIDAnnotation                bool
+	setSessionStore                       sessions.SetSessionStore
+	syncResourceTypes                     []string
+	workerCount                           int // If 1, sync is sequential (default). If > 1, sync operations are done in parallel.
+	metricsHandler                        metrics.Handler
+	syncIdentity                          uotel.SyncIdentity
+	recordStats                           bool
+	// parallelActionTransitioner atomically commits parent pagination and
+	// spawned work to state and the active worker pool.
+	parallelTransitionMu       native_sync.RWMutex
+	parallelActionTransitioner func(context.Context, *Action, string, []Action) error
 
 	// Watermark for the rate_limit_wait_wall bucket: the latest instant
 	// already counted as rate-limit-blocked wall time, plus the
@@ -407,7 +435,7 @@ const minCheckpointInterval = 10 * time.Second
 
 // Checkpoint marshals the current state and stores it.
 func (s *syncer) Checkpoint(ctx context.Context, force bool) error {
-	if !force && !s.lastCheckPointTime.IsZero() && time.Since(s.lastCheckPointTime) < minCheckpointInterval {
+	if !force && !s.lastCheckPointTime.IsZero() && time.Since(s.lastCheckPointTime) < s.checkpointInterval {
 		return nil
 	}
 	start := time.Now()
@@ -421,6 +449,7 @@ func (s *syncer) Checkpoint(ctx context.Context, force bool) error {
 	defer func() { uotel.EndSpanWithError(span, err) }()
 
 	s.lastCheckPointTime = time.Now()
+	s.state.SetIngestQuality(s.ingestFilterStats.snapshot())
 	checkpoint, err := s.state.Marshal()
 	if err != nil {
 		return err
@@ -428,6 +457,9 @@ func (s *syncer) Checkpoint(ctx context.Context, force bool) error {
 	err = s.store.CheckpointSync(ctx, checkpoint)
 	if err != nil {
 		return err
+	}
+	if s.testCheckpointHook != nil {
+		s.testCheckpointHook(checkpoint)
 	}
 
 	return nil
@@ -664,6 +696,23 @@ func (s *syncer) handleProgress(ctx context.Context, a *Action, c int) {
 	}
 }
 
+func collectionProgressIncrement(action *Action, itemCount int, hasNextPage bool) (int, bool) {
+	if action.TypeScoped {
+		return itemCount, true
+	}
+	if !hasNextPage && !action.Spawned {
+		return 1, false
+	}
+	return 0, false
+}
+
+func (s *syncer) markTypeScopedPlanned(action *Action) {
+	action.TypeScopedPlanned = true
+	if st, ok := s.state.(*state); ok {
+		st.markTypeScopedPlanned(action.ID)
+	}
+}
+
 // maxEntitlementsPerExclusionGroup caps how many entitlements may share a
 // single exclusion_group_id. Phase 1 limit. Enforced by ingestion
 // invariant I5 over the STORED entitlement keyspace post-collection
@@ -675,22 +724,38 @@ const maxEntitlementsPerExclusionGroup = 50
 // It also pushes any child actions before updating/finishing the action.
 // This is useful for pagination, and for actions that create other actions.
 func (s *syncer) nextPageOrFinishAction(ctx context.Context, action *Action, nextPageToken string, childActions ...Action) error {
+	s.parallelTransitionMu.RLock()
+	transitioner := s.parallelActionTransitioner
+	s.parallelTransitionMu.RUnlock()
+	if transitioner != nil {
+		return transitioner(ctx, action, nextPageToken, childActions)
+	}
+
+	_, err := s.transitionActionState(ctx, action, nextPageToken, childActions)
+	return err
+}
+
+func (s *syncer) transitionActionState(
+	ctx context.Context,
+	action *Action,
+	nextPageToken string,
+	childActions []Action,
+) ([]*Action, error) {
+	if st, ok := s.state.(*state); ok {
+		return st.transitionAction(ctx, action, nextPageToken, childActions)
+	}
 	if nextPageToken != "" {
-		err := s.state.NextPage(ctx, action.ID, nextPageToken)
-		if err != nil {
-			return err
+		if err := s.state.NextPage(ctx, action.ID, nextPageToken); err != nil {
+			return nil, err
 		}
 	}
-
-	for _, a := range childActions {
-		s.state.PushAction(ctx, a)
+	for _, child := range childActions {
+		s.state.PushAction(ctx, child)
 	}
-
 	if nextPageToken == "" {
 		s.state.FinishAction(ctx, action)
 	}
-
-	return nil
+	return nil, nil
 }
 
 func isWarning(ctx context.Context, err error) bool {
@@ -829,6 +894,13 @@ func (s *syncer) Sync(ctx context.Context) error {
 
 	// Validate any targeted resource IDs before starting a sync.
 	targetedResources := []*v2.Resource{}
+	type targetedResourceKey struct {
+		resourceTypeID       string
+		resourceID           string
+		parentResourceTypeID string
+		parentResourceID     string
+	}
+	seenTargetedResources := make(map[targetedResourceKey]struct{}, len(s.targetedSyncResources))
 	for _, r := range s.targetedSyncResources {
 		if len(s.syncResourceTypes) > 0 {
 			if _, ok := syncResourceTypeMap[r.GetId().GetResourceType()]; !ok {
@@ -836,6 +908,16 @@ func (s *syncer) Sync(ctx context.Context) error {
 			}
 		}
 
+		key := targetedResourceKey{
+			resourceTypeID:       r.GetId().GetResourceType(),
+			resourceID:           r.GetId().GetResource(),
+			parentResourceTypeID: r.GetParentResourceId().GetResourceType(),
+			parentResourceID:     r.GetParentResourceId().GetResource(),
+		}
+		if _, ok := seenTargetedResources[key]; ok {
+			continue
+		}
+		seenTargetedResources[key] = struct{}{}
 		targetedResources = append(targetedResources, r)
 	}
 
@@ -885,6 +967,18 @@ func (s *syncer) Sync(ctx context.Context) error {
 		return err
 	}
 	s.state = state
+	if newSync {
+		s.ingestFilterStats.markKnown()
+	} else {
+		quality := s.state.IngestQuality()
+		if quality == nil {
+			quality = &IngestQualityCheckpoint{
+				SourceCacheReplayBlocked: true,
+				ReasonFlags:              ingestQualityReasonUnknownPriorCheckpoint,
+			}
+		}
+		s.ingestFilterStats.restore(quality)
+	}
 	if !newSync {
 		currentAction := s.state.Current()
 		currentActionOp := ""
@@ -1019,45 +1113,50 @@ func (s *syncer) Sync(ctx context.Context) error {
 	return nil
 }
 
-func (s *syncer) SkipSync(ctx context.Context) error {
+func (s *syncer) SkipSync(ctx context.Context) (err error) {
 	ctx, span := tracer.Start(ctx, "syncer.SkipSync")
 	uotel.SetSyncIdentityAttrs(ctx, span)
-	var err error
 	defer func() { uotel.EndSpanWithError(span, err) }()
 
 	l := ctxzap.Extract(ctx)
 	l.Info("skipping sync")
 
+	runCtx := ctx
 	var runCanc context.CancelFunc
 	if s.runDuration > 0 {
-		_, runCanc = context.WithTimeout(ctx, s.runDuration)
+		runCtx, runCanc = context.WithTimeout(ctx, s.runDuration)
 	}
 	if runCanc != nil {
 		defer runCanc()
 	}
+	defer func() {
+		if errors.Is(context.Cause(runCtx), context.DeadlineExceeded) {
+			err = errors.Join(err, ErrSyncNotComplete)
+		}
+	}()
 
-	err = s.loadStore(ctx)
+	err = s.loadStore(runCtx)
 	if err != nil {
 		return err
 	}
 
-	_, err = s.connector.Validate(ctx, &v2.ConnectorServiceValidateRequest{})
+	_, err = s.connector.Validate(runCtx, &v2.ConnectorServiceValidateRequest{})
 	if err != nil {
 		return err
 	}
 
 	// TODO: Create a new sync type for empty syncs.
-	_, err = s.store.StartNewSync(ctx, connectorstore.SyncTypeFull, "")
+	_, err = s.store.StartNewSync(runCtx, connectorstore.SyncTypeFull, "")
 	if err != nil {
 		return err
 	}
 
-	err = s.store.EndSync(ctx)
+	err = s.store.EndSync(runCtx)
 	if err != nil {
 		return err
 	}
 
-	err = s.store.Cleanup(ctx)
+	err = s.store.Cleanup(runCtx)
 	if err != nil {
 		return err
 	}
@@ -1081,6 +1180,12 @@ func (s *syncer) listAllResourceTypes(ctx context.Context) iter.Seq2[[]*v2.Resou
 				return
 			}
 			resourceTypes := resp.GetList()
+			for _, resourceType := range resourceTypes {
+				if err := validateConnectorResourceType(resourceType); err != nil {
+					_ = yield(nil, err)
+					return
+				}
+			}
 			if len(resourceTypes) > 0 {
 				if !yield(resourceTypes, err) {
 					return
@@ -1115,6 +1220,11 @@ func (s *syncer) SyncResourceTypes(ctx context.Context, action *Action) error {
 	s.recordConnectorWaitReport(resp.GetAnnotations(), action.ResourceTypeID)
 	if err != nil {
 		return err
+	}
+	for _, resourceType := range resp.GetList() {
+		if err := validateConnectorResourceType(resourceType); err != nil {
+			return err
+		}
 	}
 
 	var resourceTypes []*v2.ResourceType
@@ -1185,19 +1295,37 @@ func (s *syncer) hasChildResources(resource *v2.Resource) bool {
 // At sync scale (100k+ resources per trace) the span overhead and trace bloat
 // outweighed any debugging value.
 func (s *syncer) getSubResources(ctx context.Context, parent *v2.Resource) error {
+	actions, err := s.subResourceActions(parent)
+	if err != nil {
+		return err
+	}
+	for _, action := range actions {
+		s.state.PushAction(ctx, action)
+	}
+	return nil
+}
+
+func (s *syncer) subResourceActions(parent *v2.Resource) ([]Action, error) {
+	childTypeIDs, err := childResourceTypeIDs(parent)
+	if err != nil {
+		return nil, err
+	}
+	return s.childResourceActions(childTypeIDs, parent.GetId().GetResourceType(), parent.GetId().GetResource()), nil
+}
+
+func childResourceTypeIDs(parent *v2.Resource) ([]string, error) {
 	var childTypeIDs []string
 	for _, a := range parent.GetAnnotations() {
 		if a.MessageIs((*v2.ChildResourceType)(nil)) {
 			crt := &v2.ChildResourceType{}
 			err := a.UnmarshalTo(crt)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			childTypeIDs = append(childTypeIDs, crt.GetResourceTypeId())
 		}
 	}
-	s.pushChildResourceActions(ctx, childTypeIDs, parent.GetId().GetResourceType(), parent.GetId().GetResource())
-	return nil
+	return childTypeIDs, nil
 }
 
 // pushChildResourceActions queues child resource syncs for one parent,
@@ -1206,6 +1334,13 @@ func (s *syncer) getSubResources(ctx context.Context, parent *v2.Resource) error
 // resource can schedule its children through the same evidence-recorded
 // seam.
 func (s *syncer) pushChildResourceActions(ctx context.Context, childTypeIDs []string, parentTypeID, parentID string) {
+	for _, action := range s.childResourceActions(childTypeIDs, parentTypeID, parentID) {
+		s.state.PushAction(ctx, action)
+	}
+}
+
+func (s *syncer) childResourceActions(childTypeIDs []string, parentTypeID, parentID string) []Action {
+	var actions []Action
 	for _, childTypeID := range childTypeIDs {
 		if len(s.syncResourceTypes) > 0 && !slices.Contains(s.syncResourceTypes, childTypeID) {
 			continue
@@ -1219,13 +1354,33 @@ func (s *syncer) pushChildResourceActions(ctx context.Context, childTypeIDs []st
 		if !s.childSchedule.recordIfNew(childTypeID, parentTypeID, parentID) {
 			continue
 		}
-		s.state.PushAction(ctx, Action{
+		actions = append(actions, Action{
 			Op:                   SyncResourcesOp,
 			ResourceTypeID:       childTypeID,
 			ParentResourceID:     parentID,
 			ParentResourceTypeID: parentTypeID,
 		})
 	}
+	return actions
+}
+
+func (s *syncer) pendingChildResourceActions(childTypeIDs []string, parentTypeID, parentID string) []Action {
+	var actions []Action
+	for _, childTypeID := range childTypeIDs {
+		if len(s.syncResourceTypes) > 0 && !slices.Contains(s.syncResourceTypes, childTypeID) {
+			continue
+		}
+		if s.childSchedule.has(childTypeID, parentTypeID, parentID) {
+			continue
+		}
+		actions = append(actions, Action{
+			Op:                   SyncResourcesOp,
+			ResourceTypeID:       childTypeID,
+			ParentResourceID:     parentID,
+			ParentResourceTypeID: parentTypeID,
+		})
+	}
+	return actions
 }
 
 func (s *syncer) getResourceFromConnector(ctx context.Context, resourceID *v2.ResourceId, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
@@ -1290,29 +1445,41 @@ func (s *syncer) SyncTargetedResource(ctx context.Context, action *Action) error
 
 	// If getResource encounters not found or unimplemented, it returns a nil resource and nil error.
 	if resource == nil {
-		s.state.FinishAction(ctx, action)
-		return nil
+		return s.nextPageOrFinishAction(ctx, action, "")
 	}
-
-	// Save our resource in the DB
-	if err := s.store.PutResources(ctx, resource); err != nil {
+	if err := validateConnectorResource(resource); err != nil {
 		return err
 	}
 
-	s.state.FinishAction(ctx, action)
+	// Save our resource in the DB
+	if err := s.putConnectorResources(ctx, resource); err != nil {
+		return err
+	}
 
 	// Actions happen in reverse order. We want to sync child resources, then entitlements, then grants
+	var followupActions []Action
 
 	shouldSkipGrants, err := s.shouldSkipGrants(ctx, resource)
 	if err != nil {
 		return err
 	}
 	if !shouldSkipGrants {
-		s.state.PushAction(ctx, Action{
-			Op:             SyncGrantsOp,
-			ResourceTypeID: resourceTypeID,
-			ResourceID:     resourceID,
-		})
+		// INTENTIONAL: no per-resource grants action for type-scoped
+		// types, and no type-scoped replacement either. Targeted sync
+		// syncs the resource (and children) only; whole-type grant
+		// enumeration is left to a full grants phase. See the TARGETED
+		// SYNC contract in annotation_type_scoped_grants.proto.
+		typeScopedGrants, err := s.resourceTypeHasTypeScopedGrants(ctx, resourceTypeID)
+		if err != nil {
+			return err
+		}
+		if !typeScopedGrants {
+			followupActions = append(followupActions, Action{
+				Op:             SyncGrantsOp,
+				ResourceTypeID: resourceTypeID,
+				ResourceID:     resourceID,
+			})
+		}
 	}
 
 	shouldSkipEnts, err := s.shouldSkipEntitlements(ctx, resource)
@@ -1321,18 +1488,36 @@ func (s *syncer) SyncTargetedResource(ctx context.Context, action *Action) error
 	}
 
 	if !shouldSkipEnts {
-		s.state.PushAction(ctx, Action{
-			Op:             SyncEntitlementsOp,
-			ResourceTypeID: resourceTypeID,
-			ResourceID:     resourceID,
-		})
+		// INTENTIONAL: same as grants above — type-scoped entitlement
+		// enumeration is deferred to a full entitlements phase. See the
+		// TARGETED SYNC contract in
+		// annotation_type_scoped_entitlements.proto.
+		typeScopedEnts, err := s.resourceTypeHasTypeScopedEntitlements(ctx, resourceTypeID)
+		if err != nil {
+			return err
+		}
+		if !typeScopedEnts {
+			followupActions = append(followupActions, Action{
+				Op:             SyncEntitlementsOp,
+				ResourceTypeID: resourceTypeID,
+				ResourceID:     resourceID,
+			})
+		}
 	}
 
-	err = s.getSubResources(ctx, resource)
+	childTypeIDs, err := childResourceTypeIDs(resource)
 	if err != nil {
 		return err
 	}
+	childActions := s.pendingChildResourceActions(childTypeIDs, resourceTypeID, resourceID)
+	followupActions = append(followupActions, childActions...)
 
+	if err := s.nextPageOrFinishAction(ctx, action, "", followupActions...); err != nil {
+		return err
+	}
+	for _, childAction := range childActions {
+		s.childSchedule.recordIfNew(childAction.ResourceTypeID, childAction.ParentResourceTypeID, childAction.ParentResourceID)
+	}
 	return nil
 }
 
@@ -1408,6 +1593,9 @@ func (s *syncer) syncResources(ctx context.Context, action *Action) error {
 
 	bulkPutResoruces := []*v2.Resource{}
 	for _, r := range resp.GetList() {
+		if err := validateConnectorResource(r); err != nil {
+			return err
+		}
 		validatedResource := false
 
 		// Check if we've already synced this resource, skip it if we have
@@ -1427,6 +1615,9 @@ func (s *syncer) syncResources(ctx context.Context, action *Action) error {
 				// we can't tell if we already have synced those child resources.
 				// Those children may also have their own child resources,
 				// so we are conservative here and just re-sync this resource.
+				// Persist the latest observation even when no follow-up work is
+				// needed so duplicate semantics do not depend on page boundaries.
+				bulkPutResoruces = append(bulkPutResoruces, r)
 				continue
 			}
 		}
@@ -1451,7 +1642,7 @@ func (s *syncer) syncResources(ctx context.Context, action *Action) error {
 	}
 
 	if len(bulkPutResoruces) > 0 {
-		err = s.store.PutResources(ctx, bulkPutResoruces...)
+		err = s.putConnectorResources(ctx, bulkPutResoruces...)
 		if err != nil {
 			return err
 		}
@@ -1465,6 +1656,73 @@ func (s *syncer) syncResources(ctx context.Context, action *Action) error {
 	}
 
 	return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken())
+}
+
+// resourceTraitMessage returns the trait-specific annotation message for a
+// ResourceType_Trait, or nil for traits with no corresponding message.
+func resourceTraitMessage(t v2.ResourceType_Trait) proto.Message {
+	switch t {
+	case v2.ResourceType_TRAIT_APP:
+		return &v2.AppTrait{}
+	case v2.ResourceType_TRAIT_GROUP:
+		return &v2.GroupTrait{}
+	case v2.ResourceType_TRAIT_USER:
+		return &v2.UserTrait{}
+	case v2.ResourceType_TRAIT_ROLE:
+		return &v2.RoleTrait{}
+	case v2.ResourceType_TRAIT_SECRET:
+		return &v2.SecretTrait{}
+	default:
+		return nil
+	}
+}
+
+func validateConnectorResource(resource *v2.Resource) error {
+	if resource == nil {
+		return status.Error(codes.Internal, "connector returned a nil resource")
+	}
+	resourceID := resource.GetId()
+	if resourceID == nil || resourceID.GetResourceType() == "" || resourceID.GetResource() == "" {
+		return status.Error(codes.Internal, "connector returned a resource with missing identity")
+	}
+	resourceAnnos := annotations.Annotations(resource.GetAnnotations())
+	if resourceAnnos.Contains(&v2.BatonID{}) {
+		return status.Error(codes.Internal,
+			"connector returned a resource with SDK-reserved BatonID ownership annotation")
+	}
+	return nil
+}
+
+func (s *syncer) putConnectorResources(ctx context.Context, resources ...*v2.Resource) error {
+	for _, resource := range resources {
+		if err := validateConnectorResource(resource); err != nil {
+			return err
+		}
+	}
+	return s.store.PutResources(ctx, resources...)
+}
+
+func validateConnectorEntitlement(entitlement *v2.Entitlement) error {
+	if entitlement == nil {
+		return status.Error(codes.Internal, "connector returned a nil entitlement")
+	}
+	if entitlement.GetId() == "" {
+		return status.Error(codes.Internal, "connector returned an entitlement with missing identity")
+	}
+	if err := validateConnectorResource(entitlement.GetResource()); err != nil {
+		return status.Error(codes.Internal, "connector returned an entitlement with missing resource identity")
+	}
+	return nil
+}
+
+func validateConnectorResourceType(resourceType *v2.ResourceType) error {
+	if resourceType == nil {
+		return status.Error(codes.Internal, "connector returned a nil resource type")
+	}
+	if resourceType.GetId() == "" {
+		return status.Error(codes.Internal, "connector returned a resource type with missing identity")
+	}
+	return nil
 }
 
 // No span here: this is called per-resource, but only does I/O on the
@@ -1485,21 +1743,7 @@ func (s *syncer) validateResourceTraits(ctx context.Context, r *v2.Resource) err
 	}
 
 	for _, t := range resourceTypeTraits {
-		var trait proto.Message
-		switch t {
-		case v2.ResourceType_TRAIT_APP:
-			trait = &v2.AppTrait{}
-		case v2.ResourceType_TRAIT_GROUP:
-			trait = &v2.GroupTrait{}
-		case v2.ResourceType_TRAIT_USER:
-			trait = &v2.UserTrait{}
-		case v2.ResourceType_TRAIT_ROLE:
-			trait = &v2.RoleTrait{}
-		case v2.ResourceType_TRAIT_SECRET:
-			trait = &v2.SecretTrait{}
-		default:
-		}
-
+		trait := resourceTraitMessage(t)
 		if trait != nil {
 			annos := annotations.Annotations(r.GetAnnotations())
 			if !annos.Contains(trait) {
@@ -1601,8 +1845,8 @@ func (s *syncer) shouldSkipEntitlements(ctx context.Context, r *v2.Resource) (bo
 	return skipEntitlements, nil
 }
 
-// SyncEntitlements fetches the entitlements from the connector. It first lists each resource from the datastore,
-// and pushes an action to fetch the entitlements for each resource.
+// SyncEntitlements fetches entitlements. Annotated resource types receive one
+// type-scoped action instead of a per-resource fan-out.
 func (s *syncer) SyncEntitlements(ctx context.Context, action *Action) error {
 	ctx, span := uotel.StartWithLink(ctx, tracer, "syncer.SyncEntitlements")
 	uotel.SetSyncIdentityAttrs(ctx, span)
@@ -1610,34 +1854,64 @@ func (s *syncer) SyncEntitlements(ctx context.Context, action *Action) error {
 	defer func() { uotel.EndSpanWithError(span, err) }()
 
 	if action.ResourceTypeID == "" && action.ResourceID == "" {
+		actions := make([]Action, 0)
 		pageToken := action.PageToken
+		plannedTypeScoped := false
 
 		if pageToken == "" {
 			ctxzap.Extract(ctx).Info("Syncing entitlements...")
 			s.handleInitialActionForStep(ctx, *action)
 		}
 
-		resp, err := s.store.ListResources(ctx, v2.ResourcesServiceListResourcesRequest_builder{
+		if !action.TypeScopedPlanned {
+			typeScoped, typeScopedErr := s.typeScopedEntitlementsResourceTypes(ctx)
+			if typeScopedErr != nil {
+				err = fmt.Errorf("sync-entitlements: error listing type-scoped resource types: %w", typeScopedErr)
+				return err
+			}
+			for _, rtID := range typeScoped {
+				actions = append(actions, Action{Op: SyncEntitlementsOp, ResourceTypeID: rtID, TypeScoped: true})
+			}
+			plannedTypeScoped = true
+		}
+
+		resp, listResourcesErr := s.store.ListResources(ctx, v2.ResourcesServiceListResourcesRequest_builder{
 			PageToken:    pageToken,
 			ActiveSyncId: s.getActiveSyncID(),
 		}.Build())
-		if err != nil {
+		if listResourcesErr != nil {
+			err = listResourcesErr
 			return err
 		}
 
-		actions := make([]Action, 0)
 		for _, r := range resp.GetList() {
-			shouldSkipEntitlements, err := s.shouldSkipEntitlements(ctx, r)
-			if err != nil {
+			shouldSkipEntitlements, shouldSkipErr := s.shouldSkipEntitlements(ctx, r)
+			if shouldSkipErr != nil {
+				err = shouldSkipErr
 				return err
 			}
 			if shouldSkipEntitlements {
 				continue
 			}
+			typeScoped, typeScopedErr := s.resourceTypeHasTypeScopedEntitlements(ctx, r.GetId().GetResourceType())
+			if typeScopedErr != nil {
+				err = typeScopedErr
+				return err
+			}
+			if typeScoped {
+				continue
+			}
 			actions = append(actions, Action{Op: SyncEntitlementsOp, ResourceID: r.GetId().GetResource(), ResourceTypeID: r.GetId().GetResourceType()})
 		}
 
-		return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken(), actions...)
+		if nextPageErr := s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken(), actions...); nextPageErr != nil {
+			err = nextPageErr
+			return err
+		}
+		if plannedTypeScoped {
+			s.markTypeScopedPlanned(action)
+		}
+		return nil
 	}
 
 	err = s.syncEntitlementsForResource(ctx, action)
@@ -1648,27 +1922,43 @@ func (s *syncer) SyncEntitlements(ctx context.Context, action *Action) error {
 	return nil
 }
 
+func (s *syncer) resourceTypeHasTypeScopedEntitlements(ctx context.Context, resourceTypeID string) (bool, error) {
+	return s.resourceTypeCarries(ctx, resourceTypeID, &v2.TypeScopedEntitlements{}, &s.typeScopedEntitlementsForResourceType)
+}
+
+func (s *syncer) typeScopedEntitlementsResourceTypes(ctx context.Context) ([]string, error) {
+	return s.resourceTypesCarrying(ctx, &v2.TypeScopedEntitlements{}, &s.typeScopedEntitlementsForResourceType)
+}
+
 // syncEntitlementsForResource fetches the entitlements for a specific resource from the connector.
 // No span here: only call site is SyncEntitlements, which already owns a span.
 func (s *syncer) syncEntitlementsForResource(ctx context.Context, action *Action) error {
+	typeScoped := action.TypeScoped
 	resourceID := v2.ResourceId_builder{
 		ResourceType: action.ResourceTypeID,
 		Resource:     action.ResourceID,
 	}.Build()
-	resourceResponse, err := s.store.GetResource(ctx, reader_v2.ResourcesReaderServiceGetResourceRequest_builder{
-		ResourceId: resourceID,
-	}.Build())
-	if err != nil {
-		return err
-	}
 
-	resource := resourceResponse.GetResource()
+	var resource *v2.Resource
+	var reqAnnos annotations.Annotations
+	if typeScoped {
+		resource, reqAnnos = typeScopedRequestStub(action.ResourceTypeID, &v2.TypeScopedEntitlements{})
+	} else {
+		resourceResponse, err := s.store.GetResource(ctx, reader_v2.ResourcesReaderServiceGetResourceRequest_builder{
+			ResourceId: resourceID,
+		}.Build())
+		if err != nil {
+			return err
+		}
+		resource = resourceResponse.GetResource()
+	}
 
 	start := time.Now()
 	resp, err := s.connector.ListEntitlements(ctx, v2.EntitlementsServiceListEntitlementsRequest_builder{
 		Resource:     resource,
 		PageToken:    action.PageToken,
 		ActiveSyncId: s.getActiveSyncID(),
+		Annotations:  reqAnnos,
 	}.Build())
 	s.observeConnectorCall(ctx, "list-entitlements", start, action.ResourceTypeID, action.ResourceID)
 	s.recordSessionUsage(resp.GetAnnotations())
@@ -1684,18 +1974,31 @@ func (s *syncer) syncEntitlementsForResource(ctx context.Context, action *Action
 	if err != nil {
 		return fmt.Errorf("sync-entitlements: filtering disabled-type references: %w", err)
 	}
+	for _, entitlement := range entitlements {
+		if err := validateConnectorEntitlement(entitlement); err != nil {
+			return err
+		}
+	}
 	err = s.store.PutEntitlements(ctx, entitlements...)
 	if err != nil {
 		return err
 	}
 
 	s.handleProgress(ctx, action, len(entitlements))
-	if resp.GetNextPageToken() == "" {
-		s.counts.AddEntitlementsProgress(resourceID.ResourceType, 1)
+	progressIncrement, countOnly := collectionProgressIncrement(action, len(entitlements), resp.GetNextPageToken() != "")
+	if countOnly {
+		s.counts.SetEntitlementsCountOnly(resourceID.GetResourceType())
+	}
+	if progressIncrement > 0 || countOnly {
+		s.counts.AddEntitlementsProgress(resourceID.GetResourceType(), progressIncrement)
 		s.counts.LogEntitlementsProgress(ctx, resourceID.GetResourceType())
 	}
 
-	return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken())
+	spawned, err := s.collectEnqueuedPageTokens(ctx, "sync-entitlements", SyncEntitlementsOp, action, annotations.Annotations(resp.GetAnnotations()))
+	if err != nil {
+		return err
+	}
+	return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken(), spawned...)
 }
 
 func (s *syncer) SyncStaticEntitlements(ctx context.Context, action *Action) error {
@@ -2109,8 +2412,8 @@ func (s *syncer) fixEntitlementGraphCycles(ctx context.Context, graph *expand.En
 	return graph.FixCyclesFromComponents(ctx, comps)
 }
 
-// SyncGrants fetches the grants for each resource from the connector. It iterates each resource
-// from the datastore, and pushes a new action to sync the grants for each individual resource.
+// SyncGrants fetches grants. Annotated resource types receive one type-scoped
+// action instead of a per-resource fan-out.
 func (s *syncer) SyncGrants(ctx context.Context, action *Action) error {
 	ctx, span := uotel.StartWithLink(ctx, tracer, "syncer.SyncGrants")
 	uotel.SetSyncIdentityAttrs(ctx, span)
@@ -2118,33 +2421,63 @@ func (s *syncer) SyncGrants(ctx context.Context, action *Action) error {
 	defer func() { uotel.EndSpanWithError(span, err) }()
 
 	if action.ResourceTypeID == "" && action.ResourceID == "" {
+		actions := make([]Action, 0)
+		plannedTypeScoped := false
 		if action.PageToken == "" {
 			ctxzap.Extract(ctx).Info("Syncing grants...")
 			s.handleInitialActionForStep(ctx, *action)
 		}
 
-		resp, err := s.store.ListResources(ctx, v2.ResourcesServiceListResourcesRequest_builder{
+		if !action.TypeScopedPlanned {
+			typeScoped, typeScopedErr := s.typeScopedGrantsResourceTypes(ctx)
+			if typeScopedErr != nil {
+				err = fmt.Errorf("sync-grants: error listing type-scoped resource types: %w", typeScopedErr)
+				return err
+			}
+			for _, rtID := range typeScoped {
+				actions = append(actions, Action{Op: SyncGrantsOp, ResourceTypeID: rtID, TypeScoped: true})
+			}
+			plannedTypeScoped = true
+		}
+
+		resp, listResourcesErr := s.store.ListResources(ctx, v2.ResourcesServiceListResourcesRequest_builder{
 			PageToken:    action.PageToken,
 			ActiveSyncId: s.getActiveSyncID(),
 		}.Build())
-		if err != nil {
-			return fmt.Errorf("sync-grants: error listing resources: %w", err)
+		if listResourcesErr != nil {
+			err = fmt.Errorf("sync-grants: error listing resources: %w", listResourcesErr)
+			return err
 		}
 
-		actions := make([]Action, 0)
 		for _, r := range resp.GetList() {
-			shouldSkip, err := s.shouldSkipGrants(ctx, r)
-			if err != nil {
+			shouldSkip, shouldSkipErr := s.shouldSkipGrants(ctx, r)
+			if shouldSkipErr != nil {
+				err = shouldSkipErr
 				return err
 			}
 
 			if shouldSkip {
 				continue
 			}
+			typeScoped, typeScopedErr := s.resourceTypeHasTypeScopedGrants(ctx, r.GetId().GetResourceType())
+			if typeScopedErr != nil {
+				err = typeScopedErr
+				return err
+			}
+			if typeScoped {
+				continue
+			}
 			actions = append(actions, Action{Op: SyncGrantsOp, ResourceID: r.GetId().GetResource(), ResourceTypeID: r.GetId().GetResourceType()})
 		}
 
-		return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken(), actions...)
+		if nextPageErr := s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken(), actions...); nextPageErr != nil {
+			err = nextPageErr
+			return err
+		}
+		if plannedTypeScoped {
+			s.markTypeScopedPlanned(action)
+		}
+		return nil
 	}
 	err = s.syncGrantsForResource(ctx, action)
 	if err != nil {
@@ -2154,27 +2487,43 @@ func (s *syncer) SyncGrants(ctx context.Context, action *Action) error {
 	return nil
 }
 
+func (s *syncer) resourceTypeHasTypeScopedGrants(ctx context.Context, resourceTypeID string) (bool, error) {
+	return s.resourceTypeCarries(ctx, resourceTypeID, &v2.TypeScopedGrants{}, &s.typeScopedGrantsForResourceType)
+}
+
+func (s *syncer) typeScopedGrantsResourceTypes(ctx context.Context) ([]string, error) {
+	return s.resourceTypesCarrying(ctx, &v2.TypeScopedGrants{}, &s.typeScopedGrantsForResourceType)
+}
+
 // syncGrantsForResource fetches the grants for a specific resource from the connector.
 // No span here: only call site is SyncGrants, which already owns a span.
 func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) error {
+	typeScoped := action.TypeScoped
 	resourceID := v2.ResourceId_builder{
 		ResourceType: action.ResourceTypeID,
 		Resource:     action.ResourceID,
 	}.Build()
-	resourceResponse, err := s.store.GetResource(ctx, reader_v2.ResourcesReaderServiceGetResourceRequest_builder{
-		ResourceId: resourceID,
-	}.Build())
-	if err != nil {
-		return fmt.Errorf("sync-grants-for-resource: error getting resource: %w", err)
-	}
 
-	resource := resourceResponse.GetResource()
+	var resource *v2.Resource
+	var reqAnnos annotations.Annotations
+	if typeScoped {
+		resource, reqAnnos = typeScopedRequestStub(action.ResourceTypeID, &v2.TypeScopedGrants{})
+	} else {
+		resourceResponse, err := s.store.GetResource(ctx, reader_v2.ResourcesReaderServiceGetResourceRequest_builder{
+			ResourceId: resourceID,
+		}.Build())
+		if err != nil {
+			return fmt.Errorf("sync-grants-for-resource: error getting resource: %w", err)
+		}
+		resource = resourceResponse.GetResource()
+	}
 
 	start := time.Now()
 	resp, err := s.connector.ListGrants(ctx, v2.GrantsServiceListGrantsRequest_builder{
 		Resource:     resource,
 		PageToken:    action.PageToken,
 		ActiveSyncId: s.getActiveSyncID(),
+		Annotations:  reqAnnos,
 	}.Build())
 	s.observeConnectorCall(ctx, "list-grants", start, action.ResourceTypeID, action.ResourceID)
 	s.recordSessionUsage(resp.GetAnnotations())
@@ -2273,7 +2622,7 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 			if resource == nil {
 				continue
 			}
-			if err := s.store.PutResources(ctx, resource); err != nil {
+			if err := s.putConnectorResources(ctx, resource); err != nil {
 				return err
 			}
 		}
@@ -2284,7 +2633,7 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 		for _, resource := range resourcesToInsertMap {
 			resourcesToInsert = append(resourcesToInsert, resource)
 		}
-		err = s.store.PutResources(ctx, resourcesToInsert...)
+		err = s.putConnectorResources(ctx, resourcesToInsert...)
 		if err != nil {
 			return fmt.Errorf("sync-grants-for-resource: error putting resources: %w", err)
 		}
@@ -2297,12 +2646,20 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, action *Action) erro
 
 	s.handleProgress(ctx, action, len(grants))
 
-	if resp.GetNextPageToken() == "" {
-		s.counts.AddGrantsProgress(resourceID.GetResourceType(), 1)
+	progressIncrement, countOnly := collectionProgressIncrement(action, len(grants), resp.GetNextPageToken() != "")
+	if countOnly {
+		s.counts.SetGrantsCountOnly(resourceID.GetResourceType())
+	}
+	if progressIncrement > 0 || countOnly {
+		s.counts.AddGrantsProgress(resourceID.GetResourceType(), progressIncrement)
 		s.counts.LogGrantsProgress(ctx, resourceID.GetResourceType())
 	}
 
-	return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken())
+	spawned, err := s.collectEnqueuedPageTokens(ctx, "sync-grants-for-resource", SyncGrantsOp, action, respAnnos)
+	if err != nil {
+		return err
+	}
+	return s.nextPageOrFinishAction(ctx, action, resp.GetNextPageToken(), spawned...)
 }
 
 func (s *syncer) SyncExternalResources(ctx context.Context, action *Action) error {
@@ -2327,6 +2684,27 @@ func (s *syncer) SyncExternalResources(ctx context.Context, action *Action) erro
 	}
 	s.state.FinishAction(ctx, action)
 	return nil
+}
+
+// externalMatchTraits returns the set of resource type traits the External
+// Identity Matcher should sync and match against. When no traits have been
+// configured via WithExternalResourceTraits the matcher falls back to
+// TRAIT_USER/TRAIT_GROUP, matching pre-CE-975 behavior for connectors that
+// never opt in. Passing any traits replaces the default entirely — a
+// caller that still wants user/group matching alongside a new trait must
+// list all three.
+func (s *syncer) externalMatchTraits() map[v2.ResourceType_Trait]bool {
+	if len(s.externalResourceTraits) == 0 {
+		return map[v2.ResourceType_Trait]bool{
+			v2.ResourceType_TRAIT_USER:  true,
+			v2.ResourceType_TRAIT_GROUP: true,
+		}
+	}
+	traits := make(map[v2.ResourceType_Trait]bool, len(s.externalResourceTraits))
+	for _, t := range s.externalResourceTraits {
+		traits[t] = true
+	}
+	return traits
 }
 
 func (s *syncer) SyncExternalResourcesWithGrantToEntitlement(ctx context.Context, entitlementId string) error {
@@ -2359,17 +2737,20 @@ func (s *syncer) SyncExternalResourcesWithGrantToEntitlement(ctx context.Context
 		}
 	}
 
+	matchTraits := s.externalMatchTraits()
 	resourceTypes := make([]*v2.ResourceType, 0)
 	for _, resourceTypeId := range resourceTypeIDs.ToSlice() {
 		resourceTypeResp, err := s.externalResourceReader.GetResourceType(ctx, reader_v2.ResourceTypesReaderServiceGetResourceTypeRequest_builder{ResourceTypeId: resourceTypeId}.Build())
 		if err != nil {
 			return err
 		}
-		// Should we error or skip if this is not user or group?
+		// Skip resource types whose traits aren't eligible for external
+		// matching (TRAIT_USER/TRAIT_GROUP by default, plus anything added
+		// via WithExternalResourceTraits).
 		for _, t := range resourceTypeResp.GetResourceType().GetTraits() {
-			if t == v2.ResourceType_TRAIT_USER || t == v2.ResourceType_TRAIT_GROUP {
+			if matchTraits[t] {
 				resourceTypes = append(resourceTypes, resourceTypeResp.GetResourceType())
-				continue
+				break
 			}
 		}
 
@@ -2405,6 +2786,10 @@ func (s *syncer) SyncExternalResourcesWithGrantToEntitlement(ctx context.Context
 		principals = append(principals, resourceVal)
 	}
 
+	err = s.deleteStaleExternalPrincipals(ctx, principals)
+	if err != nil {
+		return err
+	}
 	err = s.store.PutResources(ctx, principals...)
 	if err != nil {
 		return err
@@ -2480,24 +2865,25 @@ func (s *syncer) SyncExternalResourcesUsersAndGroups(ctx context.Context) error 
 		return err
 	}
 
-	userAndGroupResourceTypes := make([]*v2.ResourceType, 0)
+	matchTraits := s.externalMatchTraits()
+	matchableResourceTypes := make([]*v2.ResourceType, 0)
 	ents := make([]*v2.Entitlement, 0)
 	principals := make([]*v2.Resource, 0)
 	for _, rt := range resourceTypes {
 		for _, t := range rt.GetTraits() {
-			if t == v2.ResourceType_TRAIT_USER || t == v2.ResourceType_TRAIT_GROUP {
-				userAndGroupResourceTypes = append(userAndGroupResourceTypes, rt)
-				continue
+			if matchTraits[t] {
+				matchableResourceTypes = append(matchableResourceTypes, rt)
+				break
 			}
 		}
 	}
 
-	err = s.store.PutResourceTypes(ctx, userAndGroupResourceTypes...)
+	err = s.store.PutResourceTypes(ctx, matchableResourceTypes...)
 	if err != nil {
 		return err
 	}
 
-	for _, rt := range userAndGroupResourceTypes {
+	for _, rt := range matchableResourceTypes {
 		rtAnnos := annotations.Annotations(rt.GetAnnotations())
 		skipEntitlements := rtAnnos.Contains(&v2.SkipEntitlementsAndGrants{})
 		skipEGForResourceType[rt.GetId()] = skipEntitlements
@@ -2516,6 +2902,10 @@ func (s *syncer) SyncExternalResourcesUsersAndGroups(ctx context.Context) error 
 		}
 	}
 
+	err = s.deleteStaleExternalPrincipals(ctx, principals)
+	if err != nil {
+		return err
+	}
 	err = s.store.PutResources(ctx, principals...)
 	if err != nil {
 		return err
@@ -2564,7 +2954,7 @@ func (s *syncer) SyncExternalResourcesUsersAndGroups(ctx context.Context) error 
 	}
 
 	l.Info("Synced external resources",
-		zap.Int("resource_type_count", len(userAndGroupResourceTypes)),
+		zap.Int("resource_type_count", len(matchableResourceTypes)),
 		zap.Int("resource_count", principalsCount),
 		zap.Int("entitlement_count", entsCount),
 		zap.Int("grant_count", grantsForEntsCount),
@@ -2596,6 +2986,131 @@ func (s *syncer) listExternalResourcesForResourceType(ctx context.Context, resou
 		}
 	}
 	return resources, nil
+}
+
+type resourceRecordDeleter interface {
+	DeleteResourceRecord(ctx context.Context, resourceTypeID, resourceID string) error
+}
+
+type entitlementRecordDeleter interface {
+	DeleteEntitlementByRefs(ctx context.Context, entitlement *v2.Entitlement) error
+}
+
+// deleteStaleExternalPrincipals reconciles principal rows copied by an earlier
+// attempt before writing the external source's current answer. Checkpoint
+// resume deliberately retains completed writes, so without this pass a
+// principal that disappears between attempts survives even though grants are
+// rewritten against the new source.
+func (s *syncer) deleteStaleExternalPrincipals(
+	ctx context.Context,
+	current []*v2.Resource,
+) error {
+	currentIDs := make(map[string]struct{}, len(current))
+	for _, principal := range current {
+		id := principal.GetId()
+		currentIDs[id.GetResourceType()+"\x00"+id.GetResource()] = struct{}{}
+	}
+
+	resourceDeleter, canDeleteResources := s.store.(resourceRecordDeleter)
+	entitlementDeleter, canDeleteEntitlements := s.store.(entitlementRecordDeleter)
+	grantDeleter, canDeleteGrants := s.store.(grantByRefsDeleter)
+	var staleIDs []*v2.ResourceId
+	pageToken := ""
+	for {
+		response, err := s.store.ListResources(ctx, v2.ResourcesServiceListResourcesRequest_builder{
+			PageToken: pageToken,
+		}.Build())
+		if err != nil {
+			return err
+		}
+		for _, candidate := range response.GetList() {
+			candidateAnnos := annotations.Annotations(candidate.GetAnnotations())
+			if !candidateAnnos.Contains(&v2.BatonID{}) {
+				continue
+			}
+			id := candidate.GetId()
+			if _, ok := currentIDs[id.GetResourceType()+"\x00"+id.GetResource()]; ok {
+				continue
+			}
+			staleIDs = append(staleIDs, id)
+		}
+		pageToken = response.GetNextPageToken()
+		if pageToken == "" {
+			break
+		}
+	}
+	if len(staleIDs) == 0 {
+		return nil
+	}
+	if !canDeleteResources || !canDeleteEntitlements || !canDeleteGrants {
+		ctxzap.Extract(ctx).Warn(
+			"stale external principal reconciliation is unavailable for this storage engine",
+			zap.Bool("resource_delete_supported", canDeleteResources),
+			zap.Bool("entitlement_delete_supported", canDeleteEntitlements),
+			zap.Bool("grant_delete_supported", canDeleteGrants),
+		)
+		return nil
+	}
+
+	staleKeys := make(map[string]struct{}, len(staleIDs))
+	for _, id := range staleIDs {
+		staleKeys[id.GetResourceType()+"\x00"+id.GetResource()] = struct{}{}
+	}
+	var staleGrants []*v2.Grant
+	for grantWithAnnotations, err := range s.store.Grants().ListWithAnnotations(ctx) {
+		if err != nil {
+			return err
+		}
+		grant := grantWithAnnotations.Grant
+		principalID := grant.GetPrincipal().GetId()
+		entitlementResourceID := grant.GetEntitlement().GetResource().GetId()
+		_, stalePrincipal := staleKeys[principalID.GetResourceType()+"\x00"+principalID.GetResource()]
+		_, staleEntitlement := staleKeys[entitlementResourceID.GetResourceType()+"\x00"+entitlementResourceID.GetResource()]
+		if stalePrincipal || staleEntitlement {
+			staleGrants = append(staleGrants, grant)
+		}
+	}
+
+	var staleEntitlements []*v2.Entitlement
+	pageToken = ""
+	for {
+		response, err := s.store.ListEntitlements(ctx, v2.EntitlementsServiceListEntitlementsRequest_builder{
+			PageToken: pageToken,
+		}.Build())
+		if err != nil {
+			return err
+		}
+		for _, candidate := range response.GetList() {
+			resourceID := candidate.GetResource().GetId()
+			if _, stale := staleKeys[resourceID.GetResourceType()+"\x00"+resourceID.GetResource()]; !stale {
+				continue
+			}
+			staleEntitlements = append(staleEntitlements, candidate)
+		}
+		pageToken = response.GetNextPageToken()
+		if pageToken == "" {
+			break
+		}
+	}
+
+	for _, grant := range staleGrants {
+		if err := grantDeleter.DeleteGrantByRefs(ctx, grant); err != nil {
+			return fmt.Errorf("delete grant for stale external principal: %w", err)
+		}
+	}
+	for _, entitlement := range staleEntitlements {
+		if err := entitlementDeleter.DeleteEntitlementByRefs(ctx, entitlement); err != nil {
+			return fmt.Errorf("delete entitlement for stale external principal %s: %w",
+				entitlement.GetId(), err)
+		}
+	}
+	for _, id := range staleIDs {
+		if err := resourceDeleter.DeleteResourceRecord(ctx, id.GetResourceType(), id.GetResource()); err != nil {
+			return fmt.Errorf("delete stale external principal %s/%s: %w",
+				id.GetResourceType(), id.GetResource(), err)
+		}
+	}
+	return nil
 }
 
 func (s *syncer) listExternalEntitlementsForResource(ctx context.Context, resource *v2.Resource) ([]*v2.Entitlement, error) {
@@ -2675,6 +3190,62 @@ func (s *syncer) listExternalResourceTypes(ctx context.Context) ([]*v2.ResourceT
 	return resourceTypes, nil
 }
 
+// matchProfileAndExpand implements the generic external-resource key/val
+// profile match originally written for TRAIT_GROUP, now shared by GROUP and
+// any additional trait configured via WithExternalResourceTraits (e.g.
+// TRAIT_APP). It returns a nil grant (and nil error) when the principal's
+// profile doesn't match key/value. GrantExpandable remapping is optional:
+// a matching non-expandable grant must still be rewritten to the external
+// principal.
+func (s *syncer) matchProfileAndExpand(
+	ctx context.Context,
+	l *zap.Logger,
+	grant *v2.Grant,
+	principal *v2.Resource,
+	key, value string,
+	expandableAnno *v2.GrantExpandable,
+	expandableEntitlementsResourceMap map[string][]string,
+) (*v2.Grant, error) {
+	profileVal, ok := resource.GetProfileStringValue(resource.GetProfile(principal), key)
+	if !ok || !strings.EqualFold(profileVal, value) {
+		return nil, nil
+	}
+	newGrant := newGrantForExternalPrincipal(grant, principal)
+	if expandableAnno == nil {
+		return newGrant, nil
+	}
+
+	groupPrincipalBID, err := bid.MakeBid(grant.GetPrincipal())
+	if err != nil {
+		l.Error("error making group principal bid", zap.Error(err), zap.Any("grant.Principal", grant.GetPrincipal()))
+		return nil, nil
+	}
+
+	newExpandableEntitlementIDs := make([]string, 0)
+	for _, slug := range expandableEntitlementsResourceMap[groupPrincipalBID] {
+		newExpandableEntId := entitlement.NewEntitlementID(principal, slug)
+		_, err := s.store.GetEntitlement(ctx, reader_v2.EntitlementsReaderServiceGetEntitlementRequest_builder{EntitlementId: newExpandableEntId}.Build())
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				l.Error("found no entitlement with entitlement id generated from external source sync", zap.Any("entitlementId", newExpandableEntId))
+				continue
+			}
+			return nil, err
+		}
+		newExpandableEntitlementIDs = append(newExpandableEntitlementIDs, newExpandableEntId)
+	}
+
+	newGrantAnnos := annotations.Annotations(newGrant.GetAnnotations())
+	newExpandableAnno := v2.GrantExpandable_builder{
+		EntitlementIds:  newExpandableEntitlementIDs,
+		Shallow:         expandableAnno.GetShallow(),
+		ResourceTypeIds: expandableAnno.GetResourceTypeIds(),
+	}.Build()
+	newGrantAnnos.Update(newExpandableAnno)
+	newGrant.SetAnnotations(newGrantAnnos)
+	return newGrant, nil
+}
+
 func (s *syncer) processGrantsWithExternalPrincipals(ctx context.Context, principals []*v2.Resource) error {
 	ctx, span := tracer.Start(ctx, "processGrantsWithExternalPrincipals")
 	var err error
@@ -2686,8 +3257,8 @@ func (s *syncer) processGrantsWithExternalPrincipals(ctx context.Context, princi
 
 	l := ctxzap.Extract(ctx)
 
-	groupPrincipals := make([]*v2.Resource, 0)
-	userPrincipals := make([]*v2.Resource, 0)
+	matchTraits := s.externalMatchTraits()
+	principalsByTrait := make(map[v2.ResourceType_Trait][]*v2.Resource, len(matchTraits))
 	principalMap := make(map[string]*v2.Resource)
 
 	for _, principal := range principals {
@@ -2696,11 +3267,11 @@ func (s *syncer) processGrantsWithExternalPrincipals(ctx context.Context, princi
 		if !rAnnos.Contains(batonID) {
 			continue
 		}
-		if rAnnos.Contains(&v2.UserTrait{}) {
-			userPrincipals = append(userPrincipals, principal)
-		}
-		if rAnnos.Contains(&v2.GroupTrait{}) {
-			groupPrincipals = append(groupPrincipals, principal)
+		for trait := range matchTraits {
+			traitMsg := resourceTraitMessage(trait)
+			if traitMsg != nil && rAnnos.Contains(traitMsg) {
+				principalsByTrait[trait] = append(principalsByTrait[trait], principal)
+			}
 		}
 		principalID := principal.GetId().GetResource()
 		if principalID == "" {
@@ -2730,16 +3301,11 @@ func (s *syncer) processGrantsWithExternalPrincipals(ctx context.Context, princi
 			return err
 		}
 		if matchResourceMatchAllAnno != nil {
-			var processPrincipals []*v2.Resource
-			switch matchResourceMatchAllAnno.GetResourceType() {
-			case v2.ResourceType_TRAIT_USER:
-				processPrincipals = userPrincipals
-			case v2.ResourceType_TRAIT_GROUP:
-				processPrincipals = groupPrincipals
-			default:
-				l.Error("unexpected external resource type trait", zap.Any("trait", matchResourceMatchAllAnno.GetResourceType()))
+			trait := matchResourceMatchAllAnno.GetResourceType()
+			if !matchTraits[trait] {
+				l.Error("unexpected external resource type trait", zap.Any("trait", trait))
 			}
-			for _, principal := range processPrincipals {
+			for _, principal := range principalsByTrait[trait] {
 				newGrant := newGrantForExternalPrincipal(grant, principal)
 				expandedGrants = append(expandedGrants, newGrant)
 			}
@@ -2780,7 +3346,6 @@ func (s *syncer) processGrantsWithExternalPrincipals(ctx context.Context, princi
 		if matchResourceMatchIDAnno != nil {
 			if principal, ok := principalMap[matchResourceMatchIDAnno.GetId()]; ok {
 				newGrant := newGrantForExternalPrincipal(grant, principal)
-				expandedGrants = append(expandedGrants, newGrant)
 
 				newGrantAnnos := annotations.Annotations(newGrant.GetAnnotations())
 
@@ -2813,8 +3378,8 @@ func (s *syncer) processGrantsWithExternalPrincipals(ctx context.Context, princi
 					}.Build()
 					newGrantAnnos.Update(newExpandableAnno)
 					newGrant.SetAnnotations(newGrantAnnos)
-					expandedGrants = append(expandedGrants, newGrant)
 				}
+				expandedGrants = append(expandedGrants, newGrant)
 			}
 
 			// We still want to delete the grant even if there are no matches
@@ -2829,9 +3394,10 @@ func (s *syncer) processGrantsWithExternalPrincipals(ctx context.Context, princi
 		}
 
 		if matchExternalResource != nil {
-			switch matchExternalResource.GetResourceType() {
-			case v2.ResourceType_TRAIT_USER:
-				for _, userPrincipal := range userPrincipals {
+			trait := matchExternalResource.GetResourceType()
+			switch {
+			case trait == v2.ResourceType_TRAIT_USER:
+				for _, userPrincipal := range principalsByTrait[v2.ResourceType_TRAIT_USER] {
 					userTrait, err := resource.GetUserTrait(userPrincipal)
 					if err != nil {
 						l.Error("error getting user trait", zap.Any("userPrincipal", userPrincipal))
@@ -2851,48 +3417,25 @@ func (s *syncer) processGrantsWithExternalPrincipals(ctx context.Context, princi
 						expandedGrants = append(expandedGrants, newGrant)
 					}
 				}
-			case v2.ResourceType_TRAIT_GROUP:
-				for _, groupPrincipal := range groupPrincipals {
-					profileVal, ok := resource.GetProfileStringValue(resource.GetProfile(groupPrincipal), matchExternalResource.GetKey())
-					if ok && strings.EqualFold(profileVal, matchExternalResource.GetValue()) {
-						newGrant := newGrantForExternalPrincipal(grant, groupPrincipal)
-						newGrantAnnos := annotations.Annotations(newGrant.GetAnnotations())
-
-						newExpandableEntitlementIDs := make([]string, 0)
-						if expandableAnno != nil {
-							groupPrincipalBID, err := bid.MakeBid(grant.GetPrincipal())
-							if err != nil {
-								l.Error("error making group principal bid", zap.Error(err), zap.Any("grant.Principal", grant.GetPrincipal()))
-								continue
-							}
-
-							principalEntitlementSlugs := expandableEntitlementsResourceMap[groupPrincipalBID]
-							for _, slug := range principalEntitlementSlugs {
-								newExpandableEntId := entitlement.NewEntitlementID(groupPrincipal, slug)
-								_, err := s.store.GetEntitlement(ctx, reader_v2.EntitlementsReaderServiceGetEntitlementRequest_builder{EntitlementId: newExpandableEntId}.Build())
-								if err != nil {
-									if status.Code(err) == codes.NotFound {
-										l.Error("found no entitlement with entitlement id generated from external source sync", zap.Any("entitlementId", newExpandableEntId))
-										continue
-									}
-									return err
-								}
-								newExpandableEntitlementIDs = append(newExpandableEntitlementIDs, newExpandableEntId)
-							}
-
-							newExpandableAnno := v2.GrantExpandable_builder{
-								EntitlementIds:  newExpandableEntitlementIDs,
-								Shallow:         expandableAnno.GetShallow(),
-								ResourceTypeIds: expandableAnno.GetResourceTypeIds(),
-							}.Build()
-							newGrantAnnos.Update(newExpandableAnno)
-							newGrant.SetAnnotations(newGrantAnnos)
-							expandedGrants = append(expandedGrants, newGrant)
-						}
+			case matchTraits[trait]:
+				// Generic profile match, shared by TRAIT_GROUP and any
+				// additional trait opted into via WithExternalResourceTraits
+				// (e.g. TRAIT_APP).
+				for _, principal := range principalsByTrait[trait] {
+					newGrant, err := s.matchProfileAndExpand(
+						ctx, l, grant, principal,
+						matchExternalResource.GetKey(), matchExternalResource.GetValue(),
+						expandableAnno, expandableEntitlementsResourceMap,
+					)
+					if err != nil {
+						return err
+					}
+					if newGrant != nil {
+						expandedGrants = append(expandedGrants, newGrant)
 					}
 				}
 			default:
-				l.Error("unexpected external resource type trait", zap.Any("trait", matchExternalResource.GetResourceType()))
+				l.Error("unexpected external resource type trait", zap.Any("trait", trait))
 			}
 
 			// We still want to delete the grant even if there are no matches
@@ -3280,6 +3823,22 @@ func WithExternalResourceEntitlementIdFilter(entitlementId string) SyncOpt {
 	}
 }
 
+// WithExternalResourceTraits sets the resource type traits the External
+// Identity Matcher should sync from the external resource source and
+// consider when matching grants (e.g. ExternalResourceMatch /
+// ExternalResourceMatchAll annotations). When not called, the matcher
+// falls back to TRAIT_USER/TRAIT_GROUP — the pre-CE-975 default — so
+// existing connectors keep working unchanged. Passing any traits replaces
+// that default entirely: an Azure connector matching service-principal
+// role assignments against TRAIT_APP resources synced by
+// baton-microsoft-entra while also keeping default user/group matching
+// would pass TRAIT_USER, TRAIT_GROUP, TRAIT_APP.
+func WithExternalResourceTraits(traits ...v2.ResourceType_Trait) SyncOpt {
+	return func(s *syncer) {
+		s.externalResourceTraits = append(s.externalResourceTraits, traits...)
+	}
+}
+
 func WithTargetedSyncResources(resources []*v2.Resource) SyncOpt {
 	return func(s *syncer) {
 		s.targetedSyncResources = resources
@@ -3421,9 +3980,10 @@ func WithSyncIdentity(id uotel.SyncIdentity) SyncOpt {
 // NewSyncer returns a new syncer object.
 func NewSyncer(ctx context.Context, c types.ConnectorClient, opts ...SyncOpt) (Syncer, error) {
 	s := &syncer{
-		connector:   c,
-		syncType:    connectorstore.SyncTypeFull,
-		workerCount: 1,
+		connector:          c,
+		syncType:           connectorstore.SyncTypeFull,
+		workerCount:        1,
+		checkpointInterval: minCheckpointInterval,
 	}
 
 	for _, o := range opts {
