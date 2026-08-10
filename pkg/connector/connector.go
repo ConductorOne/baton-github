@@ -190,7 +190,10 @@ func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 				"github_username": {
 					DisplayName: "GitHub username",
 					Required:    false,
-					Description: "The user's GitHub username (optional, used to look up the user if email is private).",
+					Description: "The user's GitHub username. Optional, but strongly recommended: when it is set the org " +
+						"invitation is addressed to that GitHub account, which is what lets teams and repository access be " +
+						"granted before the user accepts. Without it the invitation is only addressed to an email address, " +
+						"and GitHub cannot attach team or repository access to it.",
 					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
 						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
 					},
