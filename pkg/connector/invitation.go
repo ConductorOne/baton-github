@@ -24,6 +24,13 @@ const (
 	invitationProfileKeyStatus    = "invitation_status"
 	invitationProfileKeyExpiresAt = "invitation_expires_at"
 
+	// invitation_github_login is set only when GitHub resolved the invitee to a
+	// real account. Its absence is what makes an invitation unable to receive
+	// team or repository access directly — every GitHub membership write takes a
+	// username. Surfacing it lets an operator see that from C1.
+	invitationProfileKeyGitHubLogin = "invitation_github_login"
+	invitationProfileKeyRole        = "invitation_role"
+
 	// Values exposed via invitation_status.
 	invitationStatusPendingAcceptance = "invitation_pending_acceptance"
 	invitationStatusExpired           = "invitation_expired"
@@ -56,6 +63,12 @@ func invitationToUserResource(invitation *github.Invitation, status string) (*v2
 	}
 	if expiresAt, ok := invitationExpiresAt(invitation, status); ok {
 		profile[invitationProfileKeyExpiresAt] = expiresAt.UTC().Format(time.RFC3339)
+	}
+	if ghLogin := invitation.GetLogin(); ghLogin != "" {
+		profile[invitationProfileKeyGitHubLogin] = ghLogin
+	}
+	if role := invitation.GetRole(); role != "" {
+		profile[invitationProfileKeyRole] = role
 	}
 
 	ret, err := resourceSdk.NewUserResource(
@@ -268,9 +281,25 @@ func (i *invitationResourceType) CreateAccount(
 		return nil, nil, nil, fmt.Errorf("github-connectorv2: failed to get CreateUserParams: %w", err)
 	}
 
-	invitation, resp, err := i.client.Organizations.CreateOrgInvitation(ctx, params.org, &github.CreateOrgInvitationOptions{
-		Email: params.email,
-	})
+	// Prefer invitee_id: an invitation created that way carries a GitHub login,
+	// which is what lets team and repository access be pre-staged before the
+	// invitation is accepted. An email-only invitation has no login until (and
+	// unless) GitHub resolves one, and GitHub can then only attach teams by
+	// re-issuing the invitation.
+	inviteOpts := &github.CreateOrgInvitationOptions{Email: params.email}
+	if params.login != "" {
+		invitee, _, err := i.client.Users.Get(ctx, params.login)
+		if err != nil {
+			l.Debug("github-connector: could not resolve github_username, inviting by email instead",
+				zap.String("github_username", params.login),
+				zap.String("github_error", gitHubErrorMessage(err)),
+			)
+		} else {
+			inviteOpts = &github.CreateOrgInvitationOptions{InviteeID: github.Ptr(invitee.GetID())}
+		}
+	}
+
+	invitation, resp, err := i.client.Organizations.CreateOrgInvitation(ctx, params.org, inviteOpts)
 	if err != nil {
 		if isAlreadyOrgMemberError(err, resp) {
 			memberResource, lookupErr := i.lookupUser(ctx, params.login, *params.email)

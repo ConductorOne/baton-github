@@ -33,6 +33,11 @@ const (
 
 const readConst = "read"
 
+// Pagination bag state for the repository's outstanding collaborator
+// invitations. Namespaced so it cannot collide with the resource-type IDs that
+// double as bag states.
+const repoStateInvitations = "repository:invitations"
+
 var repoAccessLevels = []string{
 	repoPermissionPull,
 	repoPermissionTriage,
@@ -152,7 +157,7 @@ func (o *repositoryResourceType) StaticEntitlements(_ context.Context, _ resourc
 			level,
 			entitlement.WithDisplayName(fmt.Sprintf("Repo %s", titleCase(level))),
 			entitlement.WithDescription(fmt.Sprintf("Access to repository in GitHub as %s", level)),
-			entitlement.WithGrantableTo(resourceTypeUser, resourceTypeTeam),
+			entitlement.WithGrantableTo(resourceTypeUser, resourceTypeTeam, resourceTypeInvitation),
 			entitlement.WithAnnotation(&v2.EntitlementExclusionGroup{
 				ExclusionGroupId: "repository",
 				Order:            uint32(i),
@@ -187,6 +192,11 @@ func (o *repositoryResourceType) Grants(
 	switch bag.ResourceTypeID() {
 	case resourceTypeRepository.Id:
 		bag.Pop()
+		// Pushed first so it drains last, after the accepted collaborators and
+		// teams.
+		bag.Push(pagination.PageState{
+			ResourceTypeID: repoStateInvitations,
+		})
 		bag.Push(pagination.PageState{
 			ResourceTypeID: resourceTypeUser.Id,
 		})
@@ -229,6 +239,18 @@ func (o *repositoryResourceType) Grants(
 					}
 				}
 			}
+		}
+
+	case repoStateInvitations:
+		invitationGrants, nextPage, respAnnos, err := o.pendingInvitationGrants(ctx, resource, opts.Session, orgName, page)
+		if err != nil {
+			return nil, nil, err
+		}
+		reqAnnos = respAnnos
+		rv = append(rv, invitationGrants...)
+
+		if err := bag.Next(nextPage); err != nil {
+			return nil, nil, err
 		}
 
 	case resourceTypeUser.Id:
@@ -376,6 +398,87 @@ func (o *repositoryResourceType) Grants(
 	}, nil
 }
 
+// pendingInvitationGrants emits repository grants for outstanding collaborator
+// invitations, so access C1 pre-staged for someone who has not accepted their org
+// invitation yet shows up alongside grants for accepted collaborators.
+//
+// A repository invitation names a GitHub user, not an org invitation, and a
+// user who is not an org member is not part of the synced user set — so the
+// invitee is correlated back to the pending org invitation that C1 did sync.
+// Repository invitations for people with no pending org invitation (direct
+// outside-collaborator invites) have no principal to attach to and are skipped.
+func (o *repositoryResourceType) pendingInvitationGrants(
+	ctx context.Context,
+	resource *v2.Resource,
+	ss sessions.SessionStore,
+	orgName string,
+	page int,
+) ([]*v2.Grant, string, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	listOpts := &github.ListOptions{Page: page, PerPage: maxPageSize}
+	invitations, resp, err := o.client.Repositories.ListInvitations(ctx, orgName, resource.DisplayName, listOpts)
+	if err != nil {
+		if isNotFoundError(resp) || isPermissionError(resp) {
+			l.Debug("github-connector: cannot list repository invitations, skipping",
+				zap.String("org", orgName),
+				zap.String("repository", resource.DisplayName),
+				zap.String("github_error", gitHubErrorMessage(err)),
+			)
+			return nil, "", nil, nil
+		}
+		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list repository invitations")
+	}
+
+	nextPage, reqAnnos, err := parseResp(resp)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if len(invitations) == 0 {
+		return nil, nextPage, reqAnnos, nil
+	}
+
+	invitationsByLogin, err := pendingInvitationsByLogin(ctx, o.client, ss, orgName, resource.ParentResourceId.GetResource())
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	rv := make([]*v2.Grant, 0, len(invitations))
+	for _, inv := range invitations {
+		if inv.GetExpired() {
+			continue
+		}
+
+		login := inv.GetInvitee().GetLogin()
+		invitationID, ok := invitationsByLogin[strings.ToLower(login)]
+		if !ok {
+			l.Debug("github-connector: repository invitee has no pending org invitation, skipping grant",
+				zap.String("repository", resource.DisplayName),
+				zap.String("login", login),
+			)
+			continue
+		}
+
+		permission := roleNameToRepoPermission(inv.GetPermissions())
+		if permission == "" {
+			l.Debug("github-connector: unrecognized repository invitation permission, skipping grant",
+				zap.String("repository", resource.DisplayName),
+				zap.String("login", login),
+				zap.String("permission", inv.GetPermissions()),
+			)
+			continue
+		}
+
+		rv = append(rv, grant.NewGrant(resource, permission, invitationResourceID(invitationID),
+			grant.WithAnnotation(&v2.V1Identifier{
+				Id: fmt.Sprintf("repo-invitation-grant:%s:%d:%s", resource.Id.Resource, invitationID, permission),
+			}),
+		))
+	}
+
+	return rv, nextPage, reqAnnos, nil
+}
+
 func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resource, en *v2.Entitlement) (annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
@@ -473,13 +576,38 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 		if err != nil {
 			return nil, wrapGitHubError(err, resp, "github-connector: failed to add team to repository")
 		}
+	case resourceTypeInvitation.Id:
+		// AddCollaborator on a non-member creates a repository invitation that
+		// converts to real access when accepted, so the pending invitee only has
+		// to be named. Unlike teams there is no email-only fallback: GitHub has
+		// no way to attach repository access to an org invitation.
+		inv, err := parseInvitationPrincipal(ctx, o.client, repo.GetOwner().GetLogin(), principal)
+		if err != nil {
+			return nil, err
+		}
+		login := inv.GetLogin()
+		if login == "" {
+			return nil, invitationNotProvisionableError(
+				fmt.Sprintf("add invitation to repository %s", repo.GetName()), inv)
+		}
+
+		_, resp, err := o.client.Repositories.AddCollaborator(
+			ctx,
+			repo.GetOwner().GetLogin(),
+			repo.GetName(),
+			login,
+			&github.RepositoryAddCollaboratorOptions{Permission: permission},
+		)
+		if err != nil {
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to add invited user to repository")
+		}
 	default:
 		l.Error(
-			"github-connectorv2: only users and teams can be granted repository membership",
+			"github-connectorv2: only users, teams, and invitations can be granted repository membership",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
-		return nil, fmt.Errorf("github-connectorv2: only users and teams can be granted team membership")
+		return nil, fmt.Errorf("github-connectorv2: only users, teams, and invitations can be granted repository access")
 	}
 
 	return nil, nil
@@ -529,16 +657,76 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 		if err != nil {
 			return nil, wrapGitHubError(err, resp, "github-connector: failed to remove team from repository")
 		}
+	case resourceTypeInvitation.Id:
+		owner := repo.GetOwner().GetLogin()
+
+		invitationID, err := strconv.ParseInt(principal.Id.Resource, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("github-connector: invalid invitation id %q: %w", principal.Id.Resource, err)
+		}
+		inv, err := resolvePendingInvitation(ctx, o.client, owner, invitationID)
+		if err != nil {
+			return nil, err
+		}
+		if inv == nil || inv.GetLogin() == "" {
+			// No invitation, or one GitHub never resolved to an account, means
+			// there is no repository invitation to withdraw either.
+			return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+		}
+
+		// Deleting the outstanding repository invitation is what actually
+		// withdraws pre-staged access; RemoveCollaborator alone does not always
+		// clear it.
+		repoInvitationID, err := o.findRepositoryInvitation(ctx, owner, repo.GetName(), inv.GetLogin())
+		if err != nil {
+			return nil, err
+		}
+		if repoInvitationID != 0 {
+			resp, err := o.client.Repositories.DeleteInvitation(ctx, owner, repo.GetName(), repoInvitationID)
+			if err != nil && !isNotFoundError(resp) {
+				return nil, wrapGitHubError(err, resp, "github-connector: failed to delete repository invitation")
+			}
+			return nil, nil
+		}
+
+		resp, err := o.client.Repositories.RemoveCollaborator(ctx, owner, repo.GetName(), inv.GetLogin())
+		if err != nil && !isNotFoundError(resp) {
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to remove invited user from repository")
+		}
 	default:
 		l.Error(
-			"github-connectorv2: only users and teams can have repository membership revoked",
+			"github-connectorv2: only users, teams, and invitations can have repository access revoked",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
-		return nil, fmt.Errorf("github-connectorv2: only users and teams can be granted team membership")
+		return nil, fmt.Errorf("github-connectorv2: only users, teams, and invitations can have repository access revoked")
 	}
 
 	return nil, nil
+}
+
+// findRepositoryInvitation returns the ID of the outstanding repository
+// invitation for login, or 0 when there is none.
+func (o *repositoryResourceType) findRepositoryInvitation(ctx context.Context, owner, repoName, login string) (int64, error) {
+	opts := &github.ListOptions{PerPage: maxPageSize}
+	for {
+		invitations, resp, err := o.client.Repositories.ListInvitations(ctx, owner, repoName, opts)
+		if err != nil {
+			if isNotFoundError(resp) {
+				return 0, nil
+			}
+			return 0, wrapGitHubError(err, resp, "github-connector: failed to list repository invitations")
+		}
+		for _, inv := range invitations {
+			if strings.EqualFold(inv.GetInvitee().GetLogin(), login) {
+				return inv.GetID(), nil
+			}
+		}
+		if resp.NextPage == 0 {
+			return 0, nil
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 // orgBasePermissionSessionKey returns the session key for caching the org's default repo permission.

@@ -127,12 +127,16 @@ type GitHub struct {
 	omitArchivedRepositories bool
 	directCollaboratorsOnly  bool
 	enterprises              []string
+	// reinvitePendingInvitations allows provisioning to cancel and re-issue a
+	// pending org invitation when that is the only way GitHub will accept the
+	// requested access. See reinviteWithTeams.
+	reinvitePendingInvitations bool
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
 	resourceSyncers := []connectorbuilder.ResourceSyncerV2{
-		OrgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
-		TeamBuilder(gh.client, gh.orgCache, gh.directCollaboratorsOnly),
+		OrgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets, gh.reinvitePendingInvitations),
+		TeamBuilder(gh.client, gh.orgCache, gh.directCollaboratorsOnly, gh.reinvitePendingInvitations),
 		UserBuilder(gh.client, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises),
 		RepositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories, gh.directCollaboratorsOnly),
 		OrgRoleBuilder(gh.client, gh.orgCache),
@@ -346,6 +350,8 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
+
+		reinvitePendingInvitations: ghc.ReinvitePendingInvitations,
 	}, nil
 }
 
@@ -433,6 +439,8 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
+
+		reinvitePendingInvitations: ghc.ReinvitePendingInvitations,
 	}
 	return gh, nil
 }

@@ -47,6 +47,11 @@ var GetOrganizationsTeamsMembershipsByTeamIdByUsername = mock.EndpointPattern{
 	Method:  "GET",
 }
 
+var GetOrganizationsTeamsInvitationsByTeamId = mock.EndpointPattern{
+	Pattern: "/organizations/{org_id}/team/{team_id}/invitations",
+	Method:  "GET",
+}
+
 // Organization role endpoints.
 var GetOrgsRolesByOrg = mock.EndpointPattern{
 	Pattern: "/orgs/{org}/organization-roles",

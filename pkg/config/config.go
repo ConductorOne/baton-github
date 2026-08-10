@@ -73,6 +73,20 @@ var (
 				"and skipping per-team detail fetches. Recommended for large orgs.",
 		),
 	)
+	// GitHub can only attach teams to an organization invitation at creation
+	// time, so pre-staging team access for someone who was invited by email
+	// alone means cancelling their invitation and re-issuing it. That is
+	// destructive enough to stay opt-in: see reinviteWithTeams.
+	reinvitePendingInvitations = field.BoolField(
+		"reinvite-pending-invitations",
+		field.WithDisplayName("Re-issue pending invitations to pre-stage access"),
+		field.WithDescription(
+			"Allow granting teams and org roles to people who were invited by email and have no GitHub username yet. "+
+				"GitHub can only set an invitation's teams when the invitation is created, so the connector cancels "+
+				"and re-sends the invitation, which invalidates the original invite link, sends a second email, and "+
+				"restarts the 7-day expiry.",
+		),
+	)
 	orgField = field.StringField(
 		"org",
 		field.WithDisplayName("Github App Organization"),
@@ -94,6 +108,7 @@ var Config = field.NewConfiguration(
 		syncSecrets,
 		omitArchivedRepositories,
 		directCollaboratorsOnly,
+		reinvitePendingInvitations,
 	},
 	field.WithConnectorDisplayName("GitHub v2"),
 	field.WithHelpUrl("/docs/baton/github-v2"),
@@ -103,14 +118,14 @@ var Config = field.NewConfiguration(
 			Name:        GithubPersonalAccessTokenGroup,
 			DisplayName: "Personal access token",
 			HelpText:    "Use a personal access token for authentication.",
-			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories, directCollaboratorsOnly},
+			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories, directCollaboratorsOnly, reinvitePendingInvitations},
 			Default:     true,
 		},
 		{
 			Name:        GithubAppGroup,
 			DisplayName: "GitHub app",
 			HelpText:    "Use a github app for authentication",
-			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgField, syncSecrets, omitArchivedRepositories, directCollaboratorsOnly},
+			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgField, syncSecrets, omitArchivedRepositories, directCollaboratorsOnly, reinvitePendingInvitations},
 			Default:     false,
 		},
 	}),

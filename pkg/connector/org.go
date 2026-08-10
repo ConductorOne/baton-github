@@ -25,6 +25,10 @@ const (
 	orgRoleMember       = "member"
 	orgRoleDirectMember = "direct_member" // invite
 	orgRoleAdmin        = "admin"
+
+	// Pagination bag state for the org's pending invitations. Namespaced so it
+	// cannot collide with the org role states, which double as bag states.
+	orgStateInvitations = "org:invitations"
 )
 
 var orgAccessLevels = []string{
@@ -33,12 +37,13 @@ var orgAccessLevels = []string{
 }
 
 type orgResourceType struct {
-	resourceType *v2.ResourceType
-	client       *github.Client
-	appClient    *github.Client
-	orgs         map[string]struct{}
-	orgCache     *orgNameCache
-	syncSecrets  bool
+	resourceType      *v2.ResourceType
+	client            *github.Client
+	appClient         *github.Client
+	orgs              map[string]struct{}
+	orgCache          *orgNameCache
+	syncSecrets       bool
+	reinviteForGrants bool
 }
 
 func organizationResource(
@@ -166,12 +171,12 @@ func (o *orgResourceType) StaticEntitlements(
 	rv = append(rv, entitlement.NewAssignmentEntitlement(nil, orgRoleMember,
 		entitlement.WithDisplayName("Org Member"),
 		entitlement.WithDescription("Access to org in GitHub as member"),
-		entitlement.WithGrantableTo(resourceTypeUser),
+		entitlement.WithGrantableTo(resourceTypeUser, resourceTypeInvitation),
 	))
 	rv = append(rv, entitlement.NewPermissionEntitlement(nil, orgRoleAdmin,
 		entitlement.WithDisplayName("Org Admin"),
 		entitlement.WithDescription("Access to org in GitHub as admin"),
-		entitlement.WithGrantableTo(resourceTypeUser),
+		entitlement.WithGrantableTo(resourceTypeUser, resourceTypeInvitation),
 	))
 
 	return rv, &resourceSdk.SyncOpResults{}, nil
@@ -202,12 +207,32 @@ func (o *orgResourceType) Grants(
 	switch rId := bag.ResourceTypeID(); rId {
 	case resourceTypeOrg.Id:
 		bag.Pop()
+		// Pushed first so it drains last, after both accepted-member states.
+		bag.Push(pagination.PageState{
+			ResourceTypeID: orgStateInvitations,
+		})
 		bag.Push(pagination.PageState{
 			ResourceTypeID: orgRoleAdmin,
 		})
 		bag.Push(pagination.PageState{
 			ResourceTypeID: orgRoleMember,
 		})
+	case orgStateInvitations:
+		orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, resource.Id)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		invitationGrants, nextPage, annos, err := o.pendingInvitationGrants(ctx, resource, orgName, page)
+		if err != nil {
+			return nil, nil, err
+		}
+		reqAnnos = annos
+		rv = append(rv, invitationGrants...)
+
+		if err := bag.Next(nextPage); err != nil {
+			return nil, nil, err
+		}
 	case orgRoleAdmin, orgRoleMember:
 
 		orgName, err := o.orgCache.GetOrgName(ctx, opts.Session, resource.Id)
@@ -267,16 +292,71 @@ func (o *orgResourceType) Grants(
 	}, nil
 }
 
+// pendingInvitationGrants emits org membership grants for people who have been
+// invited but have not accepted yet, so a pending invitee shows up in C1 with the
+// membership their invitation already carries.
+//
+// Admin invitations emit both grants, mirroring the accepted-member pass where
+// admin implies membership. Every other invitation role (direct_member,
+// billing_manager, hiring_manager, reinstate) maps to plain membership.
+func (o *orgResourceType) pendingInvitationGrants(
+	ctx context.Context,
+	resource *v2.Resource,
+	orgName string,
+	page int,
+) ([]*v2.Grant, string, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	listOpts := &github.ListOptions{Page: page, PerPage: maxPageSize}
+	invitations, resp, err := o.client.Organizations.ListPendingOrgInvitations(ctx, orgName, listOpts)
+	if err != nil {
+		if isNotFoundError(resp) || isPermissionError(resp) {
+			l.Debug("github-connector: cannot list pending org invitations, skipping",
+				zap.String("org", orgName),
+				zap.String("github_error", gitHubErrorMessage(err)),
+			)
+			return nil, "", nil, nil
+		}
+		return nil, "", nil, wrapGitHubError(err, resp, "github-connector: failed to list pending org invitations")
+	}
+
+	nextPage, reqAnnos, err := parseResp(resp)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	rv := make([]*v2.Grant, 0, len(invitations))
+	for _, inv := range invitations {
+		principalID := invitationResourceID(inv.GetID())
+		if inv.GetRole() == invitationRoleAdmin {
+			rv = append(rv, o.invitationGrant(orgRoleAdmin, resource, principalID, inv.GetID()))
+		}
+		rv = append(rv, o.invitationGrant(orgRoleMember, resource, principalID, inv.GetID()))
+	}
+
+	return rv, nextPage, reqAnnos, nil
+}
+
+func (o *orgResourceType) invitationGrant(roleName string, org *v2.Resource, principalID *v2.ResourceId, invitationID int64) *v2.Grant {
+	return grant.NewGrant(org, roleName, principalID, grant.WithAnnotation(&v2.V1Identifier{
+		Id: fmt.Sprintf("org-invitation-grant:%s:%d:%s", org.Id.Resource, invitationID, roleName),
+	}))
+}
+
 func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en *v2.Entitlement) (annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
-	if principal.Id.ResourceType != resourceTypeUser.Id {
+	if principal.Id.ResourceType != resourceTypeUser.Id && !isInvitationPrincipal(principal) {
 		l.Error(
-			"github-connectorv2: only users can be granted org admin",
+			"github-connectorv2: only users and invitations can be granted org membership",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
-		return nil, fmt.Errorf("github-connectorv2: only users can be granted org membership")
+		return nil, fmt.Errorf("github-connectorv2: only users and invitations can be granted org membership")
+	}
+
+	if isInvitationPrincipal(principal) {
+		return o.grantToInvitation(ctx, principal, en)
 	}
 
 	adminRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleAdmin)
@@ -352,19 +432,71 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 	return nil, nil
 }
 
+// grantToInvitation reconciles an org membership grant against an invitation
+// that is already outstanding.
+//
+// The invitation itself IS the pending org membership, so a membership grant is
+// already satisfied. Only an admin grant against a non-admin invitation needs
+// real work, and GitHub cannot change a pending invitation's role in place — that
+// takes re-issuing the invitation.
+func (o *orgResourceType) grantToInvitation(ctx context.Context, principal *v2.Resource, en *v2.Entitlement) (annotations.Annotations, error) {
+	adminRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleAdmin)
+	memberRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleMember)
+
+	var requestedRole string
+	switch en.Id {
+	case adminRoleID:
+		requestedRole = invitationRoleAdmin
+	case memberRoleID:
+		requestedRole = invitationRoleDirectMember
+	default:
+		return nil, fmt.Errorf("github-connectorv2: invalid entitlement id: %s", en.Id)
+	}
+
+	orgName, err := o.orgCache.GetOrgNameFromRemoteServer(ctx, en.Resource.Id.GetResource())
+	if err != nil {
+		return nil, err
+	}
+
+	inv, err := parseInvitationPrincipal(ctx, o.client, orgName, principal)
+	if err != nil {
+		return nil, err
+	}
+
+	if requestedRole == invitationRoleDirectMember || inv.GetRole() == invitationRoleAdmin {
+		return annotations.New(&v2.GrantAlreadyExists{}), nil
+	}
+
+	if !o.reinviteForGrants {
+		return nil, invitationNotProvisionableError("promote invitation to org admin", inv)
+	}
+
+	teamIDs, err := invitationTeamIDs(ctx, o.client, orgName, inv.GetID())
+	if err != nil {
+		return nil, err
+	}
+
+	upgraded := *inv
+	upgraded.Role = github.Ptr(invitationRoleAdmin)
+	if _, err := reinviteWithTeams(ctx, o.client, orgName, &upgraded, teamIDs); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
 func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
 	en := grant.Entitlement
 	principal := grant.Principal
 
-	if principal.Id.ResourceType != resourceTypeUser.Id {
+	if principal.Id.ResourceType != resourceTypeUser.Id && !isInvitationPrincipal(principal) {
 		l.Error(
-			"github-connectorv2: org admin can only be revoked from users",
+			"github-connectorv2: org membership can only be revoked from users and invitations",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
-		return nil, fmt.Errorf("github-connectorv2: org admin can only be revoked from users")
+		return nil, fmt.Errorf("github-connectorv2: org membership can only be revoked from users and invitations")
 	}
 
 	adminRoleID := entitlement.NewEntitlementID(en.Resource, orgRoleAdmin)
@@ -377,6 +509,10 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	orgName, err := o.orgCache.GetOrgNameFromRemoteServer(ctx, en.Resource.Id.GetResource())
 	if err != nil {
 		return nil, err
+	}
+
+	if isInvitationPrincipal(principal) {
+		return o.revokeFromInvitation(ctx, principal, orgName, en.Id == memberRoleID)
 	}
 
 	principalID, err := strconv.ParseInt(principal.Id.Resource, 10, 64)
@@ -414,7 +550,58 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 	return nil, nil
 }
 
-func OrgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool) *orgResourceType {
+// revokeFromInvitation withdraws pending org membership. Cancelling the
+// invitation is the only way to take back membership that has not been accepted;
+// demoting an admin invitation to plain membership needs the invitation re-issued.
+func (o *orgResourceType) revokeFromInvitation(
+	ctx context.Context,
+	principal *v2.Resource,
+	orgName string,
+	isMembershipRevoke bool,
+) (annotations.Annotations, error) {
+	invitationID, err := strconv.ParseInt(principal.GetId().GetResource(), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("github-connector: invalid invitation id %q: %w", principal.GetId().GetResource(), err)
+	}
+
+	inv, err := resolvePendingInvitation(ctx, o.client, orgName, invitationID)
+	if err != nil {
+		return nil, err
+	}
+	if inv == nil {
+		return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+	}
+
+	if isMembershipRevoke {
+		resp, err := o.client.Organizations.CancelInvite(ctx, orgName, invitationID)
+		if err != nil && !isNotFoundError(resp) {
+			return nil, wrapGitHubError(err, resp, "github-connector: failed to cancel org invitation")
+		}
+		return nil, nil
+	}
+
+	if inv.GetRole() != invitationRoleAdmin {
+		return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+	}
+
+	if !o.reinviteForGrants {
+		return nil, invitationNotProvisionableError("demote invitation from org admin", inv)
+	}
+
+	teamIDs, err := invitationTeamIDs(ctx, o.client, orgName, inv.GetID())
+	if err != nil {
+		return nil, err
+	}
+
+	demoted := *inv
+	demoted.Role = github.Ptr(invitationRoleDirectMember)
+	if _, err := reinviteWithTeams(ctx, o.client, orgName, &demoted, teamIDs); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+func OrgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs []string, syncSecrets bool, reinviteForGrants bool) *orgResourceType {
 	orgMap := make(map[string]struct{})
 
 	for _, o := range orgs {
@@ -422,12 +609,13 @@ func OrgBuilder(client, appClient *github.Client, orgCache *orgNameCache, orgs [
 	}
 
 	return &orgResourceType{
-		resourceType: resourceTypeOrg,
-		orgs:         orgMap,
-		client:       client,
-		appClient:    appClient,
-		orgCache:     orgCache,
-		syncSecrets:  syncSecrets,
+		resourceType:      resourceTypeOrg,
+		orgs:              orgMap,
+		client:            client,
+		appClient:         appClient,
+		orgCache:          orgCache,
+		syncSecrets:       syncSecrets,
+		reinviteForGrants: reinviteForGrants,
 	}
 }
 

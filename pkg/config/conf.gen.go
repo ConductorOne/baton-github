@@ -14,6 +14,7 @@ type Github struct {
 	SyncSecrets bool `mapstructure:"sync-secrets"`
 	OmitArchivedRepositories bool `mapstructure:"omit-archived-repositories"`
 	DirectCollaboratorsOnly bool `mapstructure:"direct-collaborators-only"`
+	ReinvitePendingInvitations bool `mapstructure:"reinvite-pending-invitations"`
 }
 
 func (c *Github) findFieldByTag(tagValue string) (any, bool) {

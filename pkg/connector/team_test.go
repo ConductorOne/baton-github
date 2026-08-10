@@ -25,7 +25,7 @@ func TestTeam(t *testing.T) {
 
 		githubClient := github.NewClient(mgh.Server())
 		cache := newOrgNameCache(githubClient)
-		client := TeamBuilder(githubClient, cache, false)
+		client := TeamBuilder(githubClient, cache, false, false)
 
 		organization, _ := organizationResource(ctx, githubOrganization, nil, false)
 		team, _ := teamResource(githubTeam, githubOrganization.GetID(), organization.Id)
@@ -46,7 +46,7 @@ func TestTeam(t *testing.T) {
 		})
 		require.Nil(t, err)
 		test.AssertHasRatelimitAnnotations(t, results.Annotations)
-		require.Equal(t, "{\"states\":[{\"type\":\"member\"}],\"current_state\":{\"type\":\"maintainer\"}}", results.NextPageToken)
+		require.Equal(t, "{\"states\":[{\"type\":\"team:invitations\"},{\"type\":\"member\"}],\"current_state\":{\"type\":\"maintainer\"}}", results.NextPageToken)
 
 		grant := v2.Grant{
 			Entitlement: &entitlement,

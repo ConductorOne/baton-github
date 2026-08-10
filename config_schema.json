@@ -177,6 +177,12 @@
       "displayName": "Optimize sync for large organizations",
       "description": "Reduces API calls by using grant expansion for team-based repo access and skipping per-team detail fetches. Recommended for large orgs.",
       "boolField": {}
+    },
+    {
+      "name": "reinvite-pending-invitations",
+      "displayName": "Re-issue pending invitations to pre-stage access",
+      "description": "Allow granting teams and org roles to people who were invited by email and have no GitHub username yet. GitHub can only set an invitation's teams when the invitation is created, so the connector cancels and re-sends the invitation, which invalidates the original invite link, sends a second email, and restarts the 7-day expiry.",
+      "boolField": {}
     }
   ],
   "displayName": "GitHub v2",
@@ -191,7 +197,8 @@
         "token",
         "orgs",
         "omit-archived-repositories",
-        "direct-collaborators-only"
+        "direct-collaborators-only",
+        "reinvite-pending-invitations"
       ],
       "default": true
     },
@@ -205,7 +212,8 @@
         "org",
         "sync-secrets",
         "omit-archived-repositories",
-        "direct-collaborators-only"
+        "direct-collaborators-only",
+        "reinvite-pending-invitations"
       ]
     }
   ]

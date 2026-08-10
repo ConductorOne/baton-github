@@ -13,9 +13,11 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
 )
 
 type OrganizationRole struct {
@@ -309,6 +311,14 @@ func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource,
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
+		// Unlike teams and repositories, GitHub's organization-role endpoints
+		// take a user ID and require active org membership, so there is nothing
+		// to pre-stage against a pending invitation.
+		if isInvitationPrincipal(principal) {
+			return nil, uhttp.WrapErrors(codes.FailedPrecondition,
+				"github-connector: organization roles cannot be assigned to a pending invitation; GitHub requires the "+
+					"user to have accepted their org invitation first")
+		}
 		return nil, fmt.Errorf("github-connector: only users can be granted organization roles")
 	}
 
