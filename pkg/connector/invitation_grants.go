@@ -266,12 +266,17 @@ func reinviteOptions(
 	return nil, fmt.Errorf("github-connector: invitation %d has neither a login nor an email to re-invite", inv.GetID())
 }
 
-// isNotAnOrgMemberError matches GitHub's refusal to act on a user who has not
-// yet accepted their org invitation. GitHub's own docs say the team-membership
-// endpoint invites non-members, but some org configurations (SAML enforcement,
-// IdP team sync, an invitation already outstanding) reject the write instead.
+// isNotAnOrgMemberError matches GitHub's refusal to act on a user who has not yet
+// accepted their org invitation.
+//
+// PUT /orgs/{org}/teams/{team}/memberships/{username} is documented to invite
+// non-members and leave the membership pending, and the "User isn't a member of
+// this organization. Please invite them first." 422 belongs to the deprecated
+// PUT /teams/{id}/members/{username} endpoint, which this connector does not
+// use. This guard therefore covers the undocumented case: a write refused
+// because an org invitation for that user is already outstanding.
 func isNotAnOrgMemberError(err error, resp *github.Response) bool {
-	return isGitHubValidationError(err, resp, "not a member", "isn't a member", "invite them first")
+	return isGitHubValidationError(err, resp, "not a member", "isn't a member", "invite them first", "already invited")
 }
 
 // isIdPManagedTeamError matches the rejection GitHub returns for teams whose

@@ -581,6 +581,10 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 		// converts to real access when accepted, so the pending invitee only has
 		// to be named. Unlike teams there is no email-only fallback: GitHub has
 		// no way to attach repository access to an org invitation.
+		//
+		// GitHub caps invitations to non-members at 50 per repository per 24
+		// hours (org members are exempt, but a pending invitee is not one yet),
+		// so a bulk backfill across one repo can start returning 403s.
 		inv, err := parseInvitationPrincipal(ctx, o.client, repo.GetOwner().GetLogin(), principal)
 		if err != nil {
 			return nil, err
