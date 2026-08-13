@@ -17,6 +17,8 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -31,6 +33,10 @@ type OutstandingAction struct {
 	Err       error
 	StartedAt time.Time
 	sync.Mutex
+
+	// cancelled marks a FAILED status that came from request cancellation
+	// rather than from the handler; the handler's late outcome replaces it.
+	cancelled bool
 }
 
 func NewOutstandingAction(id, name string) *OutstandingAction {
@@ -45,44 +51,196 @@ func NewOutstandingAction(id, name string) *OutstandingAction {
 func (oa *OutstandingAction) SetStatus(ctx context.Context, status v2.BatonActionStatus) {
 	oa.Lock()
 	defer oa.Unlock()
-	l := ctxzap.Extract(ctx).With(
-		zap.String("action_id", oa.Id),
-		zap.String("action_name", oa.Name),
-		zap.String("status", status.String()),
-	)
+	oa.setStatusLocked(ctx, status)
+}
+
+// setStatusLocked applies a lifecycle transition and reports whether it was
+// accepted. Terminal statuses are final and RUNNING is only reachable from
+// PENDING; rejected transitions are dropped. These fire in normal operation
+// (a handler finishing after its request was cancelled), hence debug level.
+// It requires oa's mutex to be held.
+func (oa *OutstandingAction) setStatusLocked(ctx context.Context, status v2.BatonActionStatus) bool {
 	if oa.Status == v2.BatonActionStatus_BATON_ACTION_STATUS_COMPLETE || oa.Status == v2.BatonActionStatus_BATON_ACTION_STATUS_FAILED {
-		l.Error("cannot set status on completed action")
+		ctxzap.Extract(ctx).Debug("dropping status transition on terminal action",
+			zap.String("action_id", oa.Id),
+			zap.String("action_name", oa.Name),
+			zap.String("status", oa.Status.String()),
+			zap.String("requested_status", status.String()))
+		return false
 	}
 	if status == v2.BatonActionStatus_BATON_ACTION_STATUS_RUNNING && oa.Status != v2.BatonActionStatus_BATON_ACTION_STATUS_PENDING {
-		l.Error("cannot set status to running unless action is pending")
+		ctxzap.Extract(ctx).Debug("dropping running transition on non-pending action",
+			zap.String("action_id", oa.Id),
+			zap.String("action_name", oa.Name),
+			zap.String("status", oa.Status.String()))
+		return false
 	}
 
 	oa.Status = status
+	return true
 }
 
-func (oa *OutstandingAction) setError(_ context.Context, err error) {
-	oa.Lock()
-	defer oa.Unlock()
-	if oa.Rv == nil {
-		oa.Rv = &structpb.Struct{}
+// setErrorLocked requires oa's mutex to be held.
+func (oa *OutstandingAction) setErrorLocked(err error) {
+	// Rebuild rather than mutate: a concurrent caller may hold the previously
+	// published struct from a result() snapshot and be marshaling it.
+	fields := make(map[string]*structpb.Value, len(oa.Rv.GetFields())+1)
+	for k, v := range oa.Rv.GetFields() {
+		fields[k] = v
 	}
-	if oa.Rv.Fields == nil {
-		oa.Rv.Fields = make(map[string]*structpb.Value)
-	}
-	oa.Rv.Fields["error"] = &structpb.Value{
+	fields["error"] = &structpb.Value{
 		Kind: &structpb.Value_StringValue{
 			StringValue: err.Error(),
 		},
 	}
+	oa.Rv = &structpb.Struct{Fields: fields}
 	oa.Err = err
 }
 
+// SetError records the error and marks the action failed in one critical
+// section, so no snapshot can observe the error with a non-terminal status.
+// A FAILED action may refresh its error payload, but a COMPLETE action stays
+// complete. This is a real handler failure, so it clears any provisional
+// cancellation mark.
 func (oa *OutstandingAction) SetError(ctx context.Context, err error) {
-	oa.setError(ctx, err)
-	oa.SetStatus(ctx, v2.BatonActionStatus_BATON_ACTION_STATUS_FAILED)
+	oa.Lock()
+	defer oa.Unlock()
+	if oa.Status == v2.BatonActionStatus_BATON_ACTION_STATUS_FAILED {
+		oa.setErrorLocked(err)
+		oa.cancelled = false
+		return
+	}
+	if oa.setStatusLocked(ctx, v2.BatonActionStatus_BATON_ACTION_STATUS_FAILED) {
+		oa.setErrorLocked(err)
+	}
 }
 
-const maxOldActions = 1000
+// setCancelled records a cancellation as a provisional failure: unlike other
+// terminal states, the handler's own late outcome replaces it, since the
+// action's side effects can still complete after the request goes away.
+func (oa *OutstandingAction) setCancelled(ctx context.Context, err error) {
+	oa.Lock()
+	defer oa.Unlock()
+	if oa.setStatusLocked(ctx, v2.BatonActionStatus_BATON_ACTION_STATUS_FAILED) {
+		oa.setErrorLocked(err)
+		oa.cancelled = true
+	}
+}
+
+// isProvisional reports whether the action's FAILED status is a provisional
+// cancellation mark that the handler's late outcome may still replace.
+func (oa *OutstandingAction) isProvisional() bool {
+	oa.Lock()
+	defer oa.Unlock()
+	return oa.cancelled
+}
+
+// evictable reports whether the action has reached a state cleanup may
+// remove: terminal, and not a provisional cancellation whose record can
+// still improve.
+func (oa *OutstandingAction) evictable() bool {
+	oa.Lock()
+	defer oa.Unlock()
+	if oa.cancelled {
+		return false
+	}
+	return oa.Status == v2.BatonActionStatus_BATON_ACTION_STATUS_COMPLETE || oa.Status == v2.BatonActionStatus_BATON_ACTION_STATUS_FAILED
+}
+
+// Result returns the action's identity and current outcome. The snapshot is
+// internally consistent; the returned message and annotations are owned by
+// the action and must not be modified.
+func (oa *OutstandingAction) Result() (string, v2.BatonActionStatus, *structpb.Struct, annotations.Annotations) {
+	return oa.result()
+}
+
+// result is the unexported form of Result.
+func (oa *OutstandingAction) result() (string, v2.BatonActionStatus, *structpb.Struct, annotations.Annotations) {
+	oa.Lock()
+	defer oa.Unlock()
+	return oa.Id, oa.Status, oa.Rv, oa.Annos
+}
+
+// setOutcome publishes the handler's result and terminal status in one
+// critical section, so no snapshot observes one without the other. The
+// values are cloned at this publication seam: the handler owns what it
+// returned and may keep mutating it. Terminal statuses are final, with one
+// exception: a cancellation-FAILED status is provisional, and the handler's
+// own outcome — success or failure — replaces it.
+func (oa *OutstandingAction) setOutcome(ctx context.Context, rv *structpb.Struct, annos annotations.Annotations, err error) {
+	if rv != nil {
+		rv = proto.Clone(rv).(*structpb.Struct)
+	}
+	if annos != nil {
+		annosCopy := make(annotations.Annotations, len(annos))
+		for i, a := range annos {
+			if a != nil {
+				annosCopy[i] = proto.Clone(a).(*anypb.Any)
+			}
+		}
+		annos = annosCopy
+	}
+
+	oa.Lock()
+	defer oa.Unlock()
+
+	if err != nil {
+		if oa.Status == v2.BatonActionStatus_BATON_ACTION_STATUS_FAILED || oa.setStatusLocked(ctx, v2.BatonActionStatus_BATON_ACTION_STATUS_FAILED) {
+			oa.Rv = rv
+			oa.Annos = annos
+			oa.setErrorLocked(err)
+			oa.cancelled = false
+		}
+		return
+	}
+
+	if oa.cancelled {
+		// Deliberate cross-terminal replacement: the cancellation was a
+		// transport event, not the action's outcome.
+		ctxzap.Extract(ctx).Debug("replacing provisional cancellation with handler outcome",
+			zap.String("action_id", oa.Id),
+			zap.String("action_name", oa.Name))
+		oa.cancelled = false
+		oa.Status = v2.BatonActionStatus_BATON_ACTION_STATUS_COMPLETE
+		oa.Rv = rv
+		oa.Annos = annos
+		oa.Err = nil
+		return
+	}
+
+	if oa.setStatusLocked(ctx, v2.BatonActionStatus_BATON_ACTION_STATUS_COMPLETE) {
+		oa.Rv = rv
+		oa.Annos = annos
+	}
+}
+
+const (
+	maxOldActions = 1000
+
+	// defaultInlineWait bounds the invoke-time wait when the caller does not
+	// request one.
+	defaultInlineWait = 1 * time.Second
+
+	// maxInlineWait caps the requested wait at the handler context budget:
+	// holding the call open longer than a handler may run is never useful,
+	// and a saturated Duration must not pin the request forever on the
+	// deadline-less contexts service mode and the Lambda transport produce.
+	maxInlineWait = 1 * time.Hour
+)
+
+// clampInlineWait bounds a requested inline wait: non-positive values take
+// the server default and oversized values are capped at maxInlineWait. Not
+// every transport enforces the wire validation rules, so this clamp is the
+// only universal bound.
+func clampInlineWait(inlineWait time.Duration) time.Duration {
+	if inlineWait <= 0 {
+		return defaultInlineWait
+	}
+	if inlineWait > maxInlineWait {
+		return maxInlineWait
+	}
+	return inlineWait
+}
 
 // ActionRegistry provides methods for registering actions.
 // Used by both GlobalActionProvider (global actions) and ResourceActionProvider (resource-scoped actions).
@@ -163,8 +321,7 @@ func (a *ActionManager) CleanupOldActions(ctx context.Context) {
 	count := 0
 	// Delete the oldest actions
 	for i := 0; i < len(actionList)-maxOldActions; i++ {
-		action := actionList[i]
-		if action.Status == v2.BatonActionStatus_BATON_ACTION_STATUS_COMPLETE || action.Status == v2.BatonActionStatus_BATON_ACTION_STATUS_FAILED {
+		if actionList[i].evictable() {
 			count++
 			delete(a.actions, actionList[i].Id)
 		}
@@ -398,7 +555,8 @@ func (a *ActionManager) GetActionStatus(_ context.Context, actionId string) (v2.
 
 	// Don't return oa.Err here because error is for GetActionStatus, not the action itself.
 	// oa.Rv contains any error.
-	return oa.Status, oa.Name, oa.Rv, oa.Annos, nil
+	_, st, rv, annos := oa.result()
+	return st, oa.Name, rv, annos, nil
 }
 
 // InvokeAction invokes an action. If resourceTypeID is set, it invokes a resource-scoped action.
@@ -409,15 +567,41 @@ func (a *ActionManager) InvokeAction(
 	resourceTypeID string,
 	args *structpb.Struct,
 ) (string, v2.BatonActionStatus, *structpb.Struct, annotations.Annotations, error) {
+	return a.InvokeActionWithWait(ctx, name, resourceTypeID, args, 0)
+}
+
+// InvokeActionWithWait is InvokeAction with an explicit bound on how long the
+// call may block waiting for the handler before returning the action's
+// in-flight status; zero or negative keeps the default.
+func (a *ActionManager) InvokeActionWithWait(
+	ctx context.Context,
+	name string,
+	resourceTypeID string,
+	args *structpb.Struct,
+	inlineWait time.Duration,
+) (string, v2.BatonActionStatus, *structpb.Struct, annotations.Annotations, error) {
+	clamped := clampInlineWait(inlineWait)
+	if clamped < inlineWait {
+		ctxzap.Extract(ctx).Warn("capping requested inline wait",
+			zap.Duration("requested", inlineWait),
+			zap.Duration("capped", clamped))
+	}
+	inlineWait = clamped
+
 	if resourceTypeID != "" {
-		return a.invokeResourceAction(ctx, resourceTypeID, name, args)
+		return a.invokeResourceAction(ctx, resourceTypeID, name, args, inlineWait)
 	}
 
-	return a.invokeGlobalAction(ctx, name, args)
+	return a.invokeGlobalAction(ctx, name, args, inlineWait)
 }
 
 // invokeGlobalAction invokes a global (non-resource-scoped) action.
-func (a *ActionManager) invokeGlobalAction(ctx context.Context, name string, args *structpb.Struct) (string, v2.BatonActionStatus, *structpb.Struct, annotations.Annotations, error) {
+func (a *ActionManager) invokeGlobalAction(
+	ctx context.Context,
+	name string,
+	args *structpb.Struct,
+	inlineWait time.Duration,
+) (string, v2.BatonActionStatus, *structpb.Struct, annotations.Annotations, error) {
 	a.mu.RLock()
 	handler, ok := a.handlers[name]
 	schema, schemaOk := a.schemas[name]
@@ -439,9 +623,8 @@ func (a *ActionManager) invokeGlobalAction(ctx context.Context, name string, arg
 
 	done := make(chan struct{})
 
-	// If handler exits within a second, return result.
-	// If handler takes longer than 1 second, return status pending.
-	// If handler takes longer than an hour, return status failed.
+	// The handler runs detached. Return its final result if it finishes
+	// within the inline wait; otherwise return the in-flight status.
 	go func() { // #nosec G118 -- action handlers intentionally outlive the request context and keep only trace/log metadata.
 		defer close(done)
 		defer func() {
@@ -455,25 +638,42 @@ func (a *ActionManager) invokeGlobalAction(ctx context.Context, name string, arg
 		}()
 		oa.SetStatus(ctx, v2.BatonActionStatus_BATON_ACTION_STATUS_RUNNING)
 		bgCtx := trace.ContextWithSpanContext(context.Background(), trace.SpanContextFromContext(ctx))
+		bgCtx = ctxzap.ToContext(bgCtx, ctxzap.Extract(ctx))
 		handlerCtx, cancel := context.WithTimeoutCause(bgCtx, 1*time.Hour, errors.New("action handler timed out"))
 		defer cancel()
-		var oaErr error
-		oa.Rv, oa.Annos, oaErr = handler(handlerCtx, args)
-		if oaErr == nil {
-			oa.SetStatus(ctx, v2.BatonActionStatus_BATON_ACTION_STATUS_COMPLETE)
-		} else {
-			oa.SetError(ctx, oaErr)
-		}
+		rv, annos, oaErr := handler(handlerCtx, args)
+		oa.setOutcome(ctx, rv, annos, oaErr)
 	}()
+
+	// Stop releases the timer deterministically when the handler wins the
+	// select; an abandoned time.After timer would only be GC-eligible.
+	waitTimer := time.NewTimer(inlineWait)
+	defer waitTimer.Stop()
 
 	select {
 	case <-done:
-		return oa.Id, oa.Status, oa.Rv, oa.Annos, nil
-	case <-time.After(1 * time.Second):
-		return oa.Id, oa.Status, oa.Rv, oa.Annos, nil
+		id, st, rv, annos := oa.result()
+		return id, st, rv, annos, nil
+	case <-waitTimer.C:
+		id, st, rv, annos := oa.result()
+		return id, st, rv, annos, nil
 	case <-ctx.Done():
-		oa.SetError(ctx, ctx.Err())
-		return oa.Id, oa.Status, oa.Rv, oa.Annos, ctx.Err()
+		// The handler may have finished in the same instant; prefer its
+		// completed result over a spurious cancellation return.
+		select {
+		case <-done:
+			id, st, rv, annos := oa.result()
+			return id, st, rv, annos, nil
+		default:
+		}
+		oa.setCancelled(ctx, ctx.Err())
+		id, st, rv, annos := oa.result()
+		if st == v2.BatonActionStatus_BATON_ACTION_STATUS_COMPLETE {
+			// The handler won the race to the lock; its completed result is
+			// the authoritative pairing, not the cancellation.
+			return id, st, rv, annos, nil
+		}
+		return id, st, rv, annos, ctx.Err()
 	}
 }
 
@@ -483,6 +683,7 @@ func (a *ActionManager) invokeResourceAction(
 	resourceTypeID string,
 	actionName string,
 	args *structpb.Struct,
+	inlineWait time.Duration,
 ) (string, v2.BatonActionStatus, *structpb.Struct, annotations.Annotations, error) {
 	if resourceTypeID == "" {
 		return "", v2.BatonActionStatus_BATON_ACTION_STATUS_FAILED, nil, nil, status.Error(codes.InvalidArgument, "resource type ID is required")
@@ -547,24 +748,39 @@ func (a *ActionManager) invokeResourceAction(
 		bgCtx = ctxzap.ToContext(bgCtx, ctxzap.Extract(ctx))
 		handlerCtx, cancel := context.WithTimeoutCause(bgCtx, 1*time.Hour, errors.New("action handler timed out"))
 		defer cancel()
-		var oaErr error
-		oa.Rv, oa.Annos, oaErr = handler(handlerCtx, args)
-		if oaErr == nil {
-			oa.SetStatus(ctx, v2.BatonActionStatus_BATON_ACTION_STATUS_COMPLETE)
-		} else {
-			oa.SetError(ctx, oaErr)
-		}
+		rv, annos, oaErr := handler(handlerCtx, args)
+		oa.setOutcome(ctx, rv, annos, oaErr)
 	}()
 
-	// Wait for completion or timeout
+	// Stop releases the timer deterministically when the handler wins the
+	// select; an abandoned time.After timer would only be GC-eligible.
+	waitTimer := time.NewTimer(inlineWait)
+	defer waitTimer.Stop()
+
 	select {
 	case <-done:
-		return oa.Id, oa.Status, oa.Rv, oa.Annos, nil
-	case <-time.After(1 * time.Second):
-		return oa.Id, oa.Status, oa.Rv, oa.Annos, nil
+		id, st, rv, annos := oa.result()
+		return id, st, rv, annos, nil
+	case <-waitTimer.C:
+		id, st, rv, annos := oa.result()
+		return id, st, rv, annos, nil
 	case <-ctx.Done():
-		oa.SetError(ctx, ctx.Err())
-		return oa.Id, oa.Status, oa.Rv, oa.Annos, ctx.Err()
+		// The handler may have finished in the same instant; prefer its
+		// completed result over a spurious cancellation return.
+		select {
+		case <-done:
+			id, st, rv, annos := oa.result()
+			return id, st, rv, annos, nil
+		default:
+		}
+		oa.setCancelled(ctx, ctx.Err())
+		id, st, rv, annos := oa.result()
+		if st == v2.BatonActionStatus_BATON_ACTION_STATUS_COMPLETE {
+			// The handler won the race to the lock; its completed result is
+			// the authoritative pairing, not the cancellation.
+			return id, st, rv, annos, nil
+		}
+		return id, st, rv, annos, ctx.Err()
 	}
 }
 

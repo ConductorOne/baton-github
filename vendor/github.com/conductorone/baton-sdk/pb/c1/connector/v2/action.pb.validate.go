@@ -336,6 +336,37 @@ func (m *InvokeActionRequest) validate(all bool) error {
 
 	// no validation rules for ResourceTypeId
 
+	if d := m.GetInlineWait(); d != nil {
+		dur, err := d.AsDuration(), d.CheckValid()
+		if err != nil {
+			err = InvokeActionRequestValidationError{
+				field:  "InlineWait",
+				reason: "value is not a valid duration",
+				cause:  err,
+			}
+			if !all {
+				return err
+			}
+			errors = append(errors, err)
+		} else {
+
+			lte := time.Duration(86400*time.Second + 0*time.Nanosecond)
+			gte := time.Duration(0*time.Second + 0*time.Nanosecond)
+
+			if dur < gte || dur > lte {
+				err := InvokeActionRequestValidationError{
+					field:  "InlineWait",
+					reason: "value must be inside range [0s, 24h0m0s]",
+				}
+				if !all {
+					return err
+				}
+				errors = append(errors, err)
+			}
+
+		}
+	}
+
 	if len(errors) > 0 {
 		return InvokeActionRequestMultiError(errors)
 	}
