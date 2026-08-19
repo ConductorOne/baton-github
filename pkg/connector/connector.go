@@ -349,8 +349,27 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	}, nil
 }
 
+// appPrivateKeyPEM returns the GitHub App private key PEM contents to use,
+// preferring the in-memory app-privatekey flag over the on-disk
+// app-privatekey-path. Providing either one satisfies the requirement; if
+// neither is set an error is returned.
+func appPrivateKeyPEM(ghc *cfg.Github) (string, error) {
+	if ghc.AppPrivatekey != "" {
+		return ghc.AppPrivatekey, nil
+	}
+	if len(ghc.AppPrivatekeyPath) > 0 {
+		return string(ghc.AppPrivatekeyPath), nil
+	}
+	return "", errors.New("github app authentication requires either --app-privatekey or --app-privatekey-path")
+}
+
 func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
-	jwttoken, err := getJWTToken(ghc.AppId, string(ghc.AppPrivatekeyPath))
+	privateKey, err := appPrivateKeyPEM(ghc)
+	if err != nil {
+		return nil, err
+	}
+
+	jwttoken, err := getJWTToken(ghc.AppId, privateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +401,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		},
 		&appJWTTokenRefresher{
 			appID:      ghc.AppId,
-			privateKey: string(ghc.AppPrivatekeyPath),
+			privateKey: privateKey,
 		},
 	)
 	// Wrap the installation-token refresher in a refreshableTokenSource so the

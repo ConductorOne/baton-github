@@ -40,13 +40,25 @@ var (
 		field.WithRequired(true),
 	)
 
+	// appPrivateKeyPath and appPrivateKey are two ways to supply the same GitHub
+	// App private key. Neither is marked required individually: providing either
+	// one satisfies the "app private key required" check, which is enforced in the
+	// connector's GitHub App constructor (see pkg/connector.appPrivateKeyPEM).
+	// A framework-level constraint can't express "required only for the GitHub App
+	// auth group", since constraints are evaluated globally across auth methods.
 	appPrivateKeyPath = field.FileUploadField(
 		"app-privatekey-path",
 		[]string{".pem"},
 		field.WithDisplayName("GitHub App private key (.pem)"),
-		field.WithDescription("Path to private key that is used to connect to the GitHub App"),
+		field.WithDescription("Path to private key that is used to connect to the GitHub App. Ignored when app-privatekey is set."),
 		field.WithIsSecret(true),
-		field.WithRequired(true),
+	)
+
+	appPrivateKey = field.StringField(
+		"app-privatekey",
+		field.WithDisplayName("GitHub App private key (PEM)"),
+		field.WithDescription("Raw PEM contents of the private key used to connect to the GitHub App. Takes precedence over app-privatekey-path when both are set."),
+		field.WithIsSecret(true),
 	)
 
 	syncSecrets = field.BoolField(
@@ -90,6 +102,7 @@ var Config = field.NewConfiguration(
 		instanceUrlField,
 		appIDField,
 		appPrivateKeyPath,
+		appPrivateKey,
 		orgField,
 		syncSecrets,
 		omitArchivedRepositories,
@@ -110,7 +123,7 @@ var Config = field.NewConfiguration(
 			Name:        GithubAppGroup,
 			DisplayName: "GitHub app",
 			HelpText:    "Use a github app for authentication",
-			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, orgField, syncSecrets, omitArchivedRepositories, directCollaboratorsOnly},
+			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, appPrivateKey, orgField, syncSecrets, omitArchivedRepositories, directCollaboratorsOnly},
 			Default:     false,
 		},
 	}),
