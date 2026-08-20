@@ -387,7 +387,7 @@ stringData:
   # GitHub credentials if configuring with a GitHub app
   BATON_APP_ID: <GitHub app ID>
   # Supply the private key one of two ways:
-  BATON_APP_PRIVATEKEY_PATH: <Path to the private key file for the GitHub app>
+  BATON_APP_PRIVATEKEY_PATH: /etc/baton-github/keys/private-key.pem
   # ...or pass the raw PEM contents directly (takes precedence when both are set):
   # BATON_APP_PRIVATEKEY: <Raw PEM contents of the private key for the GitHub app>
   BATON_ORGS: <Name of the single GitHib org the app was created for>
@@ -401,7 +401,20 @@ stringData:
   # Optional: enable for orgs with thousands of repos or members to reduce sync time.
   # See "Optimize sync for large organizations" below for trade-offs.
   BATON_DIRECT_COLLABORATORS_ONLY: true
+
+---
+# baton-github-app-key-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: baton-github-app-key
+type: Opaque
+stringData:
+  private-key.pem: |
+    <Contents of the GitHub app's private key (.pem) file>
 ```
+
+If you're using `BATON_APP_PRIVATEKEY_PATH`, the private key must be mounted into the container as a file rather than passed as an environment variable. The manifest above stores the key in its own Secret so it can be mounted as a volume in the deployment configuration below. Set `BATON_APP_PRIVATEKEY_PATH` to the path where the key will be mounted. If you use `BATON_APP_PRIVATEKEY` instead, the raw PEM contents are passed directly and no volume mount is needed.
 
 See the connector's README or run `--help` to see all available configuration flags and environment variables.
 
@@ -436,7 +449,17 @@ spec:
         envFrom:
         - secretRef:
             name: baton-github-secrets
+        volumeMounts:
+        - name: github-app-key
+          mountPath: /etc/baton-github/keys
+          readOnly: true
+      volumes:
+      - name: github-app-key
+        secret:
+          secretName: baton-github-app-key
 ```
+
+The `volumeMounts` and `volumes` entries above are only needed if you're configuring the connector with a GitHub app using `BATON_APP_PRIVATEKEY_PATH`. Omit them if you're using an access token or `BATON_APP_PRIVATEKEY` instead.
 
 ### Step 3: Deploy the connector
 
