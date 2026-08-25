@@ -199,6 +199,7 @@ func TestInvitationListPagination(t *testing.T) {
 			pendingCreated1.Add(invitationLifetime).UTC().Format(time.RFC3339),
 			aliceProfile["invitation_expires_at"],
 		)
+		requireInvitationPending(t, byID["1001"], invitationStatusPendingAcceptance)
 
 		// Expired resources carry status=expired and expires_at = failed_at.
 		daveProfile := invitationProfile(t, byID["2001"])
@@ -207,6 +208,9 @@ func TestInvitationListPagination(t *testing.T) {
 			expiredFailedAt1.UTC().Format(time.RFC3339),
 			daveProfile["invitation_expires_at"],
 		)
+		// An expired invitation is still not a usable account, so it stays
+		// PENDING at both levels; only the details distinguish it.
+		requireInvitationPending(t, byID["2001"], invitationStatusExpired)
 	})
 
 	t.Run("pending 404 falls through to failed", func(t *testing.T) {
@@ -222,6 +226,7 @@ func TestInvitationListPagination(t *testing.T) {
 		require.Equal(t, "2001", got[0].Id.Resource)
 		require.Equal(t, invitationStatusExpired,
 			invitationProfile(t, got[0])["invitation_status"])
+		requireInvitationPending(t, got[0], invitationStatusExpired)
 	})
 
 	t.Run("failed 404 terminates cleanly", func(t *testing.T) {
@@ -236,6 +241,7 @@ func TestInvitationListPagination(t *testing.T) {
 		require.Len(t, got, 2)
 		require.Equal(t, invitationStatusPendingAcceptance,
 			invitationProfile(t, got[0])["invitation_status"])
+		requireInvitationPending(t, got[0], invitationStatusPendingAcceptance)
 	})
 
 	t.Run("both endpoints empty terminates without API errors", func(t *testing.T) {
@@ -261,4 +267,22 @@ func invitationProfile(t *testing.T, r *v2.Resource) map[string]any {
 	profile := resourceSdk.GetProfile(r)
 	require.NotNil(t, profile)
 	return profile.AsMap()
+}
+
+// requireInvitationPending asserts that an invitation resource reports PENDING
+// at both the resource level and the (deprecated) user-trait level, with
+// details naming which flavor of pending it is.
+func requireInvitationPending(t *testing.T, r *v2.Resource, wantDetails string) {
+	t.Helper()
+
+	require.Equal(t, v2.Status_RESOURCE_STATUS_PENDING, r.GetStatus().GetStatus())
+	require.Equal(t, wantDetails, r.GetStatus().GetDetails())
+
+	ut, err := resourceSdk.GetUserTrait(r)
+	require.NoError(t, err)
+	require.NotNil(t, ut)
+	//nolint:staticcheck // asserting the deprecated trait status is the point of this check.
+	require.Equal(t, v2.UserTrait_Status_STATUS_PENDING, ut.GetStatus().GetStatus())
+	//nolint:staticcheck // asserting the deprecated trait status is the point of this check.
+	require.Equal(t, wantDetails, ut.GetStatus().GetDetails())
 }

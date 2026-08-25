@@ -64,19 +64,17 @@ func invitationToUserResource(invitation *github.Invitation, status string) (*v2
 		invitation.GetID(),
 		[]resourceSdk.UserTraitOption{
 			resourceSdk.WithEmail(invitation.GetEmail(), true),
-			// An invitation is a pending/expired user that must not be
-			// reported as enabled. WithResourceStatus cannot express this:
-			// NewUserTrait force-defaults an unset trait status to ENABLED, so
-			// migrating this line would flip the emitted status from
-			// UNSPECIFIED to ENABLED. Keep the deprecated trait option (which
-			// also mirrors UNSPECIFIED to the resource level) to preserve the
-			// exact status semantics.
-			//nolint:staticcheck // deliberate: WithResourceStatus would force the trait status to ENABLED; UNSPECIFIED must be preserved for invitations.
-			resourceSdk.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED),
+			// Set explicitly: NewUserTrait defaults an unset trait status to
+			// ENABLED, which an unaccepted invitation is not.
+			//nolint:staticcheck // trait status is deprecated but must be set to override the ENABLED default.
+			resourceSdk.WithDetailedStatus(v2.UserTrait_Status_STATUS_PENDING, status),
 			resourceSdk.WithUserLogin(login),
 		},
-		// profile has moved from UserTrait to a Resource-level attribute.
+		// profile and status have moved from UserTrait to Resource-level
+		// attributes. Expired invitations stay PENDING - they are still not a
+		// usable account - and carry the distinction in the status details.
 		resourceSdk.WithResourceProfile(profile),
+		resourceSdk.WithResourceStatus(v2.Status_RESOURCE_STATUS_PENDING, status),
 	)
 	if err != nil {
 		return nil, err

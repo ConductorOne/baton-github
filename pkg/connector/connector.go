@@ -68,7 +68,7 @@ var (
 	resourceTypeInvitation = &v2.ResourceType{
 		Id:          "invitation",
 		DisplayName: "Invitation",
-		// Invitations emit TRAIT_USER with UserTrait_Status_STATUS_UNSPECIFIED.
+		// Invitations emit TRAIT_USER with STATUS_PENDING.
 		// Accepted members from user.go emit STATUS_ENABLED.
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_USER,
