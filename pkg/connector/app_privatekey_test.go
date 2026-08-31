@@ -1,6 +1,11 @@
 package connector
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"strings"
 	"testing"
 
 	cfg "github.com/conductorone/baton-github/pkg/config"
@@ -36,6 +41,36 @@ func TestAppPrivateKeyPEM(t *testing.T) {
 
 	t.Run("errors when neither is set", func(t *testing.T) {
 		_, err := appPrivateKeyPEM(&cfg.Github{})
+		require.Error(t, err)
+	})
+}
+
+func TestLoadPrivateKeyFromString(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	der := x509.MarshalPKCS1PrivateKey(key)
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: der})
+	realNewlines := string(pemBytes)
+
+	shapes := map[string]string{
+		"real newlines":                              realNewlines,
+		"real CRLF":                                   strings.ReplaceAll(realNewlines, "\n", "\r\n"),
+		"backslash-n escaped, as the docs instruct":   strings.ReplaceAll(realNewlines, "\n", `\n`),
+		"backslash-n escaped, trailing space":         strings.ReplaceAll(realNewlines, "\n", `\n`) + " ",
+		"backslash-r-backslash-n escaped (CRLF file)": strings.ReplaceAll(realNewlines, "\n", `\r\n`),
+		"backslash-r escaped (CR-only file)":          strings.ReplaceAll(realNewlines, "\n", `\r`),
+	}
+
+	for name, shape := range shapes {
+		t.Run("parses a PEM with "+name, func(t *testing.T) {
+			got, err := loadPrivateKeyFromString(shape)
+			require.NoError(t, err)
+			require.Equal(t, key.D, got.D)
+		})
+	}
+
+	t.Run("errors on garbage input", func(t *testing.T) {
+		_, err := loadPrivateKeyFromString("not a pem")
 		require.Error(t, err)
 	})
 }

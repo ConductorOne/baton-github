@@ -301,7 +301,9 @@ If you're using a GitHub app to set up the connector:
 
    1. Enter your app ID into the **GitHub app ID** field.
 
-   1. Click **Choose file** and upload your private key file.
+   1. Provide the GitHub App's private key one of two ways:
+      - Click **Choose file** and upload your private key (`.pem`) file, or
+      - Paste the key's raw PEM contents into the **GitHub App private key (PEM)** field. Because this field only accepts a single line of text, replace every line break in the PEM with a literal `\n` (backslash, then the letter `n`) before pasting it in — the connector unescapes these back into real line breaks. If both fields are filled in, the pasted **GitHub App private key (PEM)** value takes precedence.
 
    1. In the **Organization** field, enter the name of the GitHub organization associated with the GitHub app. **You must enter a single organization name in this field or the connector configuration will fail.**
 

@@ -484,7 +484,12 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.T
 	return githubv4.NewClient(tc), nil
 }
 
+// escapedLineBreaks unescapes LF-, CRLF-, and CR-escaped line breaks (`\r\n`,
+// `\n`, `\r`) to a real newline.
+var escapedLineBreaks = strings.NewReplacer(`\r\n`, "\n", `\n`, "\n", `\r`, "\n")
+
 func loadPrivateKeyFromString(p string) (*rsa.PrivateKey, error) {
+	p = escapedLineBreaks.Replace(p)
 	block, _ := pem.Decode([]byte(p))
 	if block == nil || (block.Type != "PRIVATE KEY" && block.Type != "RSA PRIVATE KEY") {
 		return nil, errors.New("invalid private key PEM format")
