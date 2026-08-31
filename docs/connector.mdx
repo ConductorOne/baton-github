@@ -214,6 +214,13 @@ Scroll down to the **Private keys** section of the app's page and click **Genera
 </Step>
 <Step>
 Carefully save the private key file.
+
+   The connector accepts a PEM-encoded **RSA** private key in either format, so no conversion is needed:
+
+   - **PKCS#1** — header line `-----BEGIN RSA PRIVATE KEY-----`, which is what **Generate a private key** produces
+   - **PKCS#8** — header line `-----BEGIN PRIVATE KEY-----`, which is what OpenSSL 3.0+ produces by default
+
+   When you configure the connector, you can supply either the key file itself or the PEM contents of that file.
 </Step>
 <Step>
 Finally, install the new app on your GitHub organization. Navigate to **Developer Settings** > **GitHub Apps**.
