@@ -74,7 +74,7 @@ Available Commands:
 
 Flags:
       --app-id string                                    The GitHub App to connect to. ($BATON_APP_ID)
-      --app-privatekey string                            Raw PEM contents of the private key used to connect to the GitHub App. Takes precedence over app-privatekey-path when both are set. Since this field cannot hold newlines when entered through a form, literal \n escape sequences are also accepted and unescaped before use. ($BATON_APP_PRIVATEKEY)
+      --app-privatekey string                            Raw PEM contents of the private key used to connect to the GitHub App. Takes precedence over app-privatekey-path when both are set. Literal \n escape sequences are also accepted and unescaped before use, since this field can't hold newlines when entered through a form. ($BATON_APP_PRIVATEKEY)
       --app-privatekey-path string                       Path to private key that is used to connect to the GitHub App. Ignored when app-privatekey is set. ($BATON_APP_PRIVATEKEY_PATH)
       --client-id string                                 The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
       --client-secret string                             The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
