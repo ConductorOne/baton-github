@@ -40,11 +40,18 @@ const (
 type SyncType int32
 
 const (
-	SyncType_SYNC_TYPE_UNSPECIFIED       SyncType = 0
-	SyncType_SYNC_TYPE_FULL              SyncType = 1
-	SyncType_SYNC_TYPE_PARTIAL           SyncType = 2
-	SyncType_SYNC_TYPE_RESOURCES_ONLY    SyncType = 3
-	SyncType_SYNC_TYPE_PARTIAL_UPSERTS   SyncType = 4
+	SyncType_SYNC_TYPE_UNSPECIFIED    SyncType = 0
+	SyncType_SYNC_TYPE_FULL           SyncType = 1
+	SyncType_SYNC_TYPE_PARTIAL        SyncType = 2
+	SyncType_SYNC_TYPE_RESOURCES_ONLY SyncType = 3
+	// Deprecated: 4 and 5 were the diff-sync pair; diff-sync support was
+	// removed and nothing produces or consumes them. Kept (rather than
+	// reserved) so the buf breaking policy can keep forbidding enum value
+	// deletion repo-wide.
+	//
+	// Deprecated: Marked as deprecated in c1/storage/v3/records.proto.
+	SyncType_SYNC_TYPE_PARTIAL_UPSERTS SyncType = 4
+	// Deprecated: Marked as deprecated in c1/storage/v3/records.proto.
 	SyncType_SYNC_TYPE_PARTIAL_DELETIONS SyncType = 5
 )
 
@@ -97,6 +104,7 @@ const (
 	StatusRecord_RESOURCE_STATUS_ENABLED     StatusRecord_ResourceStatus = 1
 	StatusRecord_RESOURCE_STATUS_DISABLED    StatusRecord_ResourceStatus = 2
 	StatusRecord_RESOURCE_STATUS_DELETED     StatusRecord_ResourceStatus = 3
+	StatusRecord_RESOURCE_STATUS_PENDING     StatusRecord_ResourceStatus = 4
 )
 
 // Enum value maps for StatusRecord_ResourceStatus.
@@ -106,12 +114,14 @@ var (
 		1: "RESOURCE_STATUS_ENABLED",
 		2: "RESOURCE_STATUS_DISABLED",
 		3: "RESOURCE_STATUS_DELETED",
+		4: "RESOURCE_STATUS_PENDING",
 	}
 	StatusRecord_ResourceStatus_value = map[string]int32{
 		"RESOURCE_STATUS_UNSPECIFIED": 0,
 		"RESOURCE_STATUS_ENABLED":     1,
 		"RESOURCE_STATUS_DISABLED":    2,
 		"RESOURCE_STATUS_DELETED":     3,
+		"RESOURCE_STATUS_PENDING":     4,
 	}
 )
 
@@ -1471,8 +1481,11 @@ type SyncRunRecord struct {
 	StartedAt    *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	EndedAt      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=ended_at,json=endedAt,proto3" json:"ended_at,omitempty"`
 	SyncToken    string                 `protobuf:"bytes,6,opt,name=sync_token,json=syncToken,proto3" json:"sync_token,omitempty"`
-	SupportsDiff bool                   `protobuf:"varint,7,opt,name=supports_diff,json=supportsDiff,proto3" json:"supports_diff,omitempty"`
-	LinkedSyncId string                 `protobuf:"bytes,8,opt,name=linked_sync_id,json=linkedSyncId,proto3" json:"linked_sync_id,omitempty"`
+	// supports_diff marks a sync whose data collection completed with
+	// SQL-layer grant metadata populated. The name is historical (it once
+	// gated diff-sync generation, since removed); today it gates
+	// `baton rollback-expansion`.
+	SupportsDiff bool `protobuf:"varint,7,opt,name=supports_diff,json=supportsDiff,proto3" json:"supports_diff,omitempty"`
 	// compacted marks a sync produced by compaction (fold or rebuild)
 	// rather than by a real connector run. Compacted artifacts are
 	// keep-newer UPSERT merges — base rows a newer input deleted survive —
@@ -1577,13 +1590,6 @@ func (x *SyncRunRecord) GetSupportsDiff() bool {
 	return false
 }
 
-func (x *SyncRunRecord) GetLinkedSyncId() string {
-	if x != nil {
-		return x.LinkedSyncId
-	}
-	return ""
-}
-
 func (x *SyncRunRecord) GetCompacted() bool {
 	if x != nil {
 		return x.Compacted
@@ -1640,10 +1646,6 @@ func (x *SyncRunRecord) SetSupportsDiff(v bool) {
 	x.SupportsDiff = v
 }
 
-func (x *SyncRunRecord) SetLinkedSyncId(v string) {
-	x.LinkedSyncId = v
-}
-
 func (x *SyncRunRecord) SetCompacted(v bool) {
 	x.Compacted = v
 }
@@ -1691,8 +1693,11 @@ type SyncRunRecord_builder struct {
 	StartedAt    *timestamppb.Timestamp
 	EndedAt      *timestamppb.Timestamp
 	SyncToken    string
+	// supports_diff marks a sync whose data collection completed with
+	// SQL-layer grant metadata populated. The name is historical (it once
+	// gated diff-sync generation, since removed); today it gates
+	// `baton rollback-expansion`.
 	SupportsDiff bool
-	LinkedSyncId string
 	// compacted marks a sync produced by compaction (fold or rebuild)
 	// rather than by a real connector run. Compacted artifacts are
 	// keep-newer UPSERT merges — base rows a newer input deleted survive —
@@ -1732,7 +1737,6 @@ func (b0 SyncRunRecord_builder) Build() *SyncRunRecord {
 	x.EndedAt = b.EndedAt
 	x.SyncToken = b.SyncToken
 	x.SupportsDiff = b.SupportsDiff
-	x.LinkedSyncId = b.LinkedSyncId
 	x.Compacted = b.Compacted
 	x.IngestInvariantGeneration = b.IngestInvariantGeneration
 	x.IngestInvariantCoverage = b.IngestInvariantCoverage
@@ -2464,7 +2468,18 @@ type SourceCacheEntryRecord struct {
 	// invalidated entry as a miss (the scope re-fetches cold and converges
 	// with a cold sync); the entry itself is kept so the scope's surviving
 	// stamped rows do not read as an I6 orphan (lost manifest write).
-	Invalidated   bool `protobuf:"varint,5,opt,name=invalidated,proto3" json:"invalidated,omitempty"`
+	Invalidated bool `protobuf:"varint,5,opt,name=invalidated,proto3" json:"invalidated,omitempty"`
+	// Number of primary rows stamped with this scope at seal time,
+	// recomputed by EndSync from the primary keyspace (never maintained
+	// incrementally). Replay preflight requires the scope's index
+	// cardinality to equal this count before mutating the destination;
+	// a replay-eligible entry WITHOUT a count is a hard preflight error
+	// (seal-invariant violation — CO-004 shipped with the manifest format,
+	// so no counting-free artifact population exists). Presence is
+	// explicit so zero remains distinguishable from absent: zero means a
+	// proven empty scope. Cleared when a completed sync is rebound for
+	// mutation and recomputed when it reseals.
+	RowCount      *uint64 `protobuf:"varint,6,opt,name=row_count,json=rowCount,proto3,oneof" json:"row_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2529,6 +2544,13 @@ func (x *SourceCacheEntryRecord) GetInvalidated() bool {
 	return false
 }
 
+func (x *SourceCacheEntryRecord) GetRowCount() uint64 {
+	if x != nil && x.RowCount != nil {
+		return *x.RowCount
+	}
+	return 0
+}
+
 func (x *SourceCacheEntryRecord) SetRowKind(v string) {
 	x.RowKind = v
 }
@@ -2549,6 +2571,10 @@ func (x *SourceCacheEntryRecord) SetInvalidated(v bool) {
 	x.Invalidated = v
 }
 
+func (x *SourceCacheEntryRecord) SetRowCount(v uint64) {
+	x.RowCount = &v
+}
+
 func (x *SourceCacheEntryRecord) HasDiscoveredAt() bool {
 	if x == nil {
 		return false
@@ -2556,8 +2582,19 @@ func (x *SourceCacheEntryRecord) HasDiscoveredAt() bool {
 	return x.DiscoveredAt != nil
 }
 
+func (x *SourceCacheEntryRecord) HasRowCount() bool {
+	if x == nil {
+		return false
+	}
+	return x.RowCount != nil
+}
+
 func (x *SourceCacheEntryRecord) ClearDiscoveredAt() {
 	x.DiscoveredAt = nil
+}
+
+func (x *SourceCacheEntryRecord) ClearRowCount() {
+	x.RowCount = nil
 }
 
 type SourceCacheEntryRecord_builder struct {
@@ -2580,6 +2617,17 @@ type SourceCacheEntryRecord_builder struct {
 	// with a cold sync); the entry itself is kept so the scope's surviving
 	// stamped rows do not read as an I6 orphan (lost manifest write).
 	Invalidated bool
+	// Number of primary rows stamped with this scope at seal time,
+	// recomputed by EndSync from the primary keyspace (never maintained
+	// incrementally). Replay preflight requires the scope's index
+	// cardinality to equal this count before mutating the destination;
+	// a replay-eligible entry WITHOUT a count is a hard preflight error
+	// (seal-invariant violation — CO-004 shipped with the manifest format,
+	// so no counting-free artifact population exists). Presence is
+	// explicit so zero remains distinguishable from absent: zero means a
+	// proven empty scope. Cleared when a completed sync is rebound for
+	// mutation and recomputed when it reseals.
+	RowCount *uint64
 }
 
 func (b0 SourceCacheEntryRecord_builder) Build() *SourceCacheEntryRecord {
@@ -2591,6 +2639,7 @@ func (b0 SourceCacheEntryRecord_builder) Build() *SourceCacheEntryRecord {
 	x.CacheValidator = b.CacheValidator
 	x.DiscoveredAt = b.DiscoveredAt
 	x.Invalidated = b.Invalidated
+	x.RowCount = b.RowCount
 	return m0
 }
 
@@ -2744,15 +2793,16 @@ var File_c1_storage_v3_records_proto protoreflect.FileDescriptor
 
 const file_c1_storage_v3_records_proto_rawDesc = "" +
 	"\n" +
-	"\x1bc1/storage/v3/records.proto\x12\rc1.storage.v3\x1a\x1bc1/storage/v3/options.proto\x1a\x18c1/storage/v3/refs.proto\x1a\x19google/protobuf/any.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf8\x01\n" +
+	"\x1bc1/storage/v3/records.proto\x12\rc1.storage.v3\x1a\x1bc1/storage/v3/options.proto\x1a\x18c1/storage/v3/refs.proto\x1a\x19google/protobuf/any.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x95\x02\n" +
 	"\fStatusRecord\x12B\n" +
 	"\x06status\x18\x01 \x01(\x0e2*.c1.storage.v3.StatusRecord.ResourceStatusR\x06status\x12\x18\n" +
-	"\adetails\x18\x02 \x01(\tR\adetails\"\x89\x01\n" +
+	"\adetails\x18\x02 \x01(\tR\adetails\"\xa6\x01\n" +
 	"\x0eResourceStatus\x12\x1f\n" +
 	"\x1bRESOURCE_STATUS_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17RESOURCE_STATUS_ENABLED\x10\x01\x12\x1c\n" +
 	"\x18RESOURCE_STATUS_DISABLED\x10\x02\x12\x1b\n" +
-	"\x17RESOURCE_STATUS_DELETED\x10\x03\"\x86\x01\n" +
+	"\x17RESOURCE_STATUS_DELETED\x10\x03\x12\x1b\n" +
+	"\x17RESOURCE_STATUS_PENDING\x10\x04\"\x86\x01\n" +
 	"\x15GrantExpandableRecord\x12'\n" +
 	"\x0fentitlement_ids\x18\x01 \x03(\tR\x0eentitlementIds\x12\x18\n" +
 	"\ashallow\x18\x02 \x01(\bR\ashallow\x12*\n" +
@@ -2835,7 +2885,7 @@ const file_c1_storage_v3_records_proto_rawDesc = "" +
 	"\fcontent_type\x18\x03 \x01(\tR\vcontentType\x12\x12\n" +
 	"\x04data\x18\x04 \x01(\fR\x04data\x12?\n" +
 	"\rdiscovered_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\fdiscoveredAt:\"\x82\xf9+\x1e\n" +
-	"\x06assets\x12\async_id\x12\vexternal_id\"\xbf\x04\n" +
+	"\x06assets\x12\async_id\x12\vexternal_id\"\xaf\x04\n" +
 	"\rSyncRunRecord\x12\x17\n" +
 	"\async_id\x18\x01 \x01(\tR\x06syncId\x12+\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x17.c1.storage.v3.SyncTypeR\x04type\x12$\n" +
@@ -2845,14 +2895,13 @@ const file_c1_storage_v3_records_proto_rawDesc = "" +
 	"\bended_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\x12\x1d\n" +
 	"\n" +
 	"sync_token\x18\x06 \x01(\tR\tsyncToken\x12#\n" +
-	"\rsupports_diff\x18\a \x01(\bR\fsupportsDiff\x12$\n" +
-	"\x0elinked_sync_id\x18\b \x01(\tR\flinkedSyncId\x12\x1c\n" +
+	"\rsupports_diff\x18\a \x01(\bR\fsupportsDiff\x12\x1c\n" +
 	"\tcompacted\x18\t \x01(\bR\tcompacted\x12>\n" +
 	"\x1bingest_invariant_generation\x18\n" +
 	" \x01(\tR\x19ingestInvariantGeneration\x12:\n" +
 	"\x19ingest_invariant_coverage\x18\v \x03(\tR\x17ingestInvariantCoverage\x122\n" +
 	"\x15ingest_invariant_mode\x18\f \x01(\tR\x13ingestInvariantMode:\x18\x82\xf9+\x14\n" +
-	"\tsync_runs\x12\async_id\"\xfe\v\n" +
+	"\tsync_runs\x12\async_idJ\x04\b\b\x10\tR\x0elinked_sync_id\"\xfe\v\n" +
 	"\x0fSyncStatsRecord\x12\x17\n" +
 	"\async_id\x18\x01 \x01(\tR\x06syncId\x12%\n" +
 	"\x0eresource_types\x18\x02 \x01(\x03R\rresourceTypes\x12\x1c\n" +
@@ -2910,28 +2959,31 @@ const file_c1_storage_v3_records_proto_rawDesc = "" +
 	"\async_id\x18\x01 \x01(\tR\x06syncId\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x03 \x01(\fR\x05value:\x1c\x82\xf9+\x18\n" +
-	"\bsessions\x12\async_id\x12\x03key\"\x8d\x02\n" +
+	"\bsessions\x12\async_id\x12\x03key\"\xbd\x02\n" +
 	"\x16SourceCacheEntryRecord\x12\x19\n" +
 	"\brow_kind\x18\x01 \x01(\tR\arowKind\x12\x1b\n" +
 	"\tscope_key\x18\x02 \x01(\tR\bscopeKey\x12'\n" +
 	"\x0fcache_validator\x18\x03 \x01(\tR\x0ecacheValidator\x12?\n" +
 	"\rdiscovered_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\fdiscoveredAt\x12 \n" +
-	"\vinvalidated\x18\x05 \x01(\bR\vinvalidated:/\x82\xf9++\n" +
-	"\x14source_cache_entries\x12\brow_kind\x12\tscope_key\"\xcc\x02\n" +
+	"\vinvalidated\x18\x05 \x01(\bR\vinvalidated\x12 \n" +
+	"\trow_count\x18\x06 \x01(\x04H\x00R\browCount\x88\x01\x01:/\x82\xf9++\n" +
+	"\x14source_cache_entries\x12\brow_kind\x12\tscope_keyB\f\n" +
+	"\n" +
+	"_row_count\"\xcc\x02\n" +
 	"\x17SourceCacheCompatRecord\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12<\n" +
 	"\x1aconnector_cache_generation\x18\x02 \x01(\tR\x18connectorCacheGeneration\x12@\n" +
 	"\x1cconnector_config_fingerprint\x18\x03 \x01(\tR\x1aconnectorConfigFingerprint\x12D\n" +
 	"\x1esdk_materialization_generation\x18\x04 \x01(\tR\x1csdkMaterializationGeneration\x12<\n" +
 	"\x1async_selection_fingerprint\x18\x05 \x01(\tR\x18syncSelectionFingerprint:\x1d\x82\xf9+\x19\n" +
-	"\x13source_cache_compat\x12\x02id*\xae\x01\n" +
+	"\x13source_cache_compat\x12\x02id*\xb6\x01\n" +
 	"\bSyncType\x12\x19\n" +
 	"\x15SYNC_TYPE_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSYNC_TYPE_FULL\x10\x01\x12\x15\n" +
 	"\x11SYNC_TYPE_PARTIAL\x10\x02\x12\x1c\n" +
-	"\x18SYNC_TYPE_RESOURCES_ONLY\x10\x03\x12\x1d\n" +
-	"\x19SYNC_TYPE_PARTIAL_UPSERTS\x10\x04\x12\x1f\n" +
-	"\x1bSYNC_TYPE_PARTIAL_DELETIONS\x10\x05B4Z2github.com/conductorone/baton-sdk/pb/c1/storage/v3b\x06proto3"
+	"\x18SYNC_TYPE_RESOURCES_ONLY\x10\x03\x12!\n" +
+	"\x19SYNC_TYPE_PARTIAL_UPSERTS\x10\x04\x1a\x02\b\x01\x12#\n" +
+	"\x1bSYNC_TYPE_PARTIAL_DELETIONS\x10\x05\x1a\x02\b\x01B4Z2github.com/conductorone/baton-sdk/pb/c1/storage/v3b\x06proto3"
 
 var file_c1_storage_v3_records_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_c1_storage_v3_records_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
@@ -3016,6 +3068,7 @@ func file_c1_storage_v3_records_proto_init() {
 	}
 	file_c1_storage_v3_options_proto_init()
 	file_c1_storage_v3_refs_proto_init()
+	file_c1_storage_v3_records_proto_msgTypes[13].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

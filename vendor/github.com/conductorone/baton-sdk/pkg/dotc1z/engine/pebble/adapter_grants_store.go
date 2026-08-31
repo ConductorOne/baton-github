@@ -17,7 +17,7 @@ import (
 
 // Grants returns the GrantStore implementation backed by the Pebble
 // adapter. Implements c1zstore.Store.Grants(); used by the
-// expander, the c1-side fileClientWrapper, and the differ.
+// expander and the c1-side fileClientWrapper.
 //
 // needs_expansion is populated at PutGrants time: V2GrantToV3 extracts
 // the GrantExpandable annotation and sets NeedsExpansion, which keys the
@@ -220,6 +220,10 @@ func (g pebbleGrantStore) translateExpanded(syncID string, grants []*v2.Grant) [
 		// because the caller left a residual GrantExpandable annotation.
 		newRec.SetExpansion(nil)
 		newRec.SetNeedsExpansion(false)
+		// Existing direct grants recover their prior stamp in
+		// PutExpandedGrantRecords; brand-new expander-derived rows never
+		// belong to a connector source scope.
+		newRec.SetSourceScopeKey("")
 		merged = append(merged, newRec)
 	}
 	return merged

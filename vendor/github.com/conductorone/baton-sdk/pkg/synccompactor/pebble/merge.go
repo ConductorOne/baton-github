@@ -231,9 +231,9 @@ const mergeRawFlushRecords = 32768
 //     newer wins, replacing the value and swapping the incumbent's
 //     derived index keys for the new value's (point deletes
 //     proportional to overridden records only). Ties keep the
-//     incumbent, mirroring the engine's Put*RecordsIfNewer rule —
-//     missing discovered_at scans as 0, reproducing its nil-timestamp
-//     ordering ("never overwrite an incumbent, always fill a hole").
+//     incumbent — missing discovered_at scans as 0, giving
+//     nil-timestamp ordering ("never overwrite an incumbent, always
+//     fill a hole").
 func mergeOneSource(ctx context.Context, dest *enginepkg.Engine, s SourceSync, destSyncID string, collectGrantEntitlementIDs bool) (FoldStats, error) {
 	var stats FoldStats
 	for _, bucket := range allBuckets() {
@@ -247,6 +247,17 @@ func mergeOneSource(ctx context.Context, dest *enginepkg.Engine, s SourceSync, d
 }
 
 func mergeBucketRawIfNewer(ctx context.Context, dest *enginepkg.Engine, src *enginepkg.Engine, bucket bucketSpec, collectGrantEntitlementIDs bool) (FoldStats, error) {
+	return mergeBucketRawIfNewerWithCommitFailure(ctx, dest, src, bucket, collectGrantEntitlementIDs, nil)
+}
+
+func mergeBucketRawIfNewerWithCommitFailure(
+	ctx context.Context,
+	dest *enginepkg.Engine,
+	src *enginepkg.Engine,
+	bucket bucketSpec,
+	collectGrantEntitlementIDs bool,
+	beforeCommit foldCommitFailure,
+) (FoldStats, error) {
 	var stats FoldStats
 	lower, upper := bucket.syncRange()
 	iter, err := src.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
@@ -274,7 +285,7 @@ func mergeBucketRawIfNewer(ctx context.Context, dest *enginepkg.Engine, src *eng
 		}
 		// NoSync: the fold's envelope save checkpoints (which flushes
 		// and fsyncs) before anything depends on these writes.
-		if err := batch.Commit(pebble.NoSync); err != nil {
+		if err := commitFoldBatch(batch, pebble.NoSync, beforeCommit); err != nil {
 			return err
 		}
 		_ = batch.Close()
