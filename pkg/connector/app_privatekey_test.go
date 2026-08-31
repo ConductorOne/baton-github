@@ -52,25 +52,25 @@ func TestLoadPrivateKeyFromString(t *testing.T) {
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: der})
 	realNewlines := string(pemBytes)
 
-	t.Run("parses a PEM with real newlines", func(t *testing.T) {
-		got, err := loadPrivateKeyFromString(realNewlines)
-		require.NoError(t, err)
-		require.Equal(t, key.D, got.D)
-	})
+	shapes := map[string]string{
+		"real newlines":                              realNewlines,
+		"real CRLF":                                   strings.ReplaceAll(realNewlines, "\n", "\r\n"),
+		"backslash-n escaped, as the docs instruct":   strings.ReplaceAll(realNewlines, "\n", `\n`),
+		"backslash-n escaped, trailing space":         strings.ReplaceAll(realNewlines, "\n", `\n`) + " ",
+		"backslash-n escaped, leading space":          " " + strings.ReplaceAll(realNewlines, "\n", `\n`),
+		"backslash-r-backslash-n escaped (CRLF file)": strings.ReplaceAll(realNewlines, "\n", `\r\n`),
+		"backslash-r escaped (CR-only file)":          strings.ReplaceAll(realNewlines, "\n", `\r`),
+		"newlines stripped, all one line":             strings.ReplaceAll(realNewlines, "\n", ""),
+		"newlines replaced by spaces":                 strings.ReplaceAll(realNewlines, "\n", " "),
+	}
 
-	t.Run("parses a PEM with literal backslash-n escapes, as a single-line config form field would submit", func(t *testing.T) {
-		escaped := strings.ReplaceAll(realNewlines, "\n", `\n`)
-		got, err := loadPrivateKeyFromString(escaped)
-		require.NoError(t, err)
-		require.Equal(t, key.D, got.D)
-	})
-
-	t.Run("parses a PEM with literal backslash-r-backslash-n escapes, as a CRLF-origin file would submit", func(t *testing.T) {
-		escaped := strings.ReplaceAll(realNewlines, "\n", `\r\n`)
-		got, err := loadPrivateKeyFromString(escaped)
-		require.NoError(t, err)
-		require.Equal(t, key.D, got.D)
-	})
+	for name, shape := range shapes {
+		t.Run("parses a PEM with "+name, func(t *testing.T) {
+			got, err := loadPrivateKeyFromString(shape)
+			require.NoError(t, err)
+			require.Equal(t, key.D, got.D)
+		})
+	}
 
 	t.Run("errors on garbage input", func(t *testing.T) {
 		_, err := loadPrivateKeyFromString("not a pem")
