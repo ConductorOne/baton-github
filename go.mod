@@ -3,7 +3,7 @@ module github.com/conductorone/baton-github
 go 1.25.2
 
 require (
-	github.com/conductorone/baton-sdk v0.24.6
+	github.com/conductorone/baton-sdk v0.25.0
 	github.com/deckarep/golang-set/v2 v2.9.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/golang-jwt/jwt/v5 v5.2.2
