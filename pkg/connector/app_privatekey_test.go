@@ -65,6 +65,13 @@ func TestLoadPrivateKeyFromString(t *testing.T) {
 		require.Equal(t, key.D, got.D)
 	})
 
+	t.Run("parses a PEM with literal backslash-r-backslash-n escapes, as a CRLF-origin file would submit", func(t *testing.T) {
+		escaped := strings.ReplaceAll(realNewlines, "\n", `\r\n`)
+		got, err := loadPrivateKeyFromString(escaped)
+		require.NoError(t, err)
+		require.Equal(t, key.D, got.D)
+	})
+
 	t.Run("errors on garbage input", func(t *testing.T) {
 		_, err := loadPrivateKeyFromString("not a pem")
 		require.Error(t, err)
