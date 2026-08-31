@@ -485,11 +485,6 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.T
 }
 
 func loadPrivateKeyFromString(p string) (*rsa.PrivateKey, error) {
-	// The C1 config form renders this field as a single-line input, so an
-	// operator pasting a PEM there can only supply literal "\n" escapes
-	// instead of real newlines. Unescape them before decoding so both the
-	// form-entered and CLI/env-entered shapes parse. Mirrors baton-okta's
-	// parseRSAPrivateKey (pkg/oktaauth/oktaauth.go).
 	p = strings.ReplaceAll(p, `\n`, "\n")
 	block, _ := pem.Decode([]byte(p))
 	if block == nil || (block.Type != "PRIVATE KEY" && block.Type != "RSA PRIVATE KEY") {
