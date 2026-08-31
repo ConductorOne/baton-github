@@ -57,7 +57,7 @@ var (
 	appPrivateKey = field.StringField(
 		"app-privatekey",
 		field.WithDisplayName("GitHub App private key (PEM)"),
-		field.WithDescription("Raw PEM contents of the private key used to connect to the GitHub App. Takes precedence over app-privatekey-path when both are set."),
+		field.WithDescription("Raw PEM contents of the private key used to connect to the GitHub App. Takes precedence over app-privatekey-path when both are set. Since this field cannot hold newlines when entered through a form, literal \\n escape sequences are also accepted and unescaped before use."),
 		field.WithIsSecret(true),
 	)
 
