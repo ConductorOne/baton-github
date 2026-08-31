@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -489,21 +488,8 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.T
 // `\n`, `\r`) to a real newline.
 var escapedLineBreaks = strings.NewReplacer(`\r\n`, "\n", `\n`, "\n", `\r`, "\n")
 
-// pemArmorHead and pemArmorTail put the PEM BEGIN/END armor on its own line
-// regardless of whether the C1 config form's single-line field submitted the
-// PEM with its line breaks escaped, flattened to spaces, or stripped
-// entirely.
-var (
-	pemArmorHead = regexp.MustCompile(`(-----BEGIN [A-Z0-9 ]+-----)[ \t]*`)
-	pemArmorTail = regexp.MustCompile(`[ \t]*(-----END [A-Z0-9 ]+-----)`)
-)
-
 func loadPrivateKeyFromString(p string) (*rsa.PrivateKey, error) {
 	p = escapedLineBreaks.Replace(p)
-	p = strings.TrimSpace(p)
-	p = pemArmorHead.ReplaceAllString(p, "$1\n")
-	p = pemArmorTail.ReplaceAllString(p, "\n$1")
-
 	block, _ := pem.Decode([]byte(p))
 	if block == nil || (block.Type != "PRIVATE KEY" && block.Type != "RSA PRIVATE KEY") {
 		return nil, errors.New("invalid private key PEM format")

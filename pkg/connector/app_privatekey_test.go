@@ -57,11 +57,8 @@ func TestLoadPrivateKeyFromString(t *testing.T) {
 		"real CRLF":                                   strings.ReplaceAll(realNewlines, "\n", "\r\n"),
 		"backslash-n escaped, as the docs instruct":   strings.ReplaceAll(realNewlines, "\n", `\n`),
 		"backslash-n escaped, trailing space":         strings.ReplaceAll(realNewlines, "\n", `\n`) + " ",
-		"backslash-n escaped, leading space":          " " + strings.ReplaceAll(realNewlines, "\n", `\n`),
 		"backslash-r-backslash-n escaped (CRLF file)": strings.ReplaceAll(realNewlines, "\n", `\r\n`),
 		"backslash-r escaped (CR-only file)":          strings.ReplaceAll(realNewlines, "\n", `\r`),
-		"newlines stripped, all one line":             strings.ReplaceAll(realNewlines, "\n", ""),
-		"newlines replaced by spaces":                 strings.ReplaceAll(realNewlines, "\n", " "),
 	}
 
 	for name, shape := range shapes {
