@@ -278,11 +278,16 @@ func requireInvitationPending(t *testing.T, r *v2.Resource, wantDetails string) 
 	require.Equal(t, v2.Status_RESOURCE_STATUS_PENDING, r.GetStatus().GetStatus())
 	require.Equal(t, wantDetails, r.GetStatus().GetDetails())
 
+	// Consumers resolve status resource-first via GetStatus; the trait-level
+	// status is left to NewUserTrait's ENABLED force-default and must not be
+	// read directly.
+	resolved := resourceSdk.GetStatus(r)
+	require.Equal(t, v2.Status_RESOURCE_STATUS_PENDING, resolved.GetStatus())
+	require.Equal(t, wantDetails, resolved.GetDetails())
+
 	ut, err := resourceSdk.GetUserTrait(r)
 	require.NoError(t, err)
 	require.NotNil(t, ut)
-	//nolint:staticcheck // asserting the deprecated trait status is the point of this check.
-	require.Equal(t, v2.UserTrait_Status_STATUS_PENDING, ut.GetStatus().GetStatus())
-	//nolint:staticcheck // asserting the deprecated trait status is the point of this check.
-	require.Equal(t, wantDetails, ut.GetStatus().GetDetails())
+	//nolint:staticcheck // pins the known force-default artifact so a change to it is caught.
+	require.Equal(t, v2.UserTrait_Status_STATUS_ENABLED, ut.GetStatus().GetStatus())
 }

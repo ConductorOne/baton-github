@@ -64,10 +64,6 @@ func invitationToUserResource(invitation *github.Invitation, status string) (*v2
 		invitation.GetID(),
 		[]resourceSdk.UserTraitOption{
 			resourceSdk.WithEmail(invitation.GetEmail(), true),
-			// Set explicitly: NewUserTrait defaults an unset trait status to
-			// ENABLED, which an unaccepted invitation is not.
-			//nolint:staticcheck // trait status is deprecated but must be set to override the ENABLED default.
-			resourceSdk.WithDetailedStatus(v2.UserTrait_Status_STATUS_PENDING, status),
 			resourceSdk.WithUserLogin(login),
 		},
 		// profile and status have moved from UserTrait to Resource-level
