@@ -231,6 +231,13 @@ func (o *teamResourceType) Grants(ctx context.Context, resource *v2.Resource, op
 					Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), rId),
 				}),
 			))
+			if rId == teamRoleMaintainer {
+				rv = append(rv, grant.NewGrant(resource, teamRoleMember, ur.Id,
+					grant.WithAnnotation(&v2.V1Identifier{
+						Id: fmt.Sprintf("team-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), teamRoleMember),
+					}),
+				))
+			}
 		}
 	default:
 		ctxzap.Extract(ctx).Warn("Unknown GitHub Role Name",
