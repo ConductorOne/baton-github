@@ -305,6 +305,12 @@ If you're using a GitHub app to set up the connector:
       - Click **Choose file** and upload your private key (`.pem`) file, or
       - Paste the key's raw PEM contents into the **GitHub App private key (PEM)** field. Because this field only accepts a single line of text, replace every line break in the PEM with a literal `\n` (backslash, then the letter `n`) before pasting it in — the connector unescapes these back into real line breaks. If both fields are filled in, the pasted **GitHub App private key (PEM)** value takes precedence.
 
+        Pasting the file's contents unchanged does not work: the browser replaces the line breaks with spaces, and the connector rejects the value with `invalid private key PEM format`. Run this to produce the single-line form, then paste the result:
+
+        ```bash
+        awk '{printf "%s\\n", $0}' your-private-key.pem
+        ```
+
    1. In the **Organization** field, enter the name of the GitHub organization associated with the GitHub app. **You must enter a single organization name in this field or the connector configuration will fail.**
 
    1. **Optional.** Click to enable **Sync secrets**. [Synced secrets](/product/admin/inventory) are displayed on the **Inventory** page.
