@@ -91,6 +91,18 @@ var (
 		field.WithDescription("Organization of your github app"),
 		field.WithRequired(true),
 	)
+
+	// syncLastActivity is hidden from this connector's GUI config and --help
+	// since it only applies to GitHub Enterprise audit-log access.
+	// baton-github-enterprise sets it directly on the shared Github struct,
+	// bypassing this CLI layer, so hiding it here doesn't affect that connector.
+	syncLastActivity = field.BoolField(
+		"sync-last-activity",
+		field.WithDisplayName("Sync users last activity"),
+		field.WithDescription("See when members were last active in your organizations."),
+		field.WithHidden(true),
+		field.WithExportTarget(field.ExportTargetCLIOnly),
+	)
 )
 
 //go:generate go run ./gen
@@ -107,6 +119,7 @@ var Config = field.NewConfiguration(
 		syncSecrets,
 		omitArchivedRepositories,
 		directCollaboratorsOnly,
+		syncLastActivity,
 	},
 	field.WithConnectorDisplayName("GitHub v2"),
 	field.WithHelpUrl("/docs/baton/github-v2"),
