@@ -217,7 +217,7 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 		}
 	}
 
-	adminFound := false
+	firstAdminOrg := ""
 	for _, o := range orgLogins {
 		membership, _, err := gh.client.Organizations.GetOrgMembership(ctx, "", o)
 		if err != nil {
@@ -237,12 +237,18 @@ func (gh *GitHub) Validate(ctx context.Context) (annotations.Annotations, error)
 			continue
 		}
 
-		adminFound = true
+		if firstAdminOrg == "" {
+			firstAdminOrg = o
+		}
 	}
 
-	if !adminFound {
+	if firstAdminOrg == "" {
 		err := fmt.Errorf("access token must be an admin on at least one organization")
 		return nil, uhttp.WrapErrors(codes.PermissionDenied, "github-connector: credentials validation failed", err)
+	}
+
+	if err := gh.validateBasePermissionVisibility(ctx, firstAdminOrg); err != nil {
+		return nil, err
 	}
 
 	if len(gh.enterprises) > 0 {
@@ -268,6 +274,10 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 		return nil, err
 	}
 
+	if err := gh.validateBasePermissionVisibility(ctx, orgLogins[0]); err != nil {
+		return nil, err
+	}
+
 	if len(gh.enterprises) > 0 {
 		l := ctxzap.Extract(ctx)
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
@@ -280,6 +290,38 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 	}
 
 	return nil, nil
+}
+
+// validateBasePermissionVisibility probes a single org to confirm the credential can
+// read default_repository_permission, which direct-collaborators-only requires to sync
+// org-member repo access (see getOrgBasePermission). GitHub returns the field only to
+// org owners whose credential has admin:org scope / the GitHub App Organization
+// Administration permission, and omits it silently otherwise.
+//
+// The scope/permission dimension is credential-wide, so probing one org where the
+// credential is already confirmed as an admin is representative — no need to probe
+// every org (there can be thousands). Per-org enforcement still happens at sync time.
+func (gh *GitHub) validateBasePermissionVisibility(ctx context.Context, orgLogin string) error {
+	if !gh.directCollaboratorsOnly {
+		return nil
+	}
+
+	org, resp, err := gh.client.Organizations.Get(ctx, orgLogin)
+	if err != nil {
+		return wrapGitHubError(err, resp, fmt.Sprintf("github-connector: failed to get organization %s", orgLogin))
+	}
+
+	if org.GetDefaultRepoPermission() == "" {
+		err := fmt.Errorf(
+			"org %q did not return default_repository_permission; direct-collaborators-only requires it to sync org-member repo access correctly. "+
+				"Grant the credential org-owner visibility (admin:org scope, the GitHub App Organization Administration permission, "+
+				"or fine-grained PAT organization Administration read access), or disable direct-collaborators-only",
+			orgLogin,
+		)
+		return uhttp.WrapErrors(codes.PermissionDenied, "github-connector: credentials validation failed", err)
+	}
+
+	return nil
 }
 
 // newGitHubClient returns a new GitHub API client authenticated with an access token via oauth2.
