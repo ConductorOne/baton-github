@@ -129,7 +129,7 @@ func (f *usageEventFeed) ListEvents(
 
 	var events []*v2.Event
 
-	//TODO(jdc): Probably change this for loop for a series of requests that uses a more complex pagination cursor.
+	// TODO(jdc): Probably change this for loop for a series of requests that uses a more complex pagination cursor.
 	for page := 0; page < maxAuditLogPagesPerCall; page++ {
 		orgName := cursor.Orgs[cursor.OrgIndex]
 
