@@ -116,11 +116,11 @@ func (f *usageEventFeed) ListEvents(
 
 		cursor = &usageEventPageToken{
 			Orgs:  orgs,
-			Since: since.Format(time.RFC3339),
+			Since: since.Format(time.RFC3339Nano),
 		}
 	}
 
-	since, err := time.Parse(time.RFC3339, cursor.Since)
+	since, err := time.Parse(time.RFC3339Nano, cursor.Since)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("baton-github: invalid usage event feed cursor timestamp: %w", err)
 	}
@@ -185,16 +185,15 @@ func (f *usageEventFeed) ListEvents(
 
 		reachedBoundary := false
 		for _, entry := range entries {
-			evt, ts, ok := usageEventFromAuditEntry(orgName, entry)
-			if !ok {
-				continue
-			}
-
-			if !ts.After(since) {
-				// Descending order, so everything after this is even older;
-				// a safety net in case the server-side phrase filter missed it.
+			// Check every entry's timestamp, even filtered ones, so an all-bot page still stops pagination.
+			if ts := entry.GetTimestamp().Time; !ts.IsZero() && !ts.After(since) {
 				reachedBoundary = true
 				break
+			}
+
+			evt, _, ok := usageEventFromAuditEntry(orgName, entry)
+			if !ok {
+				continue
 			}
 			events = append(events, evt)
 		}
@@ -264,7 +263,7 @@ func usageEventFromAuditEntry(orgName string, entry *github.AuditEntry) (*v2.Eve
 	if id == "" {
 		// No stable ID from GitHub - synthesize one so dedup doesn't collapse
 		// every entry missing _document_id into one event.
-		id = fmt.Sprintf("%d:%d:%d:%s", orgID, actorID, ts.Unix(), entry.GetAction())
+		id = fmt.Sprintf("%d:%d:%d:%s", orgID, actorID, ts.UnixNano(), entry.GetAction())
 	}
 
 	return &v2.Event{

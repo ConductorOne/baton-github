@@ -138,7 +138,7 @@ func TestUsageEventFromAuditEntry_IdFallback(t *testing.T) {
 		}
 		evt, _, ok := usageEventFromAuditEntry("octo-org", entry)
 		require.True(t, ok)
-		require.Equal(t, fmt.Sprintf("456:123:%d:repo.create", ts.Unix()), evt.GetId())
+		require.Equal(t, fmt.Sprintf("456:123:%d:repo.create", ts.UnixNano()), evt.GetId())
 		require.NotEmpty(t, evt.GetId())
 	})
 }
