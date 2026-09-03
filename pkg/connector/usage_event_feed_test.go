@@ -97,12 +97,12 @@ func TestUsageEventFromAuditEntry(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			evt, evtTs, ok := usageEventFromAuditEntry("octo-org", tt.entry)
+			evt, ok := usageEventFromAuditEntry("octo-org", tt.entry)
 			require.Equal(t, tt.ok, ok)
 			if !tt.ok {
 				return
 			}
-			require.Equal(t, ts, evtTs)
+			require.Equal(t, ts, evt.GetOccurredAt().AsTime())
 			require.Equal(t, "123", evt.GetUsageEvent().GetActorResource().GetId().GetResource())
 			require.Equal(t, "456", evt.GetUsageEvent().GetTargetResource().GetId().GetResource())
 			require.Equal(t, resourceTypeUser.Id, evt.GetUsageEvent().GetActorResource().GetId().GetResourceType())
@@ -123,7 +123,7 @@ func TestUsageEventFromAuditEntry_IdFallback(t *testing.T) {
 			DocumentID: github.Ptr("real-doc-id"),
 			Action:     github.Ptr("repo.create"),
 		}
-		evt, _, ok := usageEventFromAuditEntry("octo-org", entry)
+		evt, ok := usageEventFromAuditEntry("octo-org", entry)
 		require.True(t, ok)
 		require.Equal(t, "real-doc-id", evt.GetId())
 	})
@@ -136,7 +136,7 @@ func TestUsageEventFromAuditEntry_IdFallback(t *testing.T) {
 			Timestamp: &github.Timestamp{Time: ts},
 			Action:    github.Ptr("repo.create"),
 		}
-		evt, _, ok := usageEventFromAuditEntry("octo-org", entry)
+		evt, ok := usageEventFromAuditEntry("octo-org", entry)
 		require.True(t, ok)
 		require.Equal(t, fmt.Sprintf("456:123:%d:repo.create", ts.UnixNano()), evt.GetId())
 		require.NotEmpty(t, evt.GetId())
@@ -466,6 +466,47 @@ func TestUsageEventFeed_ListEvents_ResumesFromPersistedCursor(t *testing.T) {
 	require.Equal(t, "existing-cursor", gotPage, "should resume with the persisted audit-log cursor")
 	require.Len(t, events, 1)
 	require.False(t, state.HasMore)
+}
+
+func TestUsageEventFeed_ListEvents_RecoversFromOutOfBoundsCursor(t *testing.T) {
+	ctx := context.Background()
+
+	since := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := since.Add(1 * time.Hour)
+
+	// A corrupted/stale cursor: OrgIndex points past the end of Orgs.
+	badToken := &usageEventPageToken{
+		Orgs:           []string{"octo-org"},
+		OrgIndex:       5,
+		AuditLogCursor: "stale-cursor",
+		Since:          since.Format(time.RFC3339Nano),
+	}
+	cursorStr, err := badToken.marshal()
+	require.NoError(t, err)
+
+	var gotPage string
+	httpClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatchHandler(
+			mock.GetOrgsAuditLogByOrg,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPage = r.URL.Query().Get("page")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(mock.MustMarshal([]*github.AuditEntry{
+					{Actor: github.Ptr("octocat"), ActorID: github.Ptr(int64(1)), OrgID: github.Ptr(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
+				}))
+			}),
+		),
+	)
+
+	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+
+	require.NotPanics(t, func() {
+		events, state, _, err := f.ListEvents(ctx, nil, &pagination.StreamToken{Cursor: cursorStr})
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		require.False(t, state.HasMore)
+	})
+	require.Empty(t, gotPage, "should discard the stale per-org cursor when OrgIndex is reset")
 }
 
 func TestUsageEventFeed_ListEvents_NoOrgs(t *testing.T) {

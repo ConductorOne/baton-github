@@ -120,6 +120,11 @@ func (f *usageEventFeed) ListEvents(
 		}
 	}
 
+	if cursor.OrgIndex < 0 || cursor.OrgIndex >= len(cursor.Orgs) {
+		cursor.OrgIndex = 0
+		cursor.AuditLogCursor = ""
+	}
+
 	since, err := time.Parse(time.RFC3339Nano, cursor.Since)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("baton-github: invalid usage event feed cursor timestamp: %w", err)
@@ -191,7 +196,7 @@ func (f *usageEventFeed) ListEvents(
 				break
 			}
 
-			evt, _, ok := usageEventFromAuditEntry(orgName, entry)
+			evt, ok := usageEventFromAuditEntry(orgName, entry)
 			if !ok {
 				continue
 			}
@@ -235,12 +240,12 @@ func (f *usageEventFeed) ListEvents(
 // usageEventFromAuditEntry converts one audit-log entry into a usage event
 // tying the actor to the org they acted in. Returns ok=false when the entry
 // can't be attributed to a synced user resource.
-func usageEventFromAuditEntry(orgName string, entry *github.AuditEntry) (*v2.Event, time.Time, bool) {
+func usageEventFromAuditEntry(orgName string, entry *github.AuditEntry) (*v2.Event, bool) {
 	actor := entry.GetActor()
 	actorID := entry.GetActorID()
 	ts := entry.GetTimestamp().Time
 	if actorID == 0 || ts.IsZero() {
-		return nil, time.Time{}, false
+		return nil, false
 	}
 
 	// actor_is_bot is real but undocumented (only in AdditionalFields); trust
@@ -248,15 +253,15 @@ func usageEventFromAuditEntry(orgName string, entry *github.AuditEntry) (*v2.Eve
 	// aren't synced as users, so their events wouldn't correlate to anything.
 	if isBot, ok := entry.AdditionalFields["actor_is_bot"].(bool); ok {
 		if isBot {
-			return nil, time.Time{}, false
+			return nil, false
 		}
 	} else if strings.HasSuffix(actor, "[bot]") {
-		return nil, time.Time{}, false
+		return nil, false
 	}
 
 	orgID := entry.GetOrgID()
 	if orgID == 0 {
-		return nil, time.Time{}, false
+		return nil, false
 	}
 
 	id := entry.GetDocumentID()
@@ -287,5 +292,5 @@ func usageEventFromAuditEntry(orgName string, entry *github.AuditEntry) (*v2.Eve
 				},
 			},
 		},
-	}, ts, true
+	}, true
 }
