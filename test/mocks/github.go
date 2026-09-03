@@ -116,8 +116,15 @@ func (mgh MockGitHub) Seed() (
 		ID:    &userId,
 		Login: &userIdStr,
 		Email: &email,
+		// GitHub reports every level at or below the principal's actual access as
+		// true. An admin therefore has all five levels set; the connector should
+		// collapse these into a single grant for the highest level (admin).
 		Permissions: map[string]bool{
-			"permission0": true,
+			"pull":     true,
+			"triage":   true,
+			"push":     true,
+			"maintain": true,
+			"admin":    true,
 		},
 	}
 	githubRepository := github.Repository{
