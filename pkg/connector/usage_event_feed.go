@@ -23,8 +23,8 @@ import (
 // boundary is given yet; later polls advance via the feed's own cursor.
 const defaultActivityLookback = 1 * time.Hour
 
-// maxAuditLogPagesPerCall caps pages walked per org per call so one very
-// active org can't stall the feed; remaining pages resume via the cursor.
+// maxAuditLogPagesPerCall caps total pages walked across all orgs per call
+// so one very active org can't stall the feed; remaining pages resume via the cursor.
 const maxAuditLogPagesPerCall = 20
 
 // usageEventFeed streams member activity from each org's audit log as usage
