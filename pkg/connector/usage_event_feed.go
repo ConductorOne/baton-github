@@ -128,6 +128,8 @@ func (f *usageEventFeed) ListEvents(
 	sincePhrase := "created:>=" + since.UTC().Format("2006-01-02T15:04:05-07:00")
 
 	var events []*v2.Event
+	// Tightest (lowest Remaining) rate limit seen across this call's requests.
+	var tightestRateLimit *v2.RateLimitDescription
 
 	// TODO(jdc): Probably change this for loop for a series of requests that uses a more complex pagination cursor.
 	for page := 0; page < maxAuditLogPagesPerCall; page++ {
@@ -147,6 +149,15 @@ func (f *usageEventFeed) ListEvents(
 		}
 
 		entries, resp, err := f.client.Organizations.GetAuditLog(ctx, orgName, opts)
+		// Read rate-limit headers before the error branch nils resp, since a
+		// 429 still carries them.
+		if resp != nil {
+			if rl, rlErr := extractRateLimitData(resp); rlErr == nil {
+				if tightestRateLimit == nil || rl.GetRemaining() < tightestRateLimit.GetRemaining() {
+					tightestRateLimit = rl
+				}
+			}
+		}
 		if err != nil {
 			l.Debug("failed to fetch audit log for org, skipping it for this pass",
 				zap.String("org", orgName), zap.Error(err))
@@ -154,7 +165,7 @@ func (f *usageEventFeed) ListEvents(
 			resp = nil
 		}
 
-		exhausted := true
+		reachedBoundary := false
 		for _, entry := range entries {
 			evt, ts, ok := usageEventFromAuditEntry(orgName, entry)
 			if !ok {
@@ -162,16 +173,15 @@ func (f *usageEventFeed) ListEvents(
 			}
 
 			if !ts.After(since) {
-				// Descending order: everything after this entry is even
-				// older, so this org is done for this pass.
-				// This is an extra safeguard since the server should have filter these already.
+				// Descending order, so everything after this is even older;
+				// a safety net in case the server-side phrase filter missed it.
+				reachedBoundary = true
 				break
 			}
 			events = append(events, evt)
-			exhausted = false
 		}
 
-		if resp != nil && resp.NextPageToken != "" && !exhausted {
+		if resp != nil && resp.NextPageToken != "" && !reachedBoundary {
 			cursor.AuditLogCursor = resp.NextPageToken
 			continue
 		}
@@ -186,7 +196,11 @@ func (f *usageEventFeed) ListEvents(
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			return events, &pagination.StreamState{Cursor: tokenStr, HasMore: false}, nil, nil
+			var annos annotations.Annotations
+			if tightestRateLimit != nil {
+				annos.WithRateLimiting(tightestRateLimit)
+			}
+			return events, &pagination.StreamState{Cursor: tokenStr, HasMore: false}, annos, nil
 		}
 	}
 
@@ -194,7 +208,11 @@ func (f *usageEventFeed) ListEvents(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return events, &pagination.StreamState{Cursor: tokenStr, HasMore: true}, nil, nil
+	var annos annotations.Annotations
+	if tightestRateLimit != nil {
+		annos.WithRateLimiting(tightestRateLimit)
+	}
+	return events, &pagination.StreamState{Cursor: tokenStr, HasMore: true}, annos, nil
 }
 
 // usageEventFromAuditEntry converts one audit-log entry into a usage event
@@ -208,10 +226,9 @@ func usageEventFromAuditEntry(orgName string, entry *github.AuditEntry) (*v2.Eve
 		return nil, time.Time{}, false
 	}
 
-	// actor_is_bot is real but undocumented, so it only surfaces via
-	// AdditionalFields; trust it when present, else fall back to the
-	// "[bot]" login suffix. Either way, bot/App actors aren't synced as user
-	// resources, so an event attributed to one wouldn't correlate to anything.
+	// actor_is_bot is real but undocumented (only in AdditionalFields); trust
+	// it when present, else fall back to the "[bot]" login suffix. Bots
+	// aren't synced as users, so their events wouldn't correlate to anything.
 	if isBot, ok := entry.AdditionalFields["actor_is_bot"].(bool); ok {
 		if isBot {
 			return nil, time.Time{}, false
@@ -225,8 +242,15 @@ func usageEventFromAuditEntry(orgName string, entry *github.AuditEntry) (*v2.Eve
 		return nil, time.Time{}, false
 	}
 
+	id := entry.GetDocumentID()
+	if id == "" {
+		// No stable ID from GitHub - synthesize one so dedup doesn't collapse
+		// every entry missing _document_id into one event.
+		id = fmt.Sprintf("%d:%d:%d:%s", orgID, actorID, ts.Unix(), entry.GetAction())
+	}
+
 	return &v2.Event{
-		Id:         entry.GetDocumentID(),
+		Id:         id,
 		OccurredAt: timestamppb.New(ts),
 		Event: &v2.Event_UsageEvent{
 			UsageEvent: &v2.UsageEvent{
