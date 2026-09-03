@@ -164,6 +164,70 @@ func TestUsageEventFeed_ListEvents_GracefulDegradation(t *testing.T) {
 	require.False(t, state.HasMore)
 }
 
+func TestUsageEventFeed_ListEvents_SkipsOrgOn404(t *testing.T) {
+	ctx := context.Background()
+
+	httpClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: github.Ptr("octo-org")}}),
+		mock.WithRequestMatchHandler(
+			mock.GetOrgsAuditLogByOrg,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			}),
+		),
+	)
+
+	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+
+	events, state, _, err := f.ListEvents(ctx, nil, nil)
+	require.NoError(t, err)
+	require.Empty(t, events)
+	require.False(t, state.HasMore)
+}
+
+func TestUsageEventFeed_ListEvents_AbortsOnServerError(t *testing.T) {
+	ctx := context.Background()
+
+	httpClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: github.Ptr("octo-org")}}),
+		mock.WithRequestMatchHandler(
+			mock.GetOrgsAuditLogByOrg,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}),
+		),
+	)
+
+	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+
+	events, state, _, err := f.ListEvents(ctx, nil, nil)
+	require.Error(t, err, "a 5xx should abort the call, not be swallowed as a successful empty pass")
+	require.Nil(t, events)
+	require.Nil(t, state)
+}
+
+func TestUsageEventFeed_ListEvents_AbortsOnRateLimit(t *testing.T) {
+	ctx := context.Background()
+
+	httpClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: github.Ptr("octo-org")}}),
+		mock.WithRequestMatchHandler(
+			mock.GetOrgsAuditLogByOrg,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Ratelimit-Remaining", "0")
+				w.WriteHeader(http.StatusForbidden)
+			}),
+		),
+	)
+
+	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+
+	events, state, _, err := f.ListEvents(ctx, nil, nil)
+	require.Error(t, err, "a rate-limited 403 (Remaining: 0) should abort, not be treated as a permission error")
+	require.Nil(t, events)
+	require.Nil(t, state)
+}
+
 func TestUsageEventFeed_ListEvents_FiltersToSinceBoundary(t *testing.T) {
 	ctx := context.Background()
 

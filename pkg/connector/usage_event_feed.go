@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -159,10 +160,27 @@ func (f *usageEventFeed) ListEvents(
 			}
 		}
 		if err != nil {
-			l.Debug("failed to fetch audit log for org, skipping it for this pass",
-				zap.String("org", orgName), zap.Error(err))
-			entries = nil
-			resp = nil
+			// Skip-and-continue only for permanent per-org conditions (no
+			// audit-log access); anything else aborts instead of wasting the
+			// rest of the page budget. Rate-limit checks come first since
+			// GitHub can signal rate limiting via a 403.
+			var rateLimitErr *github.RateLimitError
+			var abuseRateLimitErr *github.AbuseRateLimitError
+			retryable := errors.As(err, &rateLimitErr) || errors.As(err, &abuseRateLimitErr) ||
+				isRatelimited(resp) || isTemporarilyUnavailable(resp)
+
+			switch {
+			case retryable:
+				return nil, nil, nil, wrapGitHubError(err, resp,
+					fmt.Sprintf("baton-github: failed to fetch audit log for org %s", orgName))
+			case isNotFoundError(resp) || isPermissionError(resp):
+				l.Warn("org lacks audit-log access, skipping it for this pass",
+					zap.String("org", orgName), zap.Error(err))
+				entries, resp = nil, nil
+			default:
+				return nil, nil, nil, wrapGitHubError(err, resp,
+					fmt.Sprintf("baton-github: failed to fetch audit log for org %s", orgName))
+			}
 		}
 
 		reachedBoundary := false
