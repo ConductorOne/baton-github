@@ -3,7 +3,7 @@ module github.com/conductorone/baton-github
 go 1.25.2
 
 require (
-	github.com/conductorone/baton-sdk v0.28.0
+	github.com/conductorone/baton-sdk v0.29.0
 	github.com/deckarep/golang-set/v2 v2.9.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/golang-jwt/jwt/v5 v5.2.2
@@ -55,7 +55,7 @@ require (
 	github.com/cockroachdb/logtags v0.0.0-20230118201751-21c54148d20b // indirect
 	github.com/cockroachdb/pebble/v2 v2.1.5 // indirect
 	github.com/cockroachdb/redact v1.1.5 // indirect
-	github.com/cockroachdb/swiss v0.0.0-20251224182025-b0f6560f979b // indirect
+	github.com/cockroachdb/swiss v0.0.0-20260820225851-333444432258 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
 	github.com/conductorone/dpop v0.3.0 // indirect
 	github.com/conductorone/dpop/integrations/dpop_grpc v0.3.0 // indirect
