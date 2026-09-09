@@ -46,8 +46,8 @@ func (f *usageEventFeed) EventFeedMetadata(_ context.Context) *v2.EventFeedMetad
 }
 
 // usageEventPageToken tracks progress through one pass over every configured
-// org's audit log, walked newest-first until an entry at or before Since is
-// reached (already seen in a previous pass).
+// org's audit log, walked newest-first until an already-seen entry (at or
+// before Since) is reached.
 type usageEventPageToken struct {
 	Orgs           []string `json:"orgs,omitempty"`
 	OrgIndex       int      `json:"org_index"`
@@ -196,7 +196,7 @@ func (f *usageEventFeed) ListEvents(
 				break
 			}
 
-			evt, ok := usageEventFromAuditEntry(orgName, entry)
+			evt, ok := usageEventFromAuditEntry(entry)
 			if !ok {
 				continue
 			}
@@ -238,9 +238,9 @@ func (f *usageEventFeed) ListEvents(
 }
 
 // usageEventFromAuditEntry converts one audit-log entry into a usage event
-// tying the actor to the org they acted in. Returns ok=false when the entry
-// can't be attributed to a synced user resource.
-func usageEventFromAuditEntry(orgName string, entry *github.AuditEntry) (*v2.Event, bool) {
+// targeting the usage-app resource (see usage_app.go). Returns ok=false when
+// the entry can't be attributed to a synced user.
+func usageEventFromAuditEntry(entry *github.AuditEntry) (*v2.Event, bool) {
 	actor := entry.GetActor()
 	actorID := entry.GetActorID()
 	ts := entry.GetTimestamp().Time
@@ -278,10 +278,10 @@ func usageEventFromAuditEntry(orgName string, entry *github.AuditEntry) (*v2.Eve
 			UsageEvent: &v2.UsageEvent{
 				TargetResource: &v2.Resource{
 					Id: &v2.ResourceId{
-						ResourceType: resourceTypeOrg.Id,
-						Resource:     strconv.FormatInt(orgID, 10),
+						ResourceType: resourceTypeUsageApp.Id,
+						Resource:     usageAppResourceID,
 					},
-					DisplayName: orgName,
+					DisplayName: usageAppDisplayName,
 				},
 				ActorResource: &v2.Resource{
 					Id: &v2.ResourceId{

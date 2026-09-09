@@ -149,6 +149,11 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 		resourceSyncers = append(resourceSyncers, APITokenBuilder(gh.client, gh.orgCache))
 	}
 
+	if gh.syncLastActivity {
+		// usageAppBuilder only exists to support usageEventFeed, so it's gated the same way.
+		resourceSyncers = append(resourceSyncers, newUsageAppBuilder())
+	}
+
 	if len(gh.enterprises) > 0 {
 		resourceSyncers = append(resourceSyncers,
 			EnterpriseRoleBuilder(gh.client, gh.appClient, gh.customClient, gh.enterprises),

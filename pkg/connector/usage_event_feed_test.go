@@ -97,16 +97,16 @@ func TestUsageEventFromAuditEntry(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			evt, ok := usageEventFromAuditEntry("octo-org", tt.entry)
+			evt, ok := usageEventFromAuditEntry(tt.entry)
 			require.Equal(t, tt.ok, ok)
 			if !tt.ok {
 				return
 			}
 			require.Equal(t, ts, evt.GetOccurredAt().AsTime())
 			require.Equal(t, "123", evt.GetUsageEvent().GetActorResource().GetId().GetResource())
-			require.Equal(t, "456", evt.GetUsageEvent().GetTargetResource().GetId().GetResource())
+			require.Equal(t, usageAppResourceID, evt.GetUsageEvent().GetTargetResource().GetId().GetResource())
 			require.Equal(t, resourceTypeUser.Id, evt.GetUsageEvent().GetActorResource().GetId().GetResourceType())
-			require.Equal(t, resourceTypeOrg.Id, evt.GetUsageEvent().GetTargetResource().GetId().GetResourceType())
+			require.Equal(t, resourceTypeUsageApp.Id, evt.GetUsageEvent().GetTargetResource().GetId().GetResourceType())
 		})
 	}
 }
@@ -123,7 +123,7 @@ func TestUsageEventFromAuditEntry_IdFallback(t *testing.T) {
 			DocumentID: github.Ptr("real-doc-id"),
 			Action:     github.Ptr("repo.create"),
 		}
-		evt, ok := usageEventFromAuditEntry("octo-org", entry)
+		evt, ok := usageEventFromAuditEntry(entry)
 		require.True(t, ok)
 		require.Equal(t, "real-doc-id", evt.GetId())
 	})
@@ -136,7 +136,7 @@ func TestUsageEventFromAuditEntry_IdFallback(t *testing.T) {
 			Timestamp: &github.Timestamp{Time: ts},
 			Action:    github.Ptr("repo.create"),
 		}
-		evt, ok := usageEventFromAuditEntry("octo-org", entry)
+		evt, ok := usageEventFromAuditEntry(entry)
 		require.True(t, ok)
 		require.Equal(t, fmt.Sprintf("456:123:%d:repo.create", ts.UnixNano()), evt.GetId())
 		require.NotEmpty(t, evt.GetId())
