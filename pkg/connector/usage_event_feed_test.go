@@ -44,13 +44,13 @@ func TestUsageEventFromAuditEntry(t *testing.T) {
 			ok: false,
 		},
 		{
-			name: "missing org id",
+			name: "missing org id is still attributable",
 			entry: &github.AuditEntry{
 				Actor:     github.Ptr("octocat"),
 				ActorID:   github.Ptr(int64(123)),
 				Timestamp: &github.Timestamp{Time: ts},
 			},
-			ok: false,
+			ok: true,
 		},
 		{
 			name: "missing timestamp",

@@ -260,9 +260,6 @@ func usageEventFromAuditEntry(entry *github.AuditEntry) (*v2.Event, bool) {
 	}
 
 	orgID := entry.GetOrgID()
-	if orgID == 0 {
-		return nil, false
-	}
 
 	id := entry.GetDocumentID()
 	if id == "" {
