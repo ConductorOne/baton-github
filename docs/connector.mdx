@@ -29,6 +29,8 @@ Repository permissions that are inherited through team membership are labeled as
 
 [This connector can sync secrets](/product/admin/inventory) and display them on the **Inventory** page. 
 
+[This connector syncs non-human identities](/product/admin/nhi) and displays them on the **Identities overview** dashboard.
+
 ## Gather GitHub credentials 
 
 Configuring the connector requires you to pass in credentials generated in GitHub. Gather these credentials before you move on. To set up the GitHub connector, you can choose to create a personal access token (classic), a fine-grained access token, or a GitHub app. 
@@ -256,27 +258,24 @@ To complete this task, you'll need:
 
 <Steps>
 <Step>
-In C1, navigate to **Integrations** > **Connectors** and click **Add connector**.
+In C1, navigate to **Apps** > **Connectors** and click **Add connector**.
 </Step>
 <Step>
 Search for **GitHub v2** and click **Add**.
 </Step>
 <Step>
-Choose how to set up the new GitHub connector:
+Choose where to add the connector: **Create a new app**, or **Add to an existing app** (then select the app).
 
-   * Add the connector to a currently unmanaged app (select from the list of apps that were discovered in your identity, SSO, or federation provider that aren't yet managed with C1)
-
-   * Add the connector to a managed app (select from the list of existing managed apps)
-
-   * Create a new managed app
+If you're creating a new app, choose whether to link it to an application discovered from your identity provider: select **Yes** and pick the IdP application, or **No** to continue with just the connector.
 </Step>
 <Step>
-Set the owner for this connector. You can manage the connector yourself, or choose someone else from the list of C1 users. Setting multiple owners is allowed.
-
-   If you choose someone else, C1 will notify the new connector owner by email that their help is needed to complete the setup process.
+Set the connector's **Name** and, optionally, a **Description**.
 </Step>
 <Step>
-Click **Next**.
+Click the pencil icon next to **Owners** to choose who can configure and manage this connector.
+</Step>
+<Step>
+Click **Add**. The connector is created and its configuration page opens.
 </Step>
 <Step>
 Find the **Settings** area of the page and click **Edit**.
@@ -345,27 +344,24 @@ When running in service mode on Kubernetes, a self-hosted connector maintains an
 
 <Steps>
 <Step>
-In C1, navigate to **Integrations** > **Connectors** > **Add connector**.
+In C1, navigate to **Apps** > **Connectors** > **Add connector**.
 </Step>
 <Step>
 Search for **Baton** and click **Add**.
 </Step>
 <Step>
-Choose how to set up the new GitHub connector:
+Choose where to add the connector: **Create a new app**, or **Add to an existing app** (then select the app).
 
-   * Add the connector to a currently unmanaged app (select from the list of apps that were discovered in your identity, SSO, or federation provider that aren't yet managed with C1)
-
-   * Add the connector to a managed app (select from the list of existing managed apps)
-
-   * Create a new managed app
+If you're creating a new app, choose whether to link it to an application discovered from your identity provider: select **Yes** and pick the IdP application, or **No** to continue with just the connector.
 </Step>
 <Step>
-Set the owner for this connector. You can manage the connector yourself, or choose someone else from the list of C1 users. Setting multiple owners is allowed.
-
-   If you choose someone else, C1 will notify the new connector owner by email that their help is needed to complete the setup process.
+Set the connector's **Name** and, optionally, a **Description**.
 </Step>
 <Step>
-Click **Next**.
+Click the pencil icon next to **Owners** to choose who can configure and manage this connector.
+</Step>
+<Step>
+Click **Add**. The connector is created and its configuration page opens.
 </Step>
 <Step>
 In the **Settings** area of the page, click **Edit**.
