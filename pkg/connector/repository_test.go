@@ -12,6 +12,8 @@ import (
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/conductorone/baton-github/test"
 	"github.com/conductorone/baton-github/test/mocks"
@@ -87,7 +89,9 @@ func TestRepository(t *testing.T) {
 // empty default_repository_permission bug: when GitHub omits the field (the
 // credential lacks org-owner visibility), the connector used to assume "read"
 // and emit expandable org-member pull grants on every repo — inventing access
-// for every org member. It drives Grants() end-to-end with
+// for every org member. With direct-collaborators-only enabled the base
+// permission is required to produce correct grants, so an omitted field must
+// hard-fail the sync instead of guessing. It drives Grants() end-to-end with
 // direct-collaborators-only enabled.
 //
 // Seeded mock IDs: org 12, repo 34, user 56.
@@ -150,15 +154,31 @@ func TestRepositoryGrantsOrgBasePermissionExpansion(t *testing.T) {
 		return mgh, builder, repository
 	}
 
-	t.Run("missing default_repository_permission fails closed", func(t *testing.T) {
+	t.Run("missing default_repository_permission fails the sync", func(t *testing.T) {
 		_, builder, repository := setup(t)
 		// The seeded org omits default_repository_permission, like GitHub does
-		// for credentials without admin:org / Organization Administration.
+		// for credentials without admin:org / Organization Administration. We
+		// can't know org members' repo access without it, so Grants must error
+		// rather than guess in either direction.
+		grants, _, err := builder.Grants(ctx, repository, resourceSdk.SyncOpAttrs{
+			PageToken: pagination.Token{},
+			Session:   &noOpSessionStore{},
+		})
+		require.ErrorContains(t, err, "default_repository_permission")
+		require.Equal(t, codes.PermissionDenied, status.Code(err),
+			"missing default_repository_permission is a credential permission problem, not a transient failure")
+		require.Empty(t, grants,
+			"an omitted default_repository_permission must not produce grants")
+	})
+
+	t.Run("none default_repository_permission emits no member expansion grants", func(t *testing.T) {
+		mgh, builder, repository := setup(t)
+		mgh.SetOrgDefaultRepoPermission(12, "none")
 		grants := listAllGrants(t, builder, repository)
 
-		require.NotEmpty(t, grants, "expected admin-expansion and direct-collaborator grants")
+		require.NotEmpty(t, grants, "admin expansion and direct collaborators are still emitted")
 		require.Empty(t, memberExpansionGrants(t, grants),
-			"an omitted default_repository_permission must not invent org-member repo grants")
+			"base permission none must not expand org members into repo access")
 	})
 
 	t.Run("read default_repository_permission still expands members to pull", func(t *testing.T) {

@@ -197,36 +197,39 @@ func (o *repositoryResourceType) Grants(
 		// When direct-collaborators-only is enabled, org members whose only repo access
 		// is via the org base permission won't appear in ListCollaborators. Add expandable
 		// grants so the SDK resolves org membership into repo access.
+		//
+		// If the base permission can't be determined, fail the sync: guessing in
+		// either direction produces wrong access data (inventing grants or
+		// silently dropping real ones).
 		if o.directCollaboratorsOnly {
 			basePerm, err := o.getOrgBasePermission(ctx, opts.Session, orgName, resource.ParentResourceId)
 			if err != nil {
-				l.Debug("failed to fetch org base permission, skipping org expansion", zap.Error(err))
-			} else {
-				orgResID := resource.ParentResourceId.Resource
-				// Org admins always have admin on all repos
-				adminEntitlementID := fmt.Sprintf("%s:%s:%s", resourceTypeOrg.Id, orgResID, orgRoleAdmin)
-				for _, perm := range repoAccessLevels {
+				return nil, nil, err
+			}
+			orgResID := resource.ParentResourceId.Resource
+			// Org admins always have admin on all repos
+			adminEntitlementID := fmt.Sprintf("%s:%s:%s", resourceTypeOrg.Id, orgResID, orgRoleAdmin)
+			for _, perm := range repoAccessLevels {
+				rv = append(rv, grant.NewGrant(resource, perm, resource.ParentResourceId,
+					grant.WithAnnotation(&v2.GrantExpandable{
+						EntitlementIds:  []string{adminEntitlementID},
+						Shallow:         true,
+						ResourceTypeIds: []string{resourceTypeUser.Id},
+					}),
+				))
+			}
+			// Org members get access based on the org's default repo permission
+			memberPerms := orgBasePermissionToRepoPermissions(basePerm)
+			if len(memberPerms) > 0 {
+				memberEntitlementID := fmt.Sprintf("%s:%s:%s", resourceTypeOrg.Id, orgResID, orgRoleMember)
+				for _, perm := range memberPerms {
 					rv = append(rv, grant.NewGrant(resource, perm, resource.ParentResourceId,
 						grant.WithAnnotation(&v2.GrantExpandable{
-							EntitlementIds:  []string{adminEntitlementID},
+							EntitlementIds:  []string{memberEntitlementID},
 							Shallow:         true,
 							ResourceTypeIds: []string{resourceTypeUser.Id},
 						}),
 					))
-				}
-				// Org members get access based on the org's default repo permission
-				memberPerms := orgBasePermissionToRepoPermissions(basePerm)
-				if len(memberPerms) > 0 {
-					memberEntitlementID := fmt.Sprintf("%s:%s:%s", resourceTypeOrg.Id, orgResID, orgRoleMember)
-					for _, perm := range memberPerms {
-						rv = append(rv, grant.NewGrant(resource, perm, resource.ParentResourceId,
-							grant.WithAnnotation(&v2.GrantExpandable{
-								EntitlementIds:  []string{memberEntitlementID},
-								Shallow:         true,
-								ResourceTypeIds: []string{resourceTypeUser.Id},
-							}),
-						))
-					}
 				}
 			}
 		}
@@ -549,13 +552,14 @@ func orgBasePermissionSessionKey(orgID string) string {
 // getOrgBasePermission fetches the org's default_repository_permission, caching in the session.
 // Returns "read", "write", "admin", or "none".
 //
-// An empty/absent field is treated as "none" (fail closed). GitHub only returns
+// An empty/absent field is an error. GitHub only returns
 // default_repository_permission to org owners / tokens with admin:org (or the
 // GitHub App Organization Administration permission). An omitted field means
-// "unknown", not GitHub's create-org default of "read" — assuming "read" would
-// invent pull grants for every org member on every repo.
+// "unknown" — guessing "read" invents pull grants for every org member on
+// every repo, and guessing "none" silently drops real org-base grants. With
+// direct-collaborators-only enabled we cannot produce correct grants without
+// this value, so fail the sync and tell the operator how to fix the credential.
 func (o *repositoryResourceType) getOrgBasePermission(ctx context.Context, ss sessions.SessionStore, orgName string, orgResourceID *v2.ResourceId) (string, error) {
-	l := ctxzap.Extract(ctx)
 	key := orgBasePermissionSessionKey(orgResourceID.Resource)
 	cached, found, err := session.GetJSON[string](ctx, ss, key)
 	if err != nil {
@@ -572,13 +576,14 @@ func (o *repositoryResourceType) getOrgBasePermission(ctx context.Context, ss se
 
 	perm := org.GetDefaultRepoPermission()
 	if perm == "" {
-		l.Debug(
-			"baton-github: org default_repository_permission missing or empty; skipping org-member repo expansion (treating as none). "+
-				"Grant the credential org-owner visibility (admin:org / Organization Administration) to sync base-permission grants accurately.",
-			zap.String("org", orgName),
-			zap.String("org_id", orgResourceID.Resource),
+		err := fmt.Errorf(
+			"org %q did not return default_repository_permission; "+
+				"direct-collaborators-only requires it to sync org-member repo access correctly. "+
+				"Grant the credential org-owner visibility (admin:org scope, the GitHub App Organization Administration permission, "+
+				"or fine-grained PAT organization Administration read access), or disable direct-collaborators-only",
+			orgName,
 		)
-		perm = "none"
+		return "", uhttp.WrapErrors(codes.PermissionDenied, "baton-github: failed to determine org base permission", err)
 	}
 
 	if err := session.SetJSON(ctx, ss, key, perm); err != nil {
