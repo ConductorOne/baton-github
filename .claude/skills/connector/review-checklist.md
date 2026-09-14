@@ -134,6 +134,14 @@ rs.NewUserResource(user.Name, userType, user.ID, ...)
 
 ---
 
+## API Surface Check
+
+- [ ] **Schema change flagged** - any change to the connector's OpenAPI spec is called out in review, and the author confirms it matches the client code
+
+Nothing verifies the spec against the live provider, so a schema change needs a human to look at it. See `build-openapi-spec.md`.
+
+---
+
 ## Configuration Check
 
 - [ ] Required fields marked with `field.WithRequired(true)`

@@ -24,6 +24,7 @@ Skills for building and reviewing ConductorOne Baton connectors.
 | `build-provisioning.md` | Grant/Revoke implementation, idempotency, AccountManager |
 | `build-config.md` | Configuration schema, CLI flags, environment variables |
 | `build-connector-docs.md` | Writing connector documentation (MDX format, capabilities, credentials, setup tabs) |
+| `build-openapi-spec.md` | Maintaining `specs/openapi.json` -- REQUIRED on any endpoint change |
 | `fix-ci-checks.md` | Fixing CI failures: doc freshness, lint, test, version mismatches |
 
 ### Patterns (Best Practices)
@@ -78,6 +79,9 @@ Skills for building and reviewing ConductorOne Baton connectors.
 
 **"How do I write/update connector docs?"**
 - `build-connector-docs.md` - MDX template, capabilities tables, credential sections, setup tabs
+
+**"I changed an endpoint / added an API call"**
+- `build-openapi-spec.md` - **Required.** Update `specs/openapi.json` in the same PR
 
 **"CI is failing on my PR"**
 - `fix-ci-checks.md` - Fixes for doc freshness, lint, test, and version mismatch failures
