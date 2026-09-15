@@ -11,7 +11,7 @@ import (
 
 const (
 	usageAppResourceID        = "github"
-	usageAppDisplayName       = "GitHub"
+	usageAppDisplayName       = "GitHub Activity"
 	usageAppAccessEntitlement = "access"
 )
 
@@ -20,7 +20,7 @@ const (
 // C1's usage uplift can key off of. Only synced when sync-last-activity is on.
 var resourceTypeUsageApp = &v2.ResourceType{
 	Id:          "usage-app",
-	DisplayName: "GitHub",
+	DisplayName: "GitHub Activity",
 	Traits:      []v2.ResourceType_Trait{v2.ResourceType_TRAIT_APP},
 	Annotations: annotations.New(&v2.SkipGrants{}),
 }
