@@ -127,6 +127,7 @@ type GitHub struct {
 	omitArchivedRepositories bool
 	directCollaboratorsOnly  bool
 	enterprises              []string
+	syncLastActivity         bool
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
@@ -148,6 +149,11 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 		resourceSyncers = append(resourceSyncers, APITokenBuilder(gh.client, gh.orgCache))
 	}
 
+	if gh.syncLastActivity {
+		// usageAppBuilder only exists to support usageEventFeed, so it's gated the same way.
+		resourceSyncers = append(resourceSyncers, newUsageAppBuilder())
+	}
+
 	if len(gh.enterprises) > 0 {
 		resourceSyncers = append(resourceSyncers,
 			EnterpriseRoleBuilder(gh.client, gh.appClient, gh.customClient, gh.enterprises),
@@ -157,8 +163,18 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	return resourceSyncers
 }
 
+func (gh *GitHub) EventFeeds(_ context.Context) []connectorbuilder.EventFeed {
+	if !gh.syncLastActivity {
+		return nil
+	}
+
+	return []connectorbuilder.EventFeed{
+		newUsageEventFeed(gh.client, gh.orgs),
+	}
+}
+
 // Metadata returns metadata about the connector.
-func (gh *GitHub) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
+func (gh *GitHub) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 	return &v2.ConnectorMetadata{
 		DisplayName: "GitHub",
 		AccountCreationSchema: &v2.ConnectorAccountCreationSchema{
@@ -346,6 +362,7 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
+		syncLastActivity:         ghc.SyncLastActivity,
 	}, nil
 }
 
@@ -452,6 +469,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		syncSecrets:              ghc.SyncSecrets,
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
+		syncLastActivity:         ghc.SyncLastActivity,
 	}
 	return gh, nil
 }
