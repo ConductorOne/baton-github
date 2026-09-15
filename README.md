@@ -113,3 +113,5 @@ Org:
 Repo:
 - Administrator: Read and Write
   - This permission implies Metadata: Read
+
+When SAML identity lookup is unavailable (SAML configured at the enterprise level while authenticating as a GitHub App, or no SAML at all), the connector falls back to each member's verified-domain emails. This requires the organization to have verified domains and the Members read permission. Users without an email on a verified domain keep an empty email.
