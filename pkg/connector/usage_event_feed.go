@@ -203,9 +203,11 @@ func (f *usageEventFeed) ListEvents(
 			events = append(events, evt)
 		}
 
-		if resp != nil && resp.NextPageToken != "" && !reachedBoundary {
-			cursor.AuditLogCursor = resp.NextPageToken
-			continue
+		if resp != nil && !reachedBoundary {
+			if nextPage := nextAuditLogPage(resp); nextPage != "" {
+				cursor.AuditLogCursor = nextPage
+				continue
+			}
 		}
 
 		// Done with this org for this pass - advance to the next one.
@@ -235,6 +237,23 @@ func (f *usageEventFeed) ListEvents(
 		annos.WithRateLimiting(tightestRateLimit)
 	}
 	return events, &pagination.StreamState{Cursor: tokenStr, HasMore: true}, annos, nil
+}
+
+// nextAuditLogPage returns the token to request the next audit-log page, or
+// "" if there isn't one. GitHub's org audit-log endpoint returns opaque
+// cursor pagination on github.com/GHEC (go-github parses the Link header's
+// non-numeric "page" value into Response.NextPageToken), but GHES-style
+// numeric "page=N" Link headers parse into Response.NextPage (int) instead,
+// leaving NextPageToken empty. Checking only NextPageToken silently truncates
+// GHES audit logs to a single page.
+func nextAuditLogPage(resp *github.Response) string {
+	if resp.NextPageToken != "" {
+		return resp.NextPageToken
+	}
+	if resp.NextPage != 0 {
+		return strconv.Itoa(resp.NextPage)
+	}
+	return ""
 }
 
 // usageEventFromAuditEntry converts one audit-log entry into a usage event
