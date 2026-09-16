@@ -121,10 +121,7 @@ func (e *Engine) InvalidateGrantDigestPartitions(ctx context.Context, partitions
 		if err := batch.Delete(rawdb.GlobalGrantDigestNodeKey()); err != nil {
 			return err
 		}
-		opts := writeOpts(e.opts.durability)
-		if e.IsFreshSync() {
-			opts = pebble.NoSync
-		}
+		opts := recordWriteOpts
 		return batch.Commit(opts)
 	})
 }
@@ -421,10 +418,7 @@ func (e *Engine) grantDigestRootPresent(partition string) (bool, error) {
 func (e *Engine) repairOneGrantDigestPartitionLocked(ctx context.Context, partition string) error {
 	lower, upper := grantPrimaryEntitlementBoundsFromPartition(partition)
 
-	opts := writeOpts(e.opts.durability)
-	if e.IsFreshSync() {
-		opts = pebble.NoSync
-	}
+	opts := recordWriteOpts
 	flushBytes := digestNodeBatchFlushBytes
 	if e.test.digestNodeFlushBytes > 0 {
 		flushBytes = e.test.digestNodeFlushBytes
@@ -461,16 +455,17 @@ func (e *Engine) repairOneGrantDigestPartitionLocked(ctx context.Context, partit
 			droppedMalformedKeys++
 			continue
 		}
-		srcs, serr := scanGrantSourceKeysRawBytes(value, scratch.srcKeys[:0])
+		isImmutable, srcs, serr := scanGrantContentFactsRawBytes(value, scratch.srcKeys[:0])
 		if serr != nil {
 			_ = iter.Close()
 			return serr
 		}
 		scratch.srcKeys = srcs
 		if len(srcs) > 1 {
-			sortByteSlices(srcs)
+			srcs = sortGrantSourceFacts(srcs)
+			scratch.srcKeys = srcs
 		}
-		ch64, tuple := grantContentHash64(scratch.tupleBuf, key[grantPrimaryKeyPrefixLen:], srcs)
+		ch64, tuple := grantContentHash64(scratch.tupleBuf, key[grantPrimaryKeyPrefixLen:], isImmutable, srcs)
 		scratch.tupleBuf = tuple
 		bh64 := grantPrincipalBucketHash64(key[sep4+1:])
 		scratch.keyBuf = appendGrantHashIndexKeyFromPrimary(scratch.keyBuf[:0], key, sep4, bh64)
@@ -579,10 +574,7 @@ func (e *Engine) recomputeGrantDigestGlobalRootLocked(ctx context.Context) error
 	if err := iter.Close(); err != nil {
 		return err
 	}
-	opts := writeOpts(e.opts.durability)
-	if e.IsFreshSync() {
-		opts = pebble.NoSync
-	}
+	opts := recordWriteOpts
 	// Re-stamp the ABI with the root. Redundant when the stamp survived
 	// (only full-range deletes remove it, and those remove the roots
 	// this recompute folds too), but writing both here keeps the
