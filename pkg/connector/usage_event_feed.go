@@ -14,7 +14,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/google/go-github/v69/github"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -32,6 +31,9 @@ const maxAuditLogPagesPerCall = 20
 type usageEventFeed struct {
 	client *github.Client
 	orgs   []string
+
+	// used to handle log Warn prints for skipped orgs.
+	skippedOrgs sampledWarn
 }
 
 func newUsageEventFeed(client *github.Client, orgs []string) *usageEventFeed {
@@ -49,10 +51,14 @@ func (f *usageEventFeed) EventFeedMetadata(_ context.Context) *v2.EventFeedMetad
 // org's audit log, walked newest-first until an already-seen entry (at or
 // before Since) is reached.
 type usageEventPageToken struct {
-	Orgs           []string `json:"orgs,omitempty"`
-	OrgIndex       int      `json:"org_index"`
-	AuditLogCursor string   `json:"audit_log_cursor,omitempty"`
-	Since          string   `json:"since,omitempty"`
+	Orgs     []string `json:"orgs,omitempty"`
+	OrgIndex int      `json:"org_index"`
+	// AuditLogCursor is the opaque value to resume from. Whether it goes into
+	// the request's After or Page field depends on AuditLogCursorIsPage - see
+	// nextAuditLogPage.
+	AuditLogCursor       string `json:"audit_log_cursor,omitempty"`
+	AuditLogCursorIsPage bool   `json:"audit_log_cursor_is_page,omitempty"`
+	Since                string `json:"since,omitempty"`
 }
 
 func unmarshalUsageEventPageToken(pToken *pagination.StreamToken) (*usageEventPageToken, error) {
@@ -83,8 +89,6 @@ func (f *usageEventFeed) ListEvents(
 	earliestEvent *timestamppb.Timestamp,
 	pToken *pagination.StreamToken,
 ) ([]*v2.Event, *pagination.StreamState, annotations.Annotations, error) {
-	l := ctxzap.Extract(ctx)
-
 	if f.client == nil {
 		return nil, &pagination.StreamState{HasMore: false}, nil, nil
 	}
@@ -123,6 +127,7 @@ func (f *usageEventFeed) ListEvents(
 	if cursor.OrgIndex < 0 || cursor.OrgIndex >= len(cursor.Orgs) {
 		cursor.OrgIndex = 0
 		cursor.AuditLogCursor = ""
+		cursor.AuditLogCursorIsPage = false
 	}
 
 	since, err := time.Parse(time.RFC3339Nano, cursor.Since)
@@ -150,8 +155,12 @@ func (f *usageEventFeed) ListEvents(
 			Phrase:  github.Ptr(sincePhrase),
 			ListCursorOptions: github.ListCursorOptions{
 				PerPage: maxPageSize,
-				Page:    cursor.AuditLogCursor,
 			},
+		}
+		if cursor.AuditLogCursorIsPage {
+			opts.Page = cursor.AuditLogCursor
+		} else {
+			opts.After = cursor.AuditLogCursor
 		}
 
 		entries, resp, err := f.client.Organizations.GetAuditLog(ctx, orgName, opts)
@@ -179,8 +188,10 @@ func (f *usageEventFeed) ListEvents(
 				return nil, nil, nil, wrapGitHubError(err, resp,
 					fmt.Sprintf("baton-github: failed to fetch audit log for org %s", orgName))
 			case isNotFoundError(resp) || isPermissionError(resp):
-				l.Warn("org lacks audit-log access, skipping it for this pass",
-					zap.String("org", orgName), zap.Error(err))
+				f.skippedOrgs.log(ctx, "org lacks audit-log access, skipping it for this pass",
+					zap.String("org", orgName), zap.Error(err),
+				)
+
 				entries, resp = nil, nil
 			default:
 				return nil, nil, nil, wrapGitHubError(err, resp,
@@ -204,8 +215,9 @@ func (f *usageEventFeed) ListEvents(
 		}
 
 		if resp != nil && !reachedBoundary {
-			if nextPage := nextAuditLogPage(resp); nextPage != "" {
+			if nextPage, isPage := nextAuditLogPage(resp); nextPage != "" {
 				cursor.AuditLogCursor = nextPage
+				cursor.AuditLogCursorIsPage = isPage
 				continue
 			}
 		}
@@ -213,6 +225,7 @@ func (f *usageEventFeed) ListEvents(
 		// Done with this org for this pass - advance to the next one.
 		cursor.OrgIndex++
 		cursor.AuditLogCursor = ""
+		cursor.AuditLogCursorIsPage = false
 		if cursor.OrgIndex >= len(cursor.Orgs) {
 			// Pass complete - the next call gets a fresh earliestEvent, so
 			// nothing needs to survive in the cursor.
@@ -239,21 +252,35 @@ func (f *usageEventFeed) ListEvents(
 	return events, &pagination.StreamState{Cursor: tokenStr, HasMore: true}, annos, nil
 }
 
-// nextAuditLogPage returns the token to request the next audit-log page, or
-// "" if there isn't one. GitHub's org audit-log endpoint returns opaque
-// cursor pagination on github.com/GHEC (go-github parses the Link header's
-// non-numeric "page" value into Response.NextPageToken), but GHES-style
-// numeric "page=N" Link headers parse into Response.NextPage (int) instead,
-// leaving NextPageToken empty. Checking only NextPageToken silently truncates
-// GHES audit logs to a single page.
-func nextAuditLogPage(resp *github.Response) string {
+// nextAuditLogPage returns the cursor to request the next audit-log page
+// (empty if there isn't one), and whether that cursor belongs in the
+// request's Page field (true) or its After field (false).
+//
+// The org audit-log endpoint documents three pagination shapes depending on
+// what the server returns in the Link header's rel="next" entry:
+//   - after=<cursor> (GHEC and GHES): the documented, primary mechanism -
+//     go-github parses this into Response.After. Checked first since it's
+//     what both github.com and GHES actually return in practice.
+//   - page=<opaque token> (legacy fallback some GHES versions may still
+//     emit): go-github can't parse a non-numeric page value as an int, so it
+//     lands in Response.NextPageToken instead.
+//   - page=<N> (numeric, classic GHES offset pagination): parses into
+//     Response.NextPage.
+//
+// Checking only NextPageToken/NextPage (as earlier code did) misses the
+// after= case entirely, silently truncating every GHEC org - and most GHES
+// orgs - to a single page.
+func nextAuditLogPage(resp *github.Response) (string, bool) {
+	if resp.After != "" {
+		return resp.After, false
+	}
 	if resp.NextPageToken != "" {
-		return resp.NextPageToken
+		return resp.NextPageToken, true
 	}
 	if resp.NextPage != 0 {
-		return strconv.Itoa(resp.NextPage)
+		return strconv.Itoa(resp.NextPage), true
 	}
-	return ""
+	return "", false
 }
 
 // usageEventFromAuditEntry converts one audit-log entry into a usage event

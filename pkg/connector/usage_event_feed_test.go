@@ -433,12 +433,14 @@ func TestUsageEventFeed_ListEvents_ResumesFromPersistedCursor(t *testing.T) {
 	newer := since.Add(1 * time.Hour)
 
 	// Simulate a previous call that already finished "octo-org-a" and was
-	// mid-page through "octo-org-b" with its own audit-log cursor.
+	// mid-page through "octo-org-b" with its own audit-log cursor, resuming
+	// via classic numeric-page pagination (as GHES may still return).
 	resumeToken := &usageEventPageToken{
-		Orgs:           []string{"octo-org-a", "octo-org-b"},
-		OrgIndex:       1,
-		AuditLogCursor: "existing-cursor",
-		Since:          since.Format(time.RFC3339),
+		Orgs:                 []string{"octo-org-a", "octo-org-b"},
+		OrgIndex:             1,
+		AuditLogCursor:       "existing-cursor",
+		AuditLogCursorIsPage: true,
+		Since:                since.Format(time.RFC3339),
 	}
 	cursorStr, err := resumeToken.marshal()
 	require.NoError(t, err)
@@ -464,6 +466,50 @@ func TestUsageEventFeed_ListEvents_ResumesFromPersistedCursor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "octo-org-b", gotOrg, "should resume at the persisted org, not restart from octo-org-a")
 	require.Equal(t, "existing-cursor", gotPage, "should resume with the persisted audit-log cursor")
+	require.Len(t, events, 1)
+	require.False(t, state.HasMore)
+}
+
+func TestUsageEventFeed_ListEvents_ResumesFromPersistedAfterCursor(t *testing.T) {
+	ctx := context.Background()
+
+	since := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := since.Add(1 * time.Hour)
+
+	// Both github.com/GHEC and GHES return an after= cursor (not a numeric
+	// page) in practice, so this is the default/expected resumption path.
+	resumeToken := &usageEventPageToken{
+		Orgs:           []string{"octo-org-a", "octo-org-b"},
+		OrgIndex:       1,
+		AuditLogCursor: "existing-after-cursor",
+		Since:          since.Format(time.RFC3339),
+	}
+	cursorStr, err := resumeToken.marshal()
+	require.NoError(t, err)
+
+	var gotOrg, gotAfter, gotPage string
+	httpClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatchHandler(
+			mock.GetOrgsAuditLogByOrg,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotOrg = strings.Split(r.URL.Path, "/")[2]
+				gotAfter = r.URL.Query().Get("after")
+				gotPage = r.URL.Query().Get("page")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(mock.MustMarshal([]*github.AuditEntry{
+					{Actor: github.Ptr("bob"), ActorID: github.Ptr(int64(2)), OrgID: github.Ptr(int64(8)), Timestamp: &github.Timestamp{Time: newer}},
+				}))
+			}),
+		),
+	)
+
+	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+
+	events, state, _, err := f.ListEvents(ctx, nil, &pagination.StreamToken{Cursor: cursorStr})
+	require.NoError(t, err)
+	require.Equal(t, "octo-org-b", gotOrg, "should resume at the persisted org, not restart from octo-org-a")
+	require.Equal(t, "existing-after-cursor", gotAfter, "should resume with the persisted cursor via the after= param")
+	require.Empty(t, gotPage, "should not send the cursor as a numeric page param")
 	require.Len(t, events, 1)
 	require.False(t, state.HasMore)
 }
