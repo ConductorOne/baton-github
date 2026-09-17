@@ -32,8 +32,9 @@ type usageEventFeed struct {
 	client *github.Client
 	orgs   []string
 
-	// used to handle log Warn prints for skipped orgs.
-	skippedOrgs sampledWarn
+	// used to handle log Warn prints for skipped orgs, sampled per org so
+	// one noisy org can't starve another org's first occurrence out of the log.
+	skippedOrgs perKeySampledWarn
 }
 
 func newUsageEventFeed(client *github.Client, orgs []string) *usageEventFeed {
@@ -188,7 +189,7 @@ func (f *usageEventFeed) ListEvents(
 				return nil, nil, nil, wrapGitHubError(err, resp,
 					fmt.Sprintf("baton-github: failed to fetch audit log for org %s", orgName))
 			case isNotFoundError(resp) || isPermissionError(resp):
-				f.skippedOrgs.log(ctx, "org lacks audit-log access, skipping it for this pass",
+				f.skippedOrgs.log(ctx, orgName, "org lacks audit-log access, skipping it for this pass",
 					zap.String("org", orgName), zap.Error(err),
 				)
 

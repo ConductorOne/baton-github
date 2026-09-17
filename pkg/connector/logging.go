@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -18,6 +19,15 @@ func (s *sampledWarn) log(ctx context.Context, msg string, fields ...zap.Field) 
 		return
 	}
 	ctxzap.Extract(ctx).Warn(msg, append(fields, zap.Uint64("total_occurrences", n))...)
+}
+
+type perKeySampledWarn struct {
+	m sync.Map // key -> *sampledWarn
+}
+
+func (p *perKeySampledWarn) log(ctx context.Context, key, msg string, fields ...zap.Field) {
+	actual, _ := p.m.LoadOrStore(key, &sampledWarn{})
+	actual.(*sampledWarn).log(ctx, msg, fields...)
 }
 
 // shouldLogSample reports whether the nth occurrence should be logged.

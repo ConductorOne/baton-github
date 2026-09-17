@@ -55,22 +55,45 @@ func TestSampledWarn_LogsOnlyOnSampledOccurrences(t *testing.T) {
 	require.Equal(t, uint64(10), second.ContextMap()["total_occurrences"])
 }
 
-func TestSampledWarn_SharedAcrossDistinctOrgs(t *testing.T) {
-	// skippedOrgs is intentionally a single shared counter on usageEventFeed,
-	// not keyed per org: the sampling budget applies to the aggregate rate of
-	// skip events across every org, not to each org individually.
+func TestPerKeySampledWarn_EachKeyGetsItsOwnBudget(t *testing.T) {
+	// skippedOrgs is keyed per org so one noisy org's sampling budget can't
+	// starve another org's first occurrence out of the log.
 	core, logs := observer.New(zapcore.DebugLevel)
 	ctx := ctxzap.ToContext(context.Background(), zap.New(core))
 
-	var s sampledWarn
+	var p perKeySampledWarn
 	orgs := []string{"org-a", "org-b", "org-c"}
 	for i := 0; i < 9; i++ {
-		s.log(ctx, "org lacks audit-log access, skipping it for this pass", zap.String("org", orgs[i%len(orgs)]))
+		org := orgs[i%len(orgs)]
+		p.log(ctx, org, "org lacks audit-log access, skipping it for this pass", zap.String("org", org))
 	}
 
-	// Only the very first occurrence (org-a) is logged; org-b's and org-c's
-	// first occurrences do not each get their own log line under the shared
-	// counter, since only occurrence 1 falls on the sampling schedule before 10.
-	require.Equal(t, 1, logs.Len())
-	require.Equal(t, "org-a", logs.All()[0].ContextMap()["org"])
+	// Each org's first occurrence is its own occurrence 1, so all three log.
+	require.Equal(t, 3, logs.Len())
+	gotOrgs := make([]string, len(logs.All()))
+	for i, entry := range logs.All() {
+		gotOrgs[i] = entry.ContextMap()["org"].(string)
+	}
+	require.ElementsMatch(t, orgs, gotOrgs)
+}
+
+func TestPerKeySampledWarn_NoisyKeyDoesNotStarveNewKey(t *testing.T) {
+	// Reproduces the diagnosability gap a shared counter has: org-a alone
+	// drives the budget deep into a high sampling gap, then org-b's very
+	// first failure must still surface immediately rather than landing on
+	// org-a's non-sampled occurrence.
+	core, logs := observer.New(zapcore.DebugLevel)
+	ctx := ctxzap.ToContext(context.Background(), zap.New(core))
+
+	var p perKeySampledWarn
+	for i := 0; i < 400; i++ {
+		p.log(ctx, "org-a", "org lacks audit-log access, skipping it for this pass", zap.String("org", "org-a"))
+	}
+	logs.TakeAll() // discard org-a's own sampled lines; only org-b matters here
+
+	p.log(ctx, "org-b", "org lacks audit-log access, skipping it for this pass", zap.String("org", "org-b"))
+
+	require.Equal(t, 1, logs.Len(), "org-b's first failure must be logged even though org-a's counter is at 400")
+	require.Equal(t, "org-b", logs.All()[0].ContextMap()["org"])
+	require.Equal(t, uint64(1), logs.All()[0].ContextMap()["total_occurrences"])
 }
