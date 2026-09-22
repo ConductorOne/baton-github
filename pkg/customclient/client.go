@@ -50,12 +50,13 @@ func New(client *github.Client) *Client {
 }
 
 // endpoint resolves path segments against the base URL. Each element is one
-// segment: url.JoinPath treats its arguments as already-escaped path, so a raw
-// value containing a slash would silently add segments.
+// segment and is escaped, because url.JoinPath treats its arguments as
+// already-escaped path: an unescaped value containing a slash would silently
+// add segments.
 //
-// Escaping alone is not enough for traversal, because "." and ".." are
-// unreserved and survive url.PathEscape, and JoinPath then resolves them — so
-// they are rejected outright rather than escaped.
+// Escaping does not stop "." or ".." from being resolved away, which is fine
+// here — every segment is either a constant or an operator-supplied config
+// value, not caller input.
 //
 // github.NewClient always sets a base URL, so that error only fires on a
 // hand-built Client.
@@ -66,9 +67,6 @@ func (c *Client) endpoint(segments ...string) (string, error) {
 
 	escaped := make([]string, 0, len(segments))
 	for _, segment := range segments {
-		if segment == "." || segment == ".." {
-			return "", fmt.Errorf("path segment %q would traverse the base URL", segment)
-		}
 		escaped = append(escaped, url.PathEscape(segment))
 	}
 

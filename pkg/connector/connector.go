@@ -501,21 +501,16 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 const enterpriseInstallationTargetType = "Enterprise"
 
 // newEnterpriseRoleClients builds one client per configured enterprise, each
-// authenticated with that enterprise's own installation access token.
+// with that enterprise's own installation token: enterprise and organization
+// installations are separate, and an enterprise mutation rejects the org token.
 //
-// Enterprise installations are separate from organization installations and
-// carry only enterprise permissions, so the enterprise installation is
-// discovered through the app JWT (GET /app/installations) and gets its own
-// token source. Sending the organization token to an enterprise mutation
-// fails, and there is no way to widen the org token's scope.
+// Fails closed when the app is not installed on an enterprise, or when the
+// organization does not belong to it — an empty or foreign owner list reads to
+// C1 as a revoke of every owner assignment.
 //
-// Fails closed when the app is not installed on a configured enterprise, or
-// when the organization does not belong to it: without a trustworthy owner
-// list the connector would emit an empty or foreign enterprise_role set, which
-// reads to C1 as a revoke of every owner assignment.
-// ctx scopes the discovery requests to the caller; connectorCtx outlives them
-// and is what the memoized clients keep for refreshing their installation
-// token, which expires after an hour or on the first 401.
+// ctx scopes the discovery requests to the caller. connectorCtx outlives them
+// and is what the memoized clients keep for refreshing the installation token,
+// which expires after an hour or on the first 401.
 func newEnterpriseRoleClients(
 	ctx context.Context,
 	connectorCtx context.Context,

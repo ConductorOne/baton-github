@@ -300,21 +300,18 @@ func appList(
 	return ret, &resourceSdk.SyncOpResults{}, nil
 }
 
-// appGrants emits both the users who hold the Owner role today and the ones
-// GitHub has invited but who have not accepted yet, against the same
-// entitlement. The two are indistinguishable to C1, which has no pending grant
-// state; the connector still tells them apart internally, because revoking an
-// accepted owner and cancelling an unaccepted invitation are different
+// appGrants emits the users who hold the Owner role today and the ones invited
+// but not yet accepted, against the same entitlement. C1 has no pending grant
+// state, so the two are indistinguishable there; the connector still tells them
+// apart, because revoking an owner and cancelling an invitation are different
 // mutations.
 //
-// An invitation that nobody accepts stops resolving on GitHub's side, so it
-// simply stops being emitted and C1 removes the grant on that sync. Nothing
-// here tracks an expiry.
+// Nothing tracks an expiry: an invitation nobody accepts stops resolving on
+// GitHub's side, so it stops being emitted and C1 drops the grant that sync.
 //
-// The owners and the invitations are walked as two phases of one page token,
-// because the invitations are not enumerable and have to be resolved by asking
-// about the enterprise members in batches. An empty cursor drops the current
-// phase, so the next call moves on and the token empties once both are done.
+// Owners and invitations are two phases of one page token, because invitations
+// are not enumerable and have to be resolved from the enterprise members. An
+// empty cursor drops the current phase, emptying the token once both are done.
 func (o *enterpriseRoleResourceType) appGrants(
 	ctx context.Context,
 	enterpriseClients map[string]*githubEnterpriseAdministratorClient,
