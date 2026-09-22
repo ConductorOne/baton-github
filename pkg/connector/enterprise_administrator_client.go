@@ -11,7 +11,9 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -268,29 +270,34 @@ func (c *githubEnterpriseAdministratorClient) resolveEnterpriseNodeID(ctx contex
 	return nil
 }
 
-// verifyOrganization checks that the organization the owners are read from
-// belongs to this enterprise. Otherwise the connector would report another
+// enterpriseOrganizationsQuery reads one page of an enterprise's
+// organizations, narrowed by a search term.
+type enterpriseOrganizationsQuery struct {
+	Enterprise struct {
+		Organizations struct {
+			Nodes []struct {
+				Login githubv4.String
+			}
+			PageInfo struct {
+				HasNextPage githubv4.Boolean
+				EndCursor   githubv4.String
+			}
+		} `graphql:"organizations(first: $first, after: $after, query: $query)"`
+	} `graphql:"enterprise(slug: $slug)"`
+}
+
+// verifyOrganization checks that the organization the owners are read through
+// belongs to this enterprise; otherwise the connector would report another
 // enterprise's owners as owners of this one.
 //
-// organizations(query:) is a substring search, so an enterprise with many
-// similarly named organizations can push the exact match past the first page.
-// Every page is read before concluding that the organization is not there.
+// organizations(query:) is a substring search rather than an exact filter, so
+// every page is read before concluding the organization is not there. GitHub
+// offers no direct way to ask an organization which enterprise owns it.
 func (c *githubEnterpriseAdministratorClient) verifyOrganization(ctx context.Context, enterprise string) error {
 	var after *githubv4.String
+	walked := false
 	for page := 0; page < enterpriseMaxPages; page++ {
-		var query struct {
-			Enterprise struct {
-				Organizations struct {
-					Nodes []struct {
-						Login githubv4.String
-					}
-					PageInfo struct {
-						HasNextPage githubv4.Boolean
-						EndCursor   githubv4.String
-					}
-				} `graphql:"organizations(first: $first, after: $after, query: $query)"`
-			} `graphql:"enterprise(slug: $slug)"`
-		}
+		var query enterpriseOrganizationsQuery
 		err := c.enterpriseClient.Query(ctx, &query, map[string]any{
 			enterpriseSlugVariable:  githubv4.String(enterprise),
 			enterpriseFirstVariable: githubv4.Int(enterpriseOrganizationPageSize),
@@ -308,16 +315,23 @@ func (c *githubEnterpriseAdministratorClient) verifyOrganization(ctx context.Con
 		}
 
 		if !query.Enterprise.Organizations.PageInfo.HasNextPage {
-			return fmt.Errorf(
-				"baton-github: organization %s does not belong to enterprise %s, so its owners cannot be synced",
-				c.org, enterprise)
+			walked = true
+			break
 		}
 		after = githubv4.NewString(query.Enterprise.Organizations.PageInfo.EndCursor)
 	}
+	// Running out of budget is not the same answer as reading every page and
+	// not finding the organization: reporting the membership error there would
+	// send the operator to fix a membership that is already correct.
+	if !walked {
+		return fmt.Errorf(
+			"baton-github: gave up looking for organization %s in enterprise %s after %d pages",
+			c.org, enterprise, enterpriseMaxPages)
+	}
 
 	return fmt.Errorf(
-		"baton-github: gave up looking for organization %s in enterprise %s after %d pages",
-		c.org, enterprise, enterpriseMaxPages)
+		"baton-github: organization %s does not belong to enterprise %s, so its owners cannot be synced",
+		c.org, enterprise)
 }
 
 // enterpriseMembersQuery reads one page of the enterprise's member accounts.
@@ -380,6 +394,14 @@ func (c *githubEnterpriseAdministratorClient) members(
 			member.login = string(node.User.Login)
 		}
 		if member.databaseID == 0 || member.login == "" {
+			// Skipping costs this member their pending invitation lookup, so
+			// their Owner grant would never appear. Say so rather than drop
+			// them silently.
+			ctxzap.Extract(ctx).Debug("baton-github: skipping an enterprise member with no database ID or login",
+				zap.String("enterprise", enterprise),
+				zap.Int64("database_id", member.databaseID),
+				zap.String("login", member.login),
+			)
 			continue
 		}
 		members = append(members, member)
@@ -551,11 +573,14 @@ func (c *githubEnterpriseAdministratorClient) pendingOwnerInvitation(
 // each separately: stopping at the role would let a stale invitation survive
 // the demotion and then fail the verification that follows it.
 //
-// The owners connection does take a query argument, but it is a search rather
-// than an exact-login filter, so an empty result cannot be trusted to mean
-// "not an owner" — on Revoke that reading would report GrantAlreadyRevoked
-// while the user keeps the role. The pages are walked and matched on the login
-// instead, which in practice is one request: owners are a small set.
+// The owners connection does take a query argument, but it searches profile
+// text rather than filtering on the login: it also matches the display name.
+// A search index carries no freshness guarantee, and Grant and Revoke call
+// this again right after their mutation to confirm it landed, so an empty
+// result cannot be trusted to mean "not an owner" — on Revoke that reading
+// would report GrantAlreadyRevoked while the user keeps the role. The pages
+// are walked and matched on the login instead, which in practice is one
+// request: owners are a small set.
 func (c *githubEnterpriseAdministratorClient) OwnerState(
 	ctx context.Context,
 	enterprise string,

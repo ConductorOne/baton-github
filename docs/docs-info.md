@@ -326,7 +326,7 @@ GraphQL is used for SAML identity lookups, the audit log, and all enterprise own
 
 - REST: 5,000 requests per hour for a PAT. A GitHub App installation gets a larger budget that scales with the account; installations on this connector's test enterprise reported 15,000
 - GraphQL: a separate points-based budget, reported per query in the `rateLimit` field; App installations reported 10,000
-- The connector returns GitHub's rate limit headers and the GraphQL `rateLimit` values to the SDK as rate limit annotations, so it backs off rather than failing the sync. GraphQL errors arriving inside an HTTP 200 body are classified, so a rate limit surfaces as retryable rather than as an opaque failure
+- The connector returns GitHub's rate limit headers to the SDK as rate limit annotations, so it backs off rather than failing the sync. The enterprise owner queries additionally report the GraphQL `rateLimit` field, and are the ones that classify the errors GitHub returns inside an HTTP 200 body, so a rate limit there surfaces as retryable rather than as an opaque failure
 
 ---
 

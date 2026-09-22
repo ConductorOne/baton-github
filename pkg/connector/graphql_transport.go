@@ -154,9 +154,9 @@ func (t *enterpriseGraphQLTransport) RoundTrip(req *http.Request) (*http.Respons
 
 // graphQLErrorsCode maps a GraphQL errors array onto a gRPC code. A rate limit
 // wins over everything else so the SDK retries instead of failing the sync, and
-// a credential error wins over NOT_FOUND because callers treat NOT_FOUND as a
-// benign absence. Past that the first classified entry wins, so a later error
-// cannot mask the code an earlier one already established.
+// a credential or state error wins over NOT_FOUND because callers treat
+// NOT_FOUND as a benign absence. Past that the first classified entry wins, so
+// a later error cannot mask the code an earlier one already established.
 func graphQLErrorsCode(graphQLErrors []graphQLError) codes.Code {
 	code := codes.Internal
 	for _, graphQLErr := range graphQLErrors {

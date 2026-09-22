@@ -488,6 +488,12 @@ func (o *enterpriseRoleResourceType) Grant(
 		if status.Code(inviteErr) != codes.FailedPrecondition {
 			return nil, annos, inviteErr
 		}
+		// Only the promotion's error is returned, so GitHub's reason for
+		// refusing the invitation would otherwise be lost.
+		ctxzap.Extract(ctx).Debug("baton-github: invitation rejected, promoting in place instead",
+			zap.String("login", login),
+			zap.Error(inviteErr),
+		)
 		if promoteErr := client.UpdateRole(
 			ctx, state.enterpriseID, login, githubv4.EnterpriseAdministratorRoleOwner,
 		); promoteErr != nil {

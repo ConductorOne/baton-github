@@ -941,10 +941,6 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 	})
 }
 
-// An enterprise owner does not have to be an owner of the organization the app
-// reads them through: observed live with a user whose organizationRole was
-// DIRECT_MEMBER. Organization.enterpriseOwners returns them regardless, and the
-// connector must emit their grant.
 // GitHub reports a GraphQL budget error as an HTTP 200 carrying errors[], so
 // the status of the response says nothing. Reading the owners is the hottest
 // GraphQL path in this role, and an unclassified budget error reaches the SDK
@@ -958,6 +954,10 @@ func TestEnterpriseRoleGrantsClassifyARateLimitedOwnersRead(t *testing.T) {
 	require.Equal(t, codes.Unavailable, status.Code(err))
 }
 
+// An enterprise owner does not have to be an owner of the organization the app
+// reads them through: observed live with a user whose organizationRole was
+// DIRECT_MEMBER. Organization.enterpriseOwners returns them regardless, and the
+// connector must emit their grant.
 func TestEnterpriseRoleGrantsIncludeOwnerWhoIsNotAnOrgOwner(t *testing.T) {
 	t.Parallel()
 
