@@ -42,7 +42,10 @@ baton resources
 - Users
 - Teams
 - Repositories
+- Organization roles
+- Invitations (users invited to an organization who have not accepted yet)
 - GitHub Apps (installed in organizations, synced as non-human identities)
+- Enterprise roles and licenses, only when `--enterprises` is set
 
 By default, `baton-github` will sync information from any organizations that the provided credential has Administrator permissions on. You can specify exactly which organizations you would like to sync using the `--orgs` flag.
 

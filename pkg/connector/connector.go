@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -127,6 +126,7 @@ type GitHub struct {
 	omitArchivedRepositories bool
 	directCollaboratorsOnly  bool
 	enterprises              []string
+	newEnterpriseRoleClients enterpriseClientProvider
 	syncLastActivity         bool
 }
 
@@ -156,7 +156,10 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 
 	if len(gh.enterprises) > 0 {
 		resourceSyncers = append(resourceSyncers,
-			EnterpriseRoleBuilder(gh.client, gh.appClient, gh.customClient, gh.enterprises),
+			EnterpriseRoleBuilder(
+				gh.client, gh.appClient, gh.customClient, gh.enterprises,
+				gh.newEnterpriseRoleClients,
+			),
 			LicenseBuilder(gh.customClient, gh.enterprises),
 		)
 	}
@@ -288,9 +291,9 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 		l := ctxzap.Extract(ctx)
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
 		if err != nil {
-			l.Debug("baton-github: enterprise features (--enterprises) require a Personal Access Token. "+
-				"GitHub App authentication cannot access the consumed-licenses API. "+
-				"Either switch to PAT auth or remove the --enterprises flag.",
+			l.Debug("baton-github: enterprise license data requires a Personal Access Token. "+
+				"GitHub App authentication cannot access the consumed-licenses API, "+
+				"so the license resource type cannot sync.",
 				zap.Error(err))
 		}
 	}
@@ -457,6 +460,19 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		return nil, err
 	}
 
+	// Enterprise administration needs its own installation token: the org
+	// installation token above carries no enterprise permissions. Reading the
+	// owners needs the org token, so both are handed to the client.
+	//
+	// Built on first use rather than here, so a failure fails the
+	// enterprise_role sync instead of the whole connector: the other resource
+	// types keep syncing and C1 holds its previous owner state rather than
+	// reading an empty list as a revoke of every owner.
+	newEnterpriseRoleClientsFn := func(ctx context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+		return newEnterpriseRoleClients(
+			ctx, ghc.InstanceUrl, appClient, jwtts, ghc.Enterprises, appHTTPClient, ghc.Org)
+	}
+
 	gh := &GitHub{
 		client:                   ghClient,
 		appClient:                appClient,
@@ -464,6 +480,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		instanceURL:              ghc.InstanceUrl,
 		orgs:                     []string{ghc.Org},
 		enterprises:              ghc.Enterprises,
+		newEnterpriseRoleClients: newEnterpriseRoleClientsFn,
 		graphqlClient:            graphqlClient,
 		orgCache:                 newOrgNameCache(ghClient),
 		syncSecrets:              ghc.SyncSecrets,
@@ -474,17 +491,131 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	return gh, nil
 }
 
-func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
-	instanceURL = strings.TrimSuffix(instanceURL, "/")
+// enterpriseInstallationTargetType is the target_type that
+// GET /app/installations reports for an enterprise-level installation.
+const enterpriseInstallationTargetType = "Enterprise"
 
-	var enterpriseGqlURL string
-	if instanceURL != "" && instanceURL != githubDotCom {
-		parsed, err := url.Parse(instanceURL)
+// newEnterpriseRoleClients builds one client per configured enterprise, each
+// authenticated with that enterprise's own installation access token.
+//
+// Enterprise installations are separate from organization installations and
+// carry only enterprise permissions, so the enterprise installation is
+// discovered through the app JWT (GET /app/installations) and gets its own
+// token source. Sending the organization token to an enterprise mutation
+// fails, and there is no way to widen the org token's scope.
+//
+// Fails closed when the app is not installed on a configured enterprise, or
+// when the organization does not belong to it: without a trustworthy owner
+// list the connector would emit an empty or foreign enterprise_role set, which
+// reads to C1 as a revoke of every owner assignment.
+func newEnterpriseRoleClients(
+	ctx context.Context,
+	instanceURL string,
+	appClient *github.Client,
+	jwtTokenSource oauth2.TokenSource,
+	enterprises []string,
+	orgHTTPClient *http.Client,
+	org string,
+) (map[string]*githubEnterpriseAdministratorClient, error) {
+	if len(enterprises) == 0 {
+		return nil, nil
+	}
+	// The owners are read through the single configured organization, and an
+	// organization belongs to exactly one enterprise, so only that enterprise
+	// can be served. Saying so here beats failing later on a verification the
+	// operator cannot satisfy. The PAT path does support a list.
+	if len(enterprises) > 1 {
+		return nil, fmt.Errorf(
+			"github-connector: GitHub App authentication serves one enterprise at a time, "+
+				"because the owners are read through organization %q, which belongs to a single enterprise; "+
+				"%d were configured", org, len(enterprises))
+	}
+
+	installations, err := listEnterpriseInstallations(ctx, customclient.New(appClient))
+	if err != nil {
+		return nil, err
+	}
+
+	clients := make(map[string]*githubEnterpriseAdministratorClient, len(enterprises))
+	for _, enterprise := range enterprises {
+		installationID, ok := installations[strings.ToLower(enterprise)]
+		if !ok {
+			return nil, fmt.Errorf(
+				"github-connector: GitHub App is not installed on enterprise %q; install it on the enterprise account "+
+					"with the Enterprise people read and write permission", enterprise)
+		}
+
+		token, err := getInstallationToken(ctx, appClient, installationID)
 		if err != nil {
 			return nil, err
 		}
-		parsed.Path = "/api/graphql"
-		enterpriseGqlURL = parsed.String()
+
+		ts := newRefreshableTokenSource(
+			&oauth2.Token{
+				AccessToken: token.GetToken(),
+				Expiry:      token.GetExpiresAt().Time,
+			},
+			&appTokenRefresher{
+				ctx:            ctx,
+				instanceURL:    instanceURL,
+				installationID: installationID,
+				jwtTokenSource: jwtTokenSource,
+			},
+		)
+
+		httpClient, err := newGitHubAppHTTPClient(ctx, ts)
+		if err != nil {
+			return nil, err
+		}
+
+		client, err := newEnterpriseAdministratorClient(instanceURL, httpClient, orgHTTPClient, org)
+		if err != nil {
+			return nil, err
+		}
+		if err := client.verifyOrganization(ctx, enterprise); err != nil {
+			return nil, err
+		}
+		if err := client.resolveEnterpriseNodeID(ctx, enterprise); err != nil {
+			return nil, err
+		}
+		clients[enterprise] = client
+	}
+
+	return clients, nil
+}
+
+// listEnterpriseInstallations maps enterprise slug (lowercased) to installation
+// ID for every enterprise installation of this app. go-github models the
+// installation account as *User, which has no enterprise slug, so the response
+// is decoded through customclient's own model.
+func listEnterpriseInstallations(ctx context.Context, client *customclient.Client) (map[string]int64, error) {
+	installations := make(map[string]int64)
+	page := 1
+	for {
+		pageInstallations, _, err := client.ListAppInstallations(ctx, page)
+		if err != nil {
+			return nil, fmt.Errorf("github-connector: failed to list app installations: %w", err)
+		}
+
+		for _, installation := range pageInstallations {
+			if installation.TargetType != enterpriseInstallationTargetType || installation.Account.Slug == "" {
+				continue
+			}
+			installations[strings.ToLower(installation.Account.Slug)] = installation.ID
+		}
+
+		// A page shorter than the one requested is the last one.
+		if len(pageInstallations) < customclient.AppInstallationsPageSize {
+			return installations, nil
+		}
+		page++
+	}
+}
+
+func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
+	endpoint, err := enterpriseGraphQLEndpoint(instanceURL)
+	if err != nil {
+		return nil, err
 	}
 
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
@@ -496,10 +627,7 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.T
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	tc := oauth2.NewClient(ctx, ts)
 
-	if enterpriseGqlURL != "" {
-		return githubv4.NewEnterpriseClient(enterpriseGqlURL, tc), nil
-	}
-	return githubv4.NewClient(tc), nil
+	return githubv4.NewEnterpriseClient(endpoint.String(), tc), nil
 }
 
 // escapedLineBreaks unescapes LF-, CRLF-, and CR-escaped line breaks (`\r\n`,

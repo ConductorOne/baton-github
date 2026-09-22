@@ -2,22 +2,42 @@ package connector
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/conductorone/baton-github/pkg/customclient"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"github.com/shurcooL/githubv4"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+const (
+	enterpriseRoleAssigned = "assigned"
+	enterpriseRoleOwner    = "Owner"
+
+	// Sync phases of the Owner grants. The invitations cannot be listed, so
+	// they are resolved from the members in a second pass over the same token.
+	enterpriseOwnersPhase  = "enterprise-owners"
+	enterprisePendingPhase = "enterprise-pending-invitations"
+
+	// UNAFFILIATED demotes an administrator while keeping their enterprise
+	// membership; removeEnterpriseAdmin would evict them from the enterprise.
+	enterpriseAdministratorRoleUnaffiliated githubv4.EnterpriseAdministratorRole = "UNAFFILIATED"
+)
+
+// enterpriseClientProvider builds the per-enterprise administration clients.
+type enterpriseClientProvider func(ctx context.Context) (map[string]*githubEnterpriseAdministratorClient, error)
 
 type enterpriseRoleResourceType struct {
 	resourceType   *v2.ResourceType
@@ -27,10 +47,46 @@ type enterpriseRoleResourceType struct {
 	enterprises    []string
 	roleUsersCache map[string][]string
 	mu             *sync.Mutex
+	// newEnterpriseClients builds the per-enterprise administration clients.
+	// It is nil under PAT auth.
+	newEnterpriseClients enterpriseClientProvider
+	// enterpriseClients is keyed by enterprise slug and memoized after the
+	// first successful build; enterpriseClientsErr is why it could not be
+	// built, which fails this resource type only so the rest still syncs.
+	enterpriseClients    map[string]*githubEnterpriseAdministratorClient
+	enterpriseClientsErr error
+	enterpriseClientsSet bool
 }
 
 func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return o.resourceType
+}
+
+// clients returns the per-enterprise administration clients, building them on
+// first use and memoizing the outcome.
+//
+// A retryable failure is not memoized: discovering the installations is four
+// network calls, and freezing a startup blip would disable this resource type
+// for the lifetime of the process. A misconfiguration is memoized, because it
+// will fail the same way every time.
+func (o *enterpriseRoleResourceType) clients(
+	ctx context.Context,
+) (map[string]*githubEnterpriseAdministratorClient, error) {
+	if o.newEnterpriseClients == nil {
+		return nil, nil
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.enterpriseClientsSet && !isRetryableError(o.enterpriseClientsErr) {
+		return o.enterpriseClients, o.enterpriseClientsErr
+	}
+
+	o.enterpriseClients, o.enterpriseClientsErr = o.newEnterpriseClients(ctx)
+	o.enterpriseClientsSet = true
+
+	return o.enterpriseClients, o.enterpriseClientsErr
 }
 
 func (o *enterpriseRoleResourceType) cacheRole(roleId string, userLogin string) {
@@ -97,6 +153,17 @@ func (o *enterpriseRoleResourceType) List(
 	parentID *v2.ResourceId,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
+	enterpriseClients, err := o.clients(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The consumed-licenses API that backs the cache is PAT-only, so a GitHub
+	// App can only see the built-in Owner role it is able to read and mutate.
+	if len(enterpriseClients) > 0 {
+		return appList(o.enterprises, enterpriseClients)
+	}
+
 	var ret []*v2.Resource
 	cache, err := o.getRoleUsersCache(ctx)
 	if err != nil {
@@ -135,7 +202,7 @@ func (o *enterpriseRoleResourceType) StaticEntitlements(
 	_ resourceSdk.SyncOpAttrs,
 ) ([]*v2.Entitlement, *resourceSdk.SyncOpResults, error) {
 	rv := []*v2.Entitlement{}
-	rv = append(rv, entitlement.NewAssignmentEntitlement(nil, "assigned",
+	rv = append(rv, entitlement.NewAssignmentEntitlement(nil, enterpriseRoleAssigned,
 		entitlement.WithDisplayName("Role Assigned"),
 		entitlement.WithDescription("Assignment to enterprise role in GitHub"),
 		entitlement.WithGrantableTo(resourceTypeUser),
@@ -149,6 +216,14 @@ func (o *enterpriseRoleResourceType) Grants(
 	resource *v2.Resource,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
+	enterpriseClients, err := o.clients(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(enterpriseClients) > 0 {
+		return o.appGrants(ctx, enterpriseClients, resource, opts)
+	}
+
 	cache, err := o.getRoleUsersCache(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("baton-github: error getting user roles cache: %w", err)
@@ -168,7 +243,7 @@ func (o *enterpriseRoleResourceType) Grants(
 
 		ret = append(ret, grant.NewGrant(
 			resource,
-			"assigned",
+			enterpriseRoleAssigned,
 			principalId,
 		))
 	}
@@ -176,22 +251,396 @@ func (o *enterpriseRoleResourceType) Grants(
 	return ret, &resourceSdk.SyncOpResults{}, nil
 }
 
-func EnterpriseRoleBuilder(client *github.Client, appClient *github.Client, customClient *customclient.Client, enterprises []string) *enterpriseRoleResourceType {
+// EnterpriseRoleBuilder returns the enterprise role syncer. newEnterpriseClients
+// is nil under PAT authentication, where only the read path is available.
+func EnterpriseRoleBuilder(
+	client *github.Client,
+	appClient *github.Client,
+	customClient *customclient.Client,
+	enterprises []string,
+	newEnterpriseClients enterpriseClientProvider,
+) *enterpriseRoleResourceType {
 	return &enterpriseRoleResourceType{
-		resourceType:   resourceTypeEnterpriseRole,
-		client:         client,
-		appClient:      appClient,
-		customClient:   customClient,
-		enterprises:    enterprises,
-		roleUsersCache: make(map[string][]string),
-		mu:             &sync.Mutex{},
+		resourceType:         resourceTypeEnterpriseRole,
+		client:               client,
+		appClient:            appClient,
+		customClient:         customClient,
+		enterprises:          enterprises,
+		roleUsersCache:       make(map[string][]string),
+		mu:                   &sync.Mutex{},
+		newEnterpriseClients: newEnterpriseClients,
 	}
 }
 
-func isPermissionDenied(err error) bool {
-	var grpcErr interface{ GRPCStatus() *status.Status }
-	if errors.As(err, &grpcErr) {
-		return grpcErr.GRPCStatus().Code() == codes.PermissionDenied
+// appList emits only the built-in Owner role. The consumed-licenses API that
+// discovers the other roles is PAT-only.
+func appList(
+	enterprises []string,
+	enterpriseClients map[string]*githubEnterpriseAdministratorClient,
+) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
+	var ret []*v2.Resource
+	for _, enterprise := range enterprises {
+		if _, ok := enterpriseClients[enterprise]; !ok {
+			continue
+		}
+
+		roleResource, err := resourceSdk.NewRoleResource(
+			enterpriseRoleOwner,
+			resourceTypeEnterpriseRole,
+			fmt.Sprintf("%s:%s", enterprise, enterpriseRoleOwner),
+			[]resourceSdk.RoleTraitOption{},
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("baton-github: error creating role resource for %s in enterprise %s: %w",
+				enterpriseRoleOwner, enterprise, err)
+		}
+		ret = append(ret, roleResource)
 	}
-	return false
+
+	return ret, &resourceSdk.SyncOpResults{}, nil
+}
+
+// appGrants emits both the users who hold the Owner role today and the ones
+// GitHub has invited but who have not accepted yet, against the same
+// entitlement. The two are indistinguishable to C1, which has no pending grant
+// state; the connector still tells them apart internally, because revoking an
+// accepted owner and cancelling an unaccepted invitation are different
+// mutations.
+//
+// An invitation that nobody accepts stops resolving on GitHub's side, so it
+// simply stops being emitted and C1 removes the grant on that sync. Nothing
+// here tracks an expiry.
+//
+// The owners and the invitations are walked as two phases of one page token,
+// because the invitations are not enumerable and have to be resolved by asking
+// about the enterprise members in batches. An empty cursor drops the current
+// phase, so the next call moves on and the token empties once both are done.
+func (o *enterpriseRoleResourceType) appGrants(
+	ctx context.Context,
+	enterpriseClients map[string]*githubEnterpriseAdministratorClient,
+	resource *v2.Resource,
+	opts resourceSdk.SyncOpAttrs,
+) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
+	enterprise, ok := provisionableEnterpriseOwner(resource.Id.Resource)
+	if !ok {
+		return nil, &resourceSdk.SyncOpResults{}, nil
+	}
+	client, ok := enterpriseClients[enterprise]
+	if !ok {
+		return nil, &resourceSdk.SyncOpResults{}, nil
+	}
+
+	bag := &pagination.Bag{}
+	if err := bag.Unmarshal(opts.PageToken.Token); err != nil {
+		return nil, nil, fmt.Errorf("baton-github: error parsing enterprise owner page token: %w", err)
+	}
+	if bag.Current() == nil {
+		// Reverse order: the owners are walked first.
+		bag.Push(pagination.PageState{ResourceTypeID: enterprisePendingPhase})
+		bag.Push(pagination.PageState{ResourceTypeID: enterpriseOwnersPhase})
+	}
+
+	var after *githubv4.String
+	if cursor := bag.PageToken(); cursor != "" {
+		after = githubv4.NewString(githubv4.String(cursor))
+	}
+
+	var (
+		ret        []*v2.Grant
+		nextCursor string
+		annos      annotations.Annotations
+		err        error
+	)
+	switch phase := bag.ResourceTypeID(); phase {
+	case enterpriseOwnersPhase:
+		ret, nextCursor, annos, err = o.ownerGrants(ctx, client, resource, after)
+	case enterprisePendingPhase:
+		ret, nextCursor, annos, err = o.pendingInvitationGrants(ctx, client, resource, enterprise, after)
+	default:
+		return nil, nil, fmt.Errorf("baton-github: unexpected enterprise owner sync phase %q", phase)
+	}
+	if err != nil {
+		return nil, &resourceSdk.SyncOpResults{Annotations: annos}, err
+	}
+
+	if err := bag.Next(nextCursor); err != nil {
+		return nil, &resourceSdk.SyncOpResults{Annotations: annos},
+			fmt.Errorf("baton-github: error advancing the enterprise owner page token: %w", err)
+	}
+	pageToken, err := bag.Marshal()
+	if err != nil {
+		return nil, &resourceSdk.SyncOpResults{Annotations: annos},
+			fmt.Errorf("baton-github: error building the enterprise owner page token: %w", err)
+	}
+
+	return ret, &resourceSdk.SyncOpResults{Annotations: annos, NextPageToken: pageToken}, nil
+}
+
+// ownerGrants emits one page of the users who hold the role today.
+func (o *enterpriseRoleResourceType) ownerGrants(
+	ctx context.Context,
+	client *githubEnterpriseAdministratorClient,
+	resource *v2.Resource,
+	after *githubv4.String,
+) ([]*v2.Grant, string, annotations.Annotations, error) {
+	owners, nextCursor, annos, err := client.owners(ctx, after)
+	if err != nil {
+		return nil, "", annos, err
+	}
+
+	ret := make([]*v2.Grant, 0, len(owners))
+	for _, owner := range owners {
+		principalId, err := enterpriseOwnerPrincipalID(owner)
+		if err != nil {
+			return nil, "", annos, err
+		}
+		ret = append(ret, grant.NewGrant(resource, enterpriseRoleAssigned, principalId))
+	}
+
+	return ret, nextCursor, annos, nil
+}
+
+// pendingInvitationGrants emits one page worth of users who have been invited
+// to the role and have not accepted, in member order so a page emits the same
+// grants in the same sequence on every sync.
+//
+// GitHub exposes no connection of pending administrator invitations to an
+// installation token, so they cannot be listed: they are resolved by asking
+// about known logins. The enterprise members are that candidate set, which
+// means an invitation sent to someone who is not a member of the enterprise is
+// invisible to the sync.
+func (o *enterpriseRoleResourceType) pendingInvitationGrants(
+	ctx context.Context,
+	client *githubEnterpriseAdministratorClient,
+	resource *v2.Resource,
+	enterprise string,
+	after *githubv4.String,
+) ([]*v2.Grant, string, annotations.Annotations, error) {
+	members, nextCursor, annos, err := client.members(ctx, enterprise, after)
+	if err != nil {
+		return nil, "", annos, err
+	}
+	if len(members) == 0 {
+		return nil, nextCursor, annos, nil
+	}
+
+	logins := make([]string, 0, len(members))
+	for _, member := range members {
+		logins = append(logins, member.login)
+	}
+
+	invitations, invitationAnnos, err := client.pendingOwnerInvitations(ctx, enterprise, logins)
+	annos = freshestRateLimit(annos, invitationAnnos)
+	if err != nil {
+		return nil, "", annos, err
+	}
+
+	ret := make([]*v2.Grant, 0, len(invitations))
+	for _, member := range members {
+		if _, invited := invitations[member.login]; !invited {
+			continue
+		}
+		principalId, err := enterpriseOwnerPrincipalID(member)
+		if err != nil {
+			return nil, "", annos, err
+		}
+		ret = append(ret, grant.NewGrant(resource, enterpriseRoleAssigned, principalId))
+	}
+
+	return ret, nextCursor, annos, nil
+}
+
+// Grant gives a user the built-in Owner role and returns the resulting grant.
+//
+// A member can only become an owner by accepting an invitation, while someone
+// who already administers the enterprise is promoted in place. Which case
+// applies is unreadable for an installation token, so the invitation is tried
+// first and the promotion is the fallback, keyed on the FailedPrecondition
+// that GitHub's UNPROCESSABLE maps to.
+//
+// An unaccepted invitation counts as held and returns a grant, the same way
+// Grants() emits it: returning nothing would make C1 drop an overlay that the
+// next sync puts straight back.
+func (o *enterpriseRoleResourceType) Grant(
+	ctx context.Context,
+	principal *v2.Resource,
+	ent *v2.Entitlement,
+) ([]*v2.Grant, annotations.Annotations, error) {
+	enterprise, client, err := o.provisioningTarget(ctx, principal, ent)
+	if err != nil {
+		return nil, nil, err
+	}
+	login, err := o.userLogin(ctx, principal.Id.Resource)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	result := []*v2.Grant{grant.NewGrant(ent.GetResource(), ent.GetSlug(), principal.Id)}
+	annos := annotations.New()
+	state, stateAnnos, err := client.OwnerState(ctx, enterprise, login)
+	annos = freshestRateLimit(annos, stateAnnos)
+	if err != nil {
+		return nil, annos, err
+	}
+	if state.isOwner || state.pendingInvitationID != "" {
+		annos.Append(&v2.GrantAlreadyExists{})
+		return result, annos, nil
+	}
+
+	if inviteErr := client.InviteOwner(ctx, state.enterpriseID, login); inviteErr != nil {
+		if status.Code(inviteErr) != codes.FailedPrecondition {
+			return nil, annos, inviteErr
+		}
+		if promoteErr := client.UpdateRole(
+			ctx, state.enterpriseID, login, githubv4.EnterpriseAdministratorRoleOwner,
+		); promoteErr != nil {
+			// The promotion's status code is what tells C1 whether to retry.
+			return nil, annos, fmt.Errorf(
+				"promoting %s after the invitation was rejected: %w", login, promoteErr)
+		}
+	}
+
+	state, stateAnnos, err = client.OwnerState(ctx, enterprise, login)
+	annos = freshestRateLimit(annos, stateAnnos)
+	if err != nil {
+		return nil, annos, err
+	}
+	switch {
+	case state.isOwner, state.pendingInvitationID != "":
+		return result, annos, nil
+	default:
+		return nil, annos, status.Errorf(codes.Unavailable,
+			"baton-github: enterprise owner grant for %s is not visible in GitHub", login)
+	}
+}
+
+// Revoke takes the built-in Owner role away from a user.
+//
+// Holding the role and carrying an invitation are not alternatives, so both
+// are cleared: either one left behind would fail the verification that
+// follows. Demotion uses UNAFFILIATED, which keeps the user as a member of the
+// enterprise instead of evicting them. A NOT_FOUND from either mutation is
+// success, because it means the state being asked for is already in place.
+func (o *enterpriseRoleResourceType) Revoke(
+	ctx context.Context,
+	grantObj *v2.Grant,
+) (annotations.Annotations, error) {
+	enterprise, client, err := o.provisioningTarget(ctx, grantObj.GetPrincipal(), grantObj.GetEntitlement())
+	if err != nil {
+		return nil, err
+	}
+	login, err := o.userLogin(ctx, grantObj.GetPrincipal().GetId().GetResource())
+	if err != nil {
+		return nil, err
+	}
+
+	annos := annotations.New()
+	state, stateAnnos, err := client.OwnerState(ctx, enterprise, login)
+	annos = freshestRateLimit(annos, stateAnnos)
+	if err != nil {
+		return annos, err
+	}
+	if !state.isOwner && state.pendingInvitationID == "" {
+		annos.Append(&v2.GrantAlreadyRevoked{})
+		return annos, nil
+	}
+
+	if state.isOwner {
+		if err := client.UpdateRole(
+			ctx, state.enterpriseID, login, enterpriseAdministratorRoleUnaffiliated,
+		); err != nil && status.Code(err) != codes.NotFound {
+			return annos, err
+		}
+	}
+	if state.pendingInvitationID != "" {
+		if err := client.CancelInvitation(ctx, state.pendingInvitationID); err != nil && status.Code(err) != codes.NotFound {
+			return annos, err
+		}
+	}
+
+	state, stateAnnos, err = client.OwnerState(ctx, enterprise, login)
+	annos = freshestRateLimit(annos, stateAnnos)
+	if err != nil {
+		return annos, err
+	}
+	if state.isOwner || state.pendingInvitationID != "" {
+		return annos, status.Errorf(codes.Unavailable,
+			"baton-github: enterprise owner revoke for %s is not visible in GitHub", login)
+	}
+
+	return annos, nil
+}
+
+func (o *enterpriseRoleResourceType) provisioningTarget(
+	ctx context.Context,
+	principal *v2.Resource,
+	ent *v2.Entitlement,
+) (string, *githubEnterpriseAdministratorClient, error) {
+	if principal.GetId().GetResourceType() != resourceTypeUser.Id {
+		return "", nil, status.Error(codes.InvalidArgument,
+			"baton-github: enterprise role can only be granted to a user")
+	}
+	enterprise, ok := provisionableEnterpriseOwner(ent.GetResource().GetId().GetResource())
+	if !ok {
+		return "", nil, status.Error(codes.InvalidArgument,
+			"baton-github: only the built-in enterprise Owner role can be provisioned")
+	}
+	// The construction error comes first: without it the operator is told the
+	// app is not installed even when the real cause was a transient failure
+	// or a mismatched organization, and FailedPrecondition reads to C1 as
+	// non-retryable.
+	enterpriseClients, err := o.clients(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	client, ok := enterpriseClients[enterprise]
+	if !ok {
+		return "", nil, status.Errorf(codes.FailedPrecondition,
+			"baton-github: provisioning enterprise %s requires a GitHub App installed on the enterprise account", enterprise)
+	}
+	return enterprise, client, nil
+}
+
+func (o *enterpriseRoleResourceType) userLogin(ctx context.Context, userID string) (string, error) {
+	id, err := strconv.ParseInt(userID, 10, 64)
+	if err != nil {
+		return "", status.Errorf(codes.InvalidArgument, "baton-github: invalid GitHub user ID %q", userID)
+	}
+	user, resp, err := o.client.Users.GetByID(ctx, id)
+	if err != nil {
+		return "", wrapGitHubError(err, resp, fmt.Sprintf("baton-github: failed to get user %d", id))
+	}
+	if user.GetLogin() == "" {
+		return "", fmt.Errorf("baton-github: GitHub user %d has no login", id)
+	}
+	return user.GetLogin(), nil
+}
+
+func enterpriseOwnerPrincipalID(owner enterpriseUser) (*v2.ResourceId, error) {
+	if owner.databaseID <= 0 {
+		return nil, fmt.Errorf("baton-github: enterprise owner %q has no database ID", owner.login)
+	}
+	principalId, err := resourceSdk.NewResourceID(resourceTypeUser, owner.databaseID)
+	if err != nil {
+		return nil, fmt.Errorf("baton-github: error creating resource ID for user %s: %w", owner.login, err)
+	}
+	return principalId, nil
+}
+
+// provisionableEnterpriseOwner returns the enterprise of a resource ID when it
+// names the one role this connector can read and write through the GitHub App.
+// Sync and provisioning share it so they cannot disagree on which roles are in
+// the catalog.
+func provisionableEnterpriseOwner(resourceID string) (string, bool) {
+	enterprise, role, ok := parseEnterpriseRoleID(resourceID)
+	if !ok || !strings.EqualFold(role, enterpriseRoleOwner) {
+		return "", false
+	}
+
+	return enterprise, true
+}
+
+func parseEnterpriseRoleID(resourceID string) (string, string, bool) {
+	enterprise, role, ok := strings.Cut(resourceID, ":")
+	return enterprise, role, ok && enterprise != "" && role != ""
 }
