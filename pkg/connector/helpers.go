@@ -324,15 +324,22 @@ func isAuthError(resp *github.Response) bool {
 	return resp.StatusCode == http.StatusUnauthorized
 }
 
-// isRetryableError reports whether an error is worth attempting again, rather
-// than a misconfiguration that will fail identically every time.
-func isRetryableError(err error) bool {
+// isPermanentError reports whether an error will keep failing until an
+// operator changes something, which is what makes it safe to remember.
+//
+// The test is which codes are permanent, not which are transient, because an
+// unclassified error has to be retried: a go-github failure or a cancelled
+// context reaches here wrapped with %w and carries no gRPC status, so
+// status.Code reports Unknown for a 502, a rate limit and a cancelled sync
+// alike. Treating Unknown as permanent would remember a blip forever.
+func isPermanentError(err error) bool {
 	if err == nil {
 		return false
 	}
 
 	switch status.Code(err) {
-	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
+	case codes.PermissionDenied, codes.Unauthenticated, codes.NotFound,
+		codes.InvalidArgument, codes.FailedPrecondition:
 		return true
 	default:
 		return false

@@ -524,14 +524,21 @@ func newEnterpriseRoleClients(
 	// organization belongs to exactly one enterprise, so only that enterprise
 	// can be served. Saying so here beats failing later on a verification the
 	// operator cannot satisfy. The PAT path does support a list.
+	// FailedPrecondition on the answers an operator has to change: it is what
+	// marks them safe to remember instead of rediscovering every call.
 	if len(enterprises) > 1 {
-		return nil, fmt.Errorf(
+		return nil, status.Errorf(codes.FailedPrecondition,
 			"github-connector: GitHub App authentication serves one enterprise at a time, "+
 				"because the owners are read through organization %q, which belongs to a single enterprise; "+
 				"%d were configured", org, len(enterprises))
 	}
 
+	// NewBaseHttpClient reports a failed cache setup by returning nil, which
+	// only panics later inside Do.
 	installationClient := customclient.New(appClient)
+	if installationClient.BaseHttpClient == nil {
+		return nil, fmt.Errorf("github-connector: error building the enterprise installation client")
+	}
 
 	clients := make(map[string]*githubEnterpriseAdministratorClient, len(enterprises))
 	for _, enterprise := range enterprises {
@@ -540,7 +547,7 @@ func newEnterpriseRoleClients(
 			// A 404 is the app not being installed on the enterprise, which is
 			// the misconfiguration worth naming.
 			if status.Code(err) == codes.NotFound {
-				return nil, fmt.Errorf(
+				return nil, status.Errorf(codes.FailedPrecondition,
 					"github-connector: GitHub App is not installed on enterprise %q; install it on the enterprise account "+
 						"with the Enterprise people read and write permission", enterprise)
 			}

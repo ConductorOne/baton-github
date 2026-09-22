@@ -3,7 +3,6 @@ package connector
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -853,7 +852,10 @@ func TestEnterpriseRoleFailsClosedWithoutEnterpriseClients(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	clientsErr := errors.New("github-connector: GitHub App is not installed on enterprise")
+	// The code that produces this answer marks it FailedPrecondition, which is
+	// what makes it safe to remember.
+	clientsErr := status.Error(codes.FailedPrecondition,
+		"github-connector: GitHub App is not installed on enterprise")
 	builds := 0
 	builder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise},
 		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
@@ -879,6 +881,50 @@ func TestEnterpriseRoleFailsClosedWithoutEnterpriseClients(t *testing.T) {
 	// A misconfiguration answers the same way every time, so it is built once
 	// and remembered rather than re-probed on each call.
 	require.Equal(t, 1, builds)
+}
+
+// Building the clients calls go-github directly, whose errors arrive wrapped
+// with %w and carry no gRPC status, so a 502 and a cancelled sync both read as
+// Unknown. Remembering those would disable the resource type for the lifetime
+// of the process on a blip the operator cannot see or fix.
+func TestEnterpriseRoleRetriesAnUnclassifiedClientFailure(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"a go-github failure", fmt.Errorf("github-connector: failed to create installation token: %w",
+			&github.ErrorResponse{
+				Response: &http.Response{StatusCode: http.StatusBadGateway, Request: &http.Request{}},
+				Message:  "Bad gateway",
+			})},
+		{"a cancelled sync", fmt.Errorf("github-connector: discovering installations: %w", context.Canceled)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			builds := 0
+			builder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise},
+				func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+					builds++
+					if builds == 1 {
+						return nil, tc.err
+					}
+					return map[string]*githubEnterpriseAdministratorClient{testEnterprise: nil}, nil
+				},
+			)
+
+			_, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+			require.ErrorIs(t, err, tc.err)
+
+			resources, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+			require.NoError(t, err)
+			require.Len(t, resources, 1)
+			require.Equal(t, 2, builds)
+		})
+	}
 }
 
 // A transient failure must not be remembered: freezing a blip at startup would

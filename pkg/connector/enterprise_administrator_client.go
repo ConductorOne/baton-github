@@ -329,7 +329,9 @@ func (c *githubEnterpriseAdministratorClient) verifyOrganization(ctx context.Con
 			c.org, enterprise, enterpriseMaxPages)
 	}
 
-	return fmt.Errorf(
+	// FailedPrecondition so the caller remembers it: only a configuration
+	// change can make this organization belong to that enterprise.
+	return status.Errorf(codes.FailedPrecondition,
 		"baton-github: organization %s does not belong to enterprise %s, so its owners cannot be synced",
 		c.org, enterprise)
 }

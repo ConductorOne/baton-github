@@ -65,10 +65,10 @@ func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.Resourc
 // clients returns the per-enterprise administration clients, building them on
 // first use and memoizing the outcome.
 //
-// A retryable failure is not memoized: discovering the installations is four
-// network calls, and freezing a startup blip would disable this resource type
-// for the lifetime of the process. A misconfiguration is memoized, because it
-// will fail the same way every time.
+// Only a misconfiguration is memoized, because it will fail the same way every
+// time. Anything else is built again on the next call: discovering the
+// installations is four network calls, and freezing a startup blip would
+// disable this resource type for the lifetime of the process.
 func (o *enterpriseRoleResourceType) clients(
 	ctx context.Context,
 ) (map[string]*githubEnterpriseAdministratorClient, error) {
@@ -79,7 +79,7 @@ func (o *enterpriseRoleResourceType) clients(
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	if o.enterpriseClientsSet && !isRetryableError(o.enterpriseClientsErr) {
+	if o.enterpriseClientsSet && (o.enterpriseClientsErr == nil || isPermanentError(o.enterpriseClientsErr)) {
 		return o.enterpriseClients, o.enterpriseClientsErr
 	}
 
