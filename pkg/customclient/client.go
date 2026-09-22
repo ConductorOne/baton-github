@@ -104,6 +104,7 @@ func (c *Client) ListAppInstallations(ctx context.Context, page int) ([]*AppInst
 
 	if err != nil {
 		if res != nil {
+			defer res.Body.Close()
 			logBody(ctx, res.Body)
 		}
 		return nil, &rateLimitData, fmt.Errorf("error listing app installations: %w", err)

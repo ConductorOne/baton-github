@@ -565,6 +565,7 @@ func (c *githubEnterpriseAdministratorClient) OwnerState(
 
 	var annos annotations.Annotations
 	var after *githubv4.String
+	walked := false
 	for page := 0; page < enterpriseMaxPages; page++ {
 		owners, nextCursor, pageAnnos, err := c.owners(ctx, after)
 		if err != nil {
@@ -581,9 +582,18 @@ func (c *githubEnterpriseAdministratorClient) OwnerState(
 			}
 		}
 		if state.isOwner || nextCursor == "" {
+			walked = true
 			break
 		}
 		after = githubv4.NewString(githubv4.String(nextCursor))
+	}
+	// Falling through the bound would report "not an owner" for someone the
+	// walk never finished reading, which Revoke would answer with
+	// GrantAlreadyRevoked while they still hold the role.
+	if !walked {
+		return state, annos, fmt.Errorf(
+			"baton-github: gave up reading the owners of enterprise %s after %d pages",
+			enterprise, enterpriseMaxPages)
 	}
 
 	invitationID, err := c.pendingOwnerInvitation(ctx, enterprise, login)

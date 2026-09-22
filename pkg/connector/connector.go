@@ -468,9 +468,14 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	// enterprise_role sync instead of the whole connector: the other resource
 	// types keep syncing and C1 holds its previous owner state rather than
 	// reading an empty list as a revoke of every owner.
+	//
+	// The construction context is captured separately: the clients are
+	// memoized for the process lifetime, so the token refresher inside them
+	// must not hold the context of whichever RPC happened to build them.
+	connectorCtx := ctx
 	newEnterpriseRoleClientsFn := func(ctx context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
 		return newEnterpriseRoleClients(
-			ctx, ghc.InstanceUrl, appClient, jwtts, ghc.Enterprises, appHTTPClient, ghc.Org)
+			ctx, connectorCtx, ghc.InstanceUrl, appClient, jwtts, ghc.Enterprises, appHTTPClient, ghc.Org)
 	}
 
 	gh := &GitHub{
@@ -508,8 +513,12 @@ const enterpriseInstallationTargetType = "Enterprise"
 // when the organization does not belong to it: without a trustworthy owner
 // list the connector would emit an empty or foreign enterprise_role set, which
 // reads to C1 as a revoke of every owner assignment.
+// ctx scopes the discovery requests to the caller; connectorCtx outlives them
+// and is what the memoized clients keep for refreshing their installation
+// token, which expires after an hour or on the first 401.
 func newEnterpriseRoleClients(
 	ctx context.Context,
+	connectorCtx context.Context,
 	instanceURL string,
 	appClient *github.Client,
 	jwtTokenSource oauth2.TokenSource,
@@ -556,14 +565,14 @@ func newEnterpriseRoleClients(
 				Expiry:      token.GetExpiresAt().Time,
 			},
 			&appTokenRefresher{
-				ctx:            ctx,
+				ctx:            connectorCtx,
 				instanceURL:    instanceURL,
 				installationID: installationID,
 				jwtTokenSource: jwtTokenSource,
 			},
 		)
 
-		httpClient, err := newGitHubAppHTTPClient(ctx, ts)
+		httpClient, err := newGitHubAppHTTPClient(connectorCtx, ts)
 		if err != nil {
 			return nil, err
 		}

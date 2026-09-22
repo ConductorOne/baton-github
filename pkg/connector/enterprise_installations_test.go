@@ -168,6 +168,7 @@ func TestNewEnterpriseRoleClientsRequiresEnterpriseInstall(t *testing.T) {
 
 	_, err := newEnterpriseRoleClients(
 		ctx,
+		ctx,
 		"https://github.com",
 		client,
 		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "unused"}),
