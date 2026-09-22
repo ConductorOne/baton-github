@@ -41,9 +41,8 @@ linters:
     exhaustive:
       default-signifies-exhaustive: true
     goconst:
-      # goconst v1.9.0 reports literals inside composite literals; these hold the prior signal.
-      ignore-map-keys: true
-      min-occurrences: 6
+      # goconst v1.9.0 reports literals inside composite literals. Call is the upstream default; keep it.
+      exclude-types: [Call, CompositeLit]
     gocritic:
       enabled-checks:
         - ruleguard
