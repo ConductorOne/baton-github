@@ -251,6 +251,14 @@ C1 has no pending state for a grant, so an invitation nobody has accepted and an
 
 An invitation sent to someone who is not a member of the enterprise is therefore invisible to the sync, and that is not hypothetical: an owner invitation can be addressed to any GitHub user. Invitations that C1 itself creates are always visible, because C1 grants to a user it has already synced.
 
+### Owner grants can reference a user the sync did not emit
+
+The `user` resource type is populated from the members of the **configured organization**, while `Organization.enterpriseOwners` returns owners of the whole **enterprise account** and the invitation candidates come from `Enterprise.members`, which spans every organization in it. An owner who belongs to a different organization in the same enterprise therefore produces a grant whose principal this sync never created. Widening the user sync is out of scope here — it would change the connector's user population for every deployment — so the grant is emitted and this limitation is recorded instead.
+
+### PAT deployments advertise a provisioning capability they cannot use
+
+`CAPABILITY_PROVISION` is derived from the builder implementing the provisioner interface, not from the auth mode, so adding Grant and Revoke turns the capability on for `enterprise_role` under PAT authentication too. There, every request is rejected with `FailedPrecondition` naming the missing enterprise installation, including for the Owner role the consumed-licenses sync does emit. The alternative — advertising the capability only under App auth — is not expressible through that interface.
+
 ---
 
 ## Authentication

@@ -590,8 +590,7 @@ func newEnterpriseRoleClients(
 // is decoded through customclient's own model.
 func listEnterpriseInstallations(ctx context.Context, client *customclient.Client) (map[string]int64, error) {
 	installations := make(map[string]int64)
-	page := 1
-	for {
+	for page := 1; page <= enterpriseMaxPages; page++ {
 		pageInstallations, _, err := client.ListAppInstallations(ctx, page)
 		if err != nil {
 			return nil, fmt.Errorf("github-connector: failed to list app installations: %w", err)
@@ -608,8 +607,10 @@ func listEnterpriseInstallations(ctx context.Context, client *customclient.Clien
 		if len(pageInstallations) < customclient.AppInstallationsPageSize {
 			return installations, nil
 		}
-		page++
 	}
+
+	return nil, fmt.Errorf(
+		"github-connector: gave up listing app installations after %d pages", enterpriseMaxPages)
 }
 
 func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
