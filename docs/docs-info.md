@@ -299,7 +299,7 @@ GraphQL is used for SAML identity lookups, the audit log, and all enterprise own
 - `GET /orgs/{org}/installations` — installed GitHub Apps, requires `organization_administration=read`
 - `GET /orgs/{org}/personal-access-tokens` — fine-grained PATs, only with `--sync-secrets`
 - `GET /orgs/{org}/audit-log` — organization audit log
-- `GET /app/installations` — the App's installations, authenticated with the App JWT, used to find the enterprise installation
+- `GET /enterprises/{enterprise}/installation` — this App's installation on one enterprise, authenticated with the App JWT
 - `GET /enterprises/{enterprise}/consumed-licenses` — enterprise license consumption and enterprise SAML identities. **PAT only**
 
 **GraphQL**:

@@ -496,10 +496,6 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	return gh, nil
 }
 
-// enterpriseInstallationTargetType is the target_type that
-// GET /app/installations reports for an enterprise-level installation.
-const enterpriseInstallationTargetType = "Enterprise"
-
 // newEnterpriseRoleClients builds one client per configured enterprise, each
 // with that enterprise's own installation token: enterprise and organization
 // installations are separate, and an enterprise mutation rejects the org token.
@@ -535,19 +531,22 @@ func newEnterpriseRoleClients(
 				"%d were configured", org, len(enterprises))
 	}
 
-	installations, err := listEnterpriseInstallations(ctx, customclient.New(appClient))
-	if err != nil {
-		return nil, err
-	}
+	installationClient := customclient.New(appClient)
 
 	clients := make(map[string]*githubEnterpriseAdministratorClient, len(enterprises))
 	for _, enterprise := range enterprises {
-		installationID, ok := installations[strings.ToLower(enterprise)]
-		if !ok {
-			return nil, fmt.Errorf(
-				"github-connector: GitHub App is not installed on enterprise %q; install it on the enterprise account "+
-					"with the Enterprise people read and write permission", enterprise)
+		installation, _, err := installationClient.GetEnterpriseInstallation(ctx, enterprise)
+		if err != nil {
+			// A 404 is the app not being installed on the enterprise, which is
+			// the misconfiguration worth naming.
+			if status.Code(err) == codes.NotFound {
+				return nil, fmt.Errorf(
+					"github-connector: GitHub App is not installed on enterprise %q; install it on the enterprise account "+
+						"with the Enterprise people read and write permission", enterprise)
+			}
+			return nil, err
 		}
+		installationID := installation.ID
 
 		token, err := getInstallationToken(ctx, appClient, installationID)
 		if err != nil {
@@ -586,35 +585,6 @@ func newEnterpriseRoleClients(
 	}
 
 	return clients, nil
-}
-
-// listEnterpriseInstallations maps enterprise slug (lowercased) to installation
-// ID for every enterprise installation of this app. go-github models the
-// installation account as *User, which has no enterprise slug, so the response
-// is decoded through customclient's own model.
-func listEnterpriseInstallations(ctx context.Context, client *customclient.Client) (map[string]int64, error) {
-	installations := make(map[string]int64)
-	for page := 1; page <= enterpriseMaxPages; page++ {
-		pageInstallations, _, err := client.ListAppInstallations(ctx, page)
-		if err != nil {
-			return nil, fmt.Errorf("github-connector: failed to list app installations: %w", err)
-		}
-
-		for _, installation := range pageInstallations {
-			if installation.TargetType != enterpriseInstallationTargetType || installation.Account.Slug == "" {
-				continue
-			}
-			installations[strings.ToLower(installation.Account.Slug)] = installation.ID
-		}
-
-		// A page shorter than the one requested is the last one.
-		if len(pageInstallations) < customclient.AppInstallationsPageSize {
-			return installations, nil
-		}
-	}
-
-	return nil, fmt.Errorf(
-		"github-connector: gave up listing app installations after %d pages", enterpriseMaxPages)
 }
 
 func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {

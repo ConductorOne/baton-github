@@ -1,13 +1,7 @@
 package customclient
 
 type AppInstallation struct {
-	ID         int64                  `json:"id"`
-	TargetType string                 `json:"target_type"`
-	Account    AppInstallationAccount `json:"account"`
-}
-
-type AppInstallationAccount struct {
-	Slug string `json:"slug"`
+	ID int64 `json:"id"`
 }
 
 // https://docs.github.com/en/enterprise-cloud@latest/rest/enterprise-admin/license?apiVersion=2022-11-28#list-enterprise-consumed-licenses
