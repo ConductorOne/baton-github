@@ -543,22 +543,6 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 // ctx scopes the discovery requests to the caller. connectorCtx outlives them
 // and is what the memoized clients keep for refreshing the installation token,
 // which expires after an hour or on the first 401.
-// distinctEnterprises folds the slugs, which GitHub matches case-insensitively,
-// so a repeated value does not read as several enterprises.
-func distinctEnterprises(enterprises []string) []string {
-	seen := make(map[string]struct{}, len(enterprises))
-	distinct := make([]string, 0, len(enterprises))
-	for _, enterprise := range enterprises {
-		key := strings.ToLower(enterprise)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		distinct = append(distinct, enterprise)
-	}
-	return distinct
-}
-
 func newEnterpriseRoleClients(
 	ctx context.Context,
 	connectorCtx context.Context,
@@ -645,6 +629,22 @@ func newEnterpriseRoleClients(
 	}
 
 	return clients, nil
+}
+
+// distinctEnterprises folds the slugs, which GitHub matches case-insensitively,
+// so a repeated value does not read as several enterprises.
+func distinctEnterprises(enterprises []string) []string {
+	seen := make(map[string]struct{}, len(enterprises))
+	distinct := make([]string, 0, len(enterprises))
+	for _, enterprise := range enterprises {
+		key := strings.ToLower(enterprise)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		distinct = append(distinct, enterprise)
+	}
+	return distinct
 }
 
 func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {

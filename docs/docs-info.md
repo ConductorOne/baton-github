@@ -241,7 +241,7 @@ Consequences worth knowing:
 
 ### Enterprise owner provisioning is opt-in
 
-`--enable-enterprise-owner-provisioning` is off by default, and while it is off the connector behaves exactly as it did before this capability existed: enterprise roles come from the consumed-licenses cache, which is PAT-only, so App deployments report none and nothing fails.
+`--enable-enterprise-owner-provisioning` is off by default, and while it is off the connector behaves exactly as it did before this capability existed. Enterprise roles come from the consumed-licenses cache, which is PAT-only, so an App deployment reports none of them, and the `license` resource type still fails the sync on that same 403 — as it did before this change. Nothing about an upgrade is different until the capability is asked for.
 
 The flag exists because turning the capability on requires setup nobody has done yet — a second installation of the App, on the enterprise account. Without the flag that requirement would reach every deployment that already passes `--enterprises` under App authentication, and the failure below would turn their working sync into a failing one on upgrade. With it, the failure is only reachable by an operator who asked for the capability.
 
@@ -270,10 +270,6 @@ An invitation sent to someone who is not a member of the enterprise is therefore
 ### Owner grants can reference a user the sync did not emit
 
 The `user` resource type is populated from the members of the **configured organization**, while `Organization.enterpriseOwners` returns owners of the whole **enterprise account** and the invitation candidates come from `Enterprise.members`, which spans every organization in it. An owner who belongs to a different organization in the same enterprise therefore produces a grant whose principal this sync never created. Widening the user sync is out of scope here — it would change the connector's user population for every deployment — so the grant is emitted and this limitation is recorded instead.
-
-### PAT deployments advertise a provisioning capability they cannot use
-
-`CAPABILITY_PROVISION` is derived from the builder implementing the provisioner interface, not from the auth mode, so adding Grant and Revoke turns the capability on for `enterprise_role` under PAT authentication too. There, every request is rejected with `FailedPrecondition` naming the missing enterprise installation, including for the Owner role the consumed-licenses sync does emit. The alternative — advertising the capability only under App auth — is not expressible through that interface.
 
 ---
 
