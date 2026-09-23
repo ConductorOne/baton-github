@@ -238,13 +238,19 @@ Consequences worth knowing:
 - Reading owners uses the **organization** installation token and every mutation uses the **enterprise** installation token; the enterprise token is rejected on organization fields. Startup verifies that the configured organization belongs to the configured enterprise, and a failure there fails the sync
 - Only one enterprise can be served under App authentication, because the owners are read through the single configured organization and an organization belongs to exactly one enterprise. A configuration naming several is rejected while the clients are built, with an explanatory error rather than a later failure on a check the operator cannot satisfy. The PAT path does accept a list
 
+### Enterprise owner provisioning is opt-in
+
+`--enable-enterprise-owner-provisioning` is off by default, and while it is off the connector behaves exactly as it did before this capability existed: enterprise roles come from the consumed-licenses cache, which is PAT-only, so App deployments report none and nothing fails.
+
+The flag exists because turning the capability on requires setup nobody has done yet — a second installation of the App, on the enterprise account. Without the flag that requirement would reach every deployment that already passes `--enterprises` under App authentication, and the failure below would turn their working sync into a failing one on upgrade. With it, the failure is only reachable by an operator who asked for the capability.
+
 ### A missing enterprise installation fails the sync rather than emitting nothing
 
-Under App authentication the connector refuses to sync when it cannot build an enterprise administration client: the app is not installed on the enterprise account, several enterprises are configured, or the organization does not belong to the configured one. The whole sync fails, not just this resource type.
+Once the capability is enabled, the connector refuses to sync when it cannot build an enterprise administration client: the app is not installed on the enterprise account, several enterprises are configured, or the organization does not belong to the configured one. The whole sync fails, not just this resource type.
 
 That is deliberate, and the alternative is worse. C1 deletes every resource of a type that a completed sync did not report, and it applies that to a resource type whose list came back empty for any reason. Letting the sync finish while reading no owners would therefore delete the Owner role and every grant on it, silently, and GitHub answers `404` for an uninstalled app, a revoked permission and a slug typo alike — the connector cannot tell a genuine uninstall from a blip. An error keeps the sync from completing, so nothing is deleted.
 
-The cost falls on a deployment that sets `--enterprises` under App authentication without installing the app on the enterprise account. That combination produced no enterprise data before this capability existed, and now stops the sync until the app is installed or the flag is removed.
+The cost falls on a deployment that enabled the capability without installing the app on the enterprise account, and the sync stops until the app is installed or the flag is turned back off.
 
 ### Pending invitations look the same as real access
 

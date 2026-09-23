@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/conductorone/baton-github/pkg/customclient"
+	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 )
 
 // newGitHubAPITestClient points the client at a test server through BaseURL
@@ -91,6 +92,33 @@ func TestGetEnterpriseInstallationUsesTheInstanceBaseURL(t *testing.T) {
 	installation, _, err := customclient.New(client).GetEnterpriseInstallation(ctx, "ghes-enterprise")
 	require.NoError(t, err)
 	require.Equal(t, int64(33), installation.ID)
+}
+
+// Without the opt-in the enterprise owner path is left unwired, and this is
+// what that has to mean: the same answer the connector gave before the
+// capability existed. Reading owners needs the app installed on the enterprise
+// account, which no existing deployment has done, and the connector fails the
+// sync when it cannot read them — so if the unwired path did anything else,
+// upgrading would turn a working sync into a failing one for everyone already
+// passing --enterprises under app auth. Under app auth that answer is no
+// resources, because the consumed-licenses API it falls back to is PAT-only
+// and answers 403.
+func TestEnterpriseRoleListIsInertWithoutTheOptIn(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	apiClient := newGitHubAPITestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"message": "Resource not accessible by integration"}))
+	}))
+
+	// nil provider is how newWithGithubApp leaves it when the flag is off.
+	builder := EnterpriseRoleBuilder(apiClient, apiClient, customclient.New(apiClient),
+		[]string{"example-enterprise"}, nil)
+
+	resources, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Empty(t, resources)
 }
 
 // GitHub answers 404 when the app is not installed on the enterprise. Failing
