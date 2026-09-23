@@ -155,13 +155,21 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	}
 
 	if len(gh.enterprises) > 0 {
-		resourceSyncers = append(resourceSyncers,
-			EnterpriseRoleBuilder(
+		// The provisioning-capable syncer is registered only where the role can
+		// actually be provisioned. The SDK reads CAPABILITY_PROVISION off the
+		// methods a syncer implements, so registering it everywhere would offer
+		// the role as requestable to PAT deployments, where every request fails.
+		if gh.newEnterpriseRoleClients != nil {
+			resourceSyncers = append(resourceSyncers, EnterpriseRoleProvisioningBuilder(
 				gh.client, gh.appClient, gh.customClient, gh.enterprises,
 				gh.newEnterpriseRoleClients,
-			),
-			LicenseBuilder(gh.customClient, gh.enterprises),
-		)
+			))
+		} else {
+			resourceSyncers = append(resourceSyncers, EnterpriseRoleBuilder(
+				gh.client, gh.appClient, gh.customClient, gh.enterprises, nil,
+			))
+		}
+		resourceSyncers = append(resourceSyncers, LicenseBuilder(gh.customClient, gh.enterprises))
 	}
 	return resourceSyncers
 }

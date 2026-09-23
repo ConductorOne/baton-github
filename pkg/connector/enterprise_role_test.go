@@ -371,7 +371,7 @@ func requireNoIdempotencyClaim(t *testing.T, annos annotations.Annotations) {
 func newTestEnterpriseRoleBuilder(
 	t *testing.T,
 	stub *enterpriseStub,
-) (*enterpriseRoleResourceType, *v2.Resource, *v2.Entitlement) {
+) (*enterpriseRoleProvisioner, *v2.Resource, *v2.Entitlement) {
 	t.Helper()
 
 	if stub.invitations == nil {
@@ -395,7 +395,7 @@ func newTestEnterpriseRoleBuilder(
 	_, _, _, githubUser, _, err := mgh.Seed()
 	require.NoError(t, err)
 
-	builder := EnterpriseRoleBuilder(
+	builder := EnterpriseRoleProvisioningBuilder(
 		github.NewClient(mgh.Server()),
 		nil,
 		nil,
@@ -679,7 +679,7 @@ func TestEnterpriseRoleRevoke(t *testing.T) {
 // until it empties, and returns every grant across both phases.
 func drainGrants(
 	t *testing.T,
-	builder *enterpriseRoleResourceType,
+	builder *enterpriseRoleProvisioner,
 	resource *v2.Resource,
 ) []*v2.Grant {
 	t.Helper()
@@ -961,7 +961,7 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 	// after a fix that cannot apply.
 	t.Run("names the credential when the token cannot provision", func(t *testing.T) {
 		t.Parallel()
-		patBuilder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise}, nil)
+		patBuilder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise}, nil)
 		_, _, err := patBuilder.Grant(ctx, principal, ent)
 		require.Equal(t, codes.FailedPrecondition, status.Code(err))
 		require.Contains(t, err.Error(), "needs GitHub App authentication")
@@ -972,7 +972,7 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 	// was never configured for.
 	t.Run("names an enterprise that is not configured", func(t *testing.T) {
 		t.Parallel()
-		appBuilder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise},
+		appBuilder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise},
 			func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
 				return map[string]*githubEnterpriseAdministratorClient{}, nil
 			},

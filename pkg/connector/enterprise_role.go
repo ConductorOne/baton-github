@@ -268,8 +268,35 @@ func (o *enterpriseRoleResourceType) Grants(
 	return ret, &resourceSdk.SyncOpResults{}, nil
 }
 
-// EnterpriseRoleBuilder returns the enterprise role syncer. newEnterpriseClients
-// is nil under PAT authentication, where only the read path is available.
+// enterpriseRoleProvisioner adds Grant and Revoke to the read-only syncer.
+//
+// It is a separate type because the SDK derives CAPABILITY_PROVISION from the
+// methods a syncer implements, with no way to vary it at runtime. Registering
+// it only when the enterprise clients can be built keeps C1 from offering the
+// role as requestable on a deployment that could never satisfy the request:
+// under a PAT there is no App to install, and every request would fail.
+type enterpriseRoleProvisioner struct {
+	*enterpriseRoleResourceType
+}
+
+// EnterpriseRoleProvisioningBuilder returns the syncer with Grant and Revoke.
+// Only for deployments whose enterprise administration clients can be built.
+func EnterpriseRoleProvisioningBuilder(
+	client *github.Client,
+	appClient *github.Client,
+	customClient *customclient.Client,
+	enterprises []string,
+	newEnterpriseClients enterpriseClientProvider,
+) *enterpriseRoleProvisioner {
+	return &enterpriseRoleProvisioner{
+		enterpriseRoleResourceType: EnterpriseRoleBuilder(
+			client, appClient, customClient, enterprises, newEnterpriseClients),
+	}
+}
+
+// EnterpriseRoleBuilder returns the read-only enterprise role syncer.
+// newEnterpriseClients is nil under PAT authentication, where only the read
+// path is available.
 func EnterpriseRoleBuilder(
 	client *github.Client,
 	appClient *github.Client,
@@ -475,7 +502,7 @@ func (o *enterpriseRoleResourceType) pendingInvitationGrants(
 // An unaccepted invitation counts as held and returns a grant, the same way
 // Grants() emits it: returning nothing would make C1 drop an overlay that the
 // next sync puts straight back.
-func (o *enterpriseRoleResourceType) Grant(
+func (o *enterpriseRoleProvisioner) Grant(
 	ctx context.Context,
 	principal *v2.Resource,
 	ent *v2.Entitlement,
@@ -541,7 +568,7 @@ func (o *enterpriseRoleResourceType) Grant(
 // follows. Demotion uses UNAFFILIATED, which keeps the user as a member of the
 // enterprise instead of evicting them. A NOT_FOUND from either mutation is
 // success, because it means the state being asked for is already in place.
-func (o *enterpriseRoleResourceType) Revoke(
+func (o *enterpriseRoleProvisioner) Revoke(
 	ctx context.Context,
 	grantObj *v2.Grant,
 ) (annotations.Annotations, error) {
@@ -591,7 +618,7 @@ func (o *enterpriseRoleResourceType) Revoke(
 	return annos, nil
 }
 
-func (o *enterpriseRoleResourceType) provisioningTarget(
+func (o *enterpriseRoleProvisioner) provisioningTarget(
 	ctx context.Context,
 	principal *v2.Resource,
 	ent *v2.Entitlement,

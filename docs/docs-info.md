@@ -259,6 +259,7 @@ C1 has no pending state for a grant, so an invitation nobody has accepted and an
 
 - An access review or an offboarding sweep counts an invitee as holding Owner. They do not hold it — GitHub assigns the role only on acceptance
 - Nothing tracks an expiry. GitHub stops resolving an invitation once it is accepted, cancelled, or expired, so it simply stops being emitted and C1 drops the grant on that sync. `EnterpriseAdministratorInvitation` exposes no `expiresAt`, so there is nothing to compute from either
+- **Time-bound access is measured from the invitation, not from acceptance.** C1 starts the clock when Grant reports success, which is when the invitation is sent. Someone who accepts three hours into a four-hour window holds the role for one hour, and the record still reads four. If the window closes first, Revoke cancels the unaccepted invitation — the right action, since the request expired, but C1 logs a completed Owner grant for someone who never held the role. Prefer windows comfortably longer than the invitee takes to accept, or grant to people who already administer the enterprise, who are promoted immediately
 
 ### The list of pending invitations cannot be complete
 
