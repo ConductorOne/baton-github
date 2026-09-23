@@ -20,7 +20,7 @@
    - Teams (including nested teams, with their parent team as the parent resource)
    - Repositories (optionally excluding archived ones)
    - Organization roles (GitHub's built-in and custom org roles, also called "enterprise licenses" in GitHub's docs)
-   - Enterprise roles (only when `--enterprises` is set)
+   - Enterprise roles (only when `--enterprises` is set; under App authentication the built-in Owner role also needs `--enable-enterprise-owner-provisioning`)
    - Licenses (enterprise seat consumption, only when `--enterprises` is set)
    - GitHub Apps installed on the organization
    - API keys (fine-grained personal access tokens with access to the org, only when `--sync-secrets` is set)
@@ -70,6 +70,7 @@
 
    Common to both:
    `--enterprises` — enterprises to sync enterprise roles and licenses for
+   `--enable-enterprise-owner-provisioning` — sync and provision the built-in Enterprise Owner role. Off by default, App authentication only, and requires the App installed on the enterprise account as well as the organization
    `--sync-secrets` — sync fine-grained personal access tokens as API keys
    `--sync-last-activity` — emit the audit-log usage event feed. Hidden from `--help` and from the GUI config here, because it only applies to GitHub Enterprise audit-log access; `baton-github-enterprise` sets it directly instead of going through this CLI layer
    `--omit-archived-repositories` — skip archived repositories
@@ -185,11 +186,11 @@
 ### Enterprise roles
 
 - **Resource type ID**: `enterprise_role`
-- **Description**: Roles of an enterprise account. Only synced when `--enterprises` is set
+- **Description**: Roles of an enterprise account. Only synced when `--enterprises` is set. Under App authentication the built-in Owner role is only synced when `--enable-enterprise-owner-provisioning` is set as well
 - **Traits**: Role trait
 - **Entitlements**: `assigned` (assignment)
 - **Grants**: Under PAT authentication, one grant per user holding each role, read from the enterprise consumed-licenses API. Under GitHub App authentication, only the built-in **Owner** role is visible, and its grants are the users who hold it plus the users who have been invited and have not accepted. The two are emitted against the same entitlement and C1 cannot tell them apart
-- **Provisioning**: Only the built-in **Owner** role, and only with GitHub App authentication. See [Enterprise Owner provisioning](#enterprise-owner-provisioning)
+- **Provisioning**: Only the built-in **Owner** role, only with GitHub App authentication, and only when `--enable-enterprise-owner-provisioning` is set. See [Enterprise Owner provisioning](#enterprise-owner-provisioning)
 - **Limitation**: A GitHub App cannot read `Enterprise.ownerInfo`, so under App authentication the connector sees only the Owner role, not billing managers or custom enterprise roles
 
 ### Licenses
