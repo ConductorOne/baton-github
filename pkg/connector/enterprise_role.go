@@ -10,6 +10,7 @@ import (
 	"github.com/conductorone/baton-github/pkg/customclient"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
@@ -267,6 +268,11 @@ func (o *enterpriseRoleResourceType) Grants(
 
 	return ret, &resourceSdk.SyncOpResults{}, nil
 }
+
+// Asserted here because the SDK reads the capability off these types: if the
+// provisioner ever stops satisfying the interface the build breaks, rather
+// than the capability quietly disappearing.
+var _ connectorbuilder.ResourceProvisionerV2 = (*enterpriseRoleProvisioner)(nil)
 
 // enterpriseRoleProvisioner adds Grant and Revoke to the read-only syncer.
 //

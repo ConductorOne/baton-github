@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/conductorone/baton-github/pkg/customclient"
+	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 )
 
@@ -150,6 +151,47 @@ func TestNewEnterpriseRoleClientsRequiresEnterpriseInstall(t *testing.T) {
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.Contains(t, err.Error(), `not installed on enterprise "example-enterprise"`)
 	require.NotContains(t, err.Error(), "personal access token")
+}
+
+// The SDK derives CAPABILITY_PROVISION by type-asserting each registered
+// syncer, so the split between the two types is the whole mechanism keeping
+// provisioning off PAT deployments. Nothing else fails if it is undone: moving
+// Grant and Revoke back onto the read-only type, or dropping the check in
+// ResourceSyncers, would re-advertise provisioning to PAT with every other
+// test still green.
+func TestResourceSyncersOfferProvisioningOnlyWhenItWorks(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name        string
+		provider    enterpriseClientProvider
+		provisioned bool
+	}{
+		{"pat or opt-in off", nil, false},
+		{"app auth opted in", func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+			return nil, nil
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			gh := &GitHub{
+				enterprises:              []string{testEnterprise},
+				newEnterpriseRoleClients: tc.provider,
+			}
+
+			var found bool
+			for _, syncer := range gh.ResourceSyncers(context.Background()) {
+				if syncer.ResourceType(context.Background()).GetId() != resourceTypeEnterpriseRole.Id {
+					continue
+				}
+				found = true
+				_, provisions := syncer.(connectorbuilder.ResourceProvisionerV2Limited)
+				require.Equal(t, tc.provisioned, provisions)
+			}
+			require.True(t, found, "enterprise_role must be synced either way")
+		})
+	}
 }
 
 // Setting the flag in both the environment and the command line lands the
