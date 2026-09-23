@@ -152,6 +152,38 @@ func TestNewEnterpriseRoleClientsRequiresEnterpriseInstall(t *testing.T) {
 	require.NotContains(t, err.Error(), "personal access token")
 }
 
+// Setting the flag in both the environment and the command line lands the
+// same enterprise twice, which is still one enterprise. Counting raw entries
+// would reject a configuration the operator wrote correctly, with a message
+// naming a number they never chose.
+func TestNewEnterpriseRoleClientsFoldsRepeatedEnterprises(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	client := newGitHubAPITestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/enterprises/example-enterprise/installation", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"message": "Not Found"}))
+	}))
+
+	_, err := newEnterpriseRoleClients(
+		ctx,
+		ctx,
+		"https://github.com",
+		client,
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "unused"}),
+		[]string{"example-enterprise", "Example-Enterprise"},
+		nil,
+		"example-org",
+	)
+	// Reaches the installation lookup rather than the several-enterprises
+	// guard, which is what proves the fold happened.
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Contains(t, err.Error(), "not installed on enterprise")
+	require.NotContains(t, err.Error(), "one enterprise at a time")
+}
+
 // The owners are read through one organization, which belongs to one
 // enterprise, so app auth cannot serve a list and picking one would be a
 // guess. This fails for the same reason as a missing installation: a sync that

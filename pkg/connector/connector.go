@@ -169,12 +169,17 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 				gh.client, gh.appClient, gh.customClient, gh.enterprises, nil,
 			))
 		}
-		// The consumed-licenses API behind this type is PAT-only and its 403
-		// fails the whole sync, so under app auth it has never emitted a
-		// resource and can only break the run. Not registering it deletes
-		// nothing, and spares the operator having to disable the type in C1
-		// to make the documented enterprise setup sync at all.
-		if gh.appClient == nil {
+		// The consumed-licenses API behind this type is PAT-only, so under app
+		// auth its 403 fails the whole sync and it has never emitted a
+		// resource. It is dropped only once the operator opts into enterprise
+		// owner provisioning, which is the setup whose sync it would break.
+		//
+		// Keyed on the provider rather than on the credential on purpose:
+		// with the opt-in off this type has to stay registered, because its
+		// failure is what stops the run. Dropping it there would let the sync
+		// complete while reporting no enterprise roles, and C1 deletes the
+		// stored resources of a type a completed sync did not report.
+		if gh.newEnterpriseRoleClients == nil {
 			resourceSyncers = append(resourceSyncers, LicenseBuilder(gh.customClient, gh.enterprises))
 		}
 	}
@@ -538,6 +543,22 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 // ctx scopes the discovery requests to the caller. connectorCtx outlives them
 // and is what the memoized clients keep for refreshing the installation token,
 // which expires after an hour or on the first 401.
+// distinctEnterprises folds the slugs, which GitHub matches case-insensitively,
+// so a repeated value does not read as several enterprises.
+func distinctEnterprises(enterprises []string) []string {
+	seen := make(map[string]struct{}, len(enterprises))
+	distinct := make([]string, 0, len(enterprises))
+	for _, enterprise := range enterprises {
+		key := strings.ToLower(enterprise)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		distinct = append(distinct, enterprise)
+	}
+	return distinct
+}
+
 func newEnterpriseRoleClients(
 	ctx context.Context,
 	connectorCtx context.Context,
@@ -548,6 +569,9 @@ func newEnterpriseRoleClients(
 	orgHTTPClient *http.Client,
 	org string,
 ) (map[string]*githubEnterpriseAdministratorClient, error) {
+	// Naming the same enterprise twice, which happens when the flag is set in
+	// both the environment and the command line, is one enterprise.
+	enterprises = distinctEnterprises(enterprises)
 	if len(enterprises) == 0 {
 		return nil, nil
 	}
