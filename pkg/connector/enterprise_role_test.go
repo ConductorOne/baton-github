@@ -483,16 +483,25 @@ func TestEnterpriseRoleGrant(t *testing.T) {
 	// reaches C1: it decides whether the task is worth retrying.
 	t.Run("surfaces the promotion status when both mutations fail", func(t *testing.T) {
 		t.Parallel()
-		stub := &enterpriseStub{inviteErrorType: "UNPROCESSABLE", updateFails: true}
+		// A reason other than "already an administrator", which is the case
+		// that makes carrying it worthwhile.
+		stub := &enterpriseStub{
+			inviteErrorType:    "UNPROCESSABLE",
+			inviteErrorMessage: "enterprise owner seat limit reached",
+			updateFails:        true,
+		}
 		builder, principal, ent := newTestEnterpriseRoleBuilder(t, stub)
 
 		_, _, err := builder.Grant(ctx, principal, ent)
 		require.Equal(t, codes.Unavailable, status.Code(err))
-		require.ErrorContains(t, err, "promoting")
-		// The invitation error is not interpolated into the message: it is
-		// always the expected FailedPrecondition, and both errors carry the
-		// connector prefix, so repeating it makes the message unreadable.
-		require.Equal(t, 1, strings.Count(err.Error(), "baton-github:"))
+		require.ErrorContains(t, err, "promoting in place also failed")
+		// GitHub's reason for refusing the invitation is carried too, because
+		// UNPROCESSABLE is not only "already an administrator" — a seat limit
+		// or an SSO restriction lands there as well, and then it is the
+		// actionable half. It is text, not a second %w: wrapping both would
+		// hand C1 the invitation's code instead of the promotion's.
+		require.ErrorContains(t, err, "was rejected")
+		require.ErrorContains(t, err, stub.inviteErrorMessage)
 	})
 
 	t.Run("reports an owner as already granted", func(t *testing.T) {

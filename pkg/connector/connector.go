@@ -169,7 +169,14 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 				gh.client, gh.appClient, gh.customClient, gh.enterprises, nil,
 			))
 		}
-		resourceSyncers = append(resourceSyncers, LicenseBuilder(gh.customClient, gh.enterprises))
+		// The consumed-licenses API behind this type is PAT-only and its 403
+		// fails the whole sync, so under app auth it has never emitted a
+		// resource and can only break the run. Not registering it deletes
+		// nothing, and spares the operator having to disable the type in C1
+		// to make the documented enterprise setup sync at all.
+		if gh.appClient == nil {
+			resourceSyncers = append(resourceSyncers, LicenseBuilder(gh.customClient, gh.enterprises))
+		}
 	}
 	return resourceSyncers
 }
@@ -472,10 +479,12 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	// installation token above carries no enterprise permissions. Reading the
 	// owners needs the org token, so both are handed to the client.
 	//
-	// Built on first use rather than here, so a failure fails the
-	// enterprise_role sync instead of the whole connector: the other resource
-	// types keep syncing and C1 holds its previous owner state rather than
-	// reading an empty list as a revoke of every owner.
+	// Built on first use rather than here, so connector construction and
+	// Validate do not depend on the enterprise installation and a later sync
+	// retries the build. It does not narrow the blast radius of a failure:
+	// the error surfaces from List, which fails the whole sync, and that is
+	// deliberate — a sync that completed without owners would read to C1 as a
+	// revoke of every owner assignment.
 	//
 	// The construction context is captured separately: the clients are
 	// memoized for the process lifetime, so the token refresher inside them

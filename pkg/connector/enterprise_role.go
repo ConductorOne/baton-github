@@ -532,8 +532,6 @@ func (o *enterpriseRoleProvisioner) Grant(
 		if status.Code(inviteErr) != codes.FailedPrecondition {
 			return nil, annos, inviteErr
 		}
-		// Only the promotion's error is returned, so GitHub's reason for
-		// refusing the invitation would otherwise be lost.
 		ctxzap.Extract(ctx).Debug("baton-github: invitation rejected, promoting in place instead",
 			zap.String("login", login),
 			zap.Error(inviteErr),
@@ -541,9 +539,15 @@ func (o *enterpriseRoleProvisioner) Grant(
 		if promoteErr := client.UpdateRole(
 			ctx, state.enterpriseID, login, githubv4.EnterpriseAdministratorRoleOwner,
 		); promoteErr != nil {
-			// The promotion's status code is what tells C1 whether to retry.
+			// UNPROCESSABLE covers more than "already an administrator" —
+			// seat limits and SSO or EMU restrictions land here too — and
+			// that reason is the actionable one when the promotion also
+			// fails. It is carried as text so the promotion keeps %w: its
+			// status code is what tells C1 whether to retry, and a second
+			// %w would put the invitation's code first instead.
 			return nil, annos, fmt.Errorf(
-				"promoting %s after the invitation was rejected: %w", login, promoteErr)
+				"inviting %s was rejected (%s); promoting in place also failed: %w",
+				login, inviteErr.Error(), promoteErr)
 		}
 	}
 
