@@ -51,12 +51,10 @@ type enterpriseRoleResourceType struct {
 	// It is nil under PAT auth.
 	newEnterpriseClients enterpriseClientProvider
 	// enterpriseClients is keyed by enterprise slug and memoized after the
-	// first successful build; enterpriseClientsErr is why it could not be
-	// built, and is returned rather than swallowed so the sync fails instead
-	// of completing without owners.
-	enterpriseClients    map[string]*githubEnterpriseAdministratorClient
-	enterpriseClientsErr error
-	enterpriseClientsSet bool
+	// first successful build. A build error is returned rather than stored,
+	// so the sync fails instead of completing without owners and the next
+	// call tries again.
+	enterpriseClients map[string]*githubEnterpriseAdministratorClient
 }
 
 func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -64,12 +62,15 @@ func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.Resourc
 }
 
 // clients returns the per-enterprise administration clients, building them on
-// first use and memoizing the outcome.
+// first use and memoizing them once they are built.
 //
-// Only a misconfiguration is memoized, because it will fail the same way every
-// time. Anything else is built again on the next call: discovering the
-// installations is four network calls, and freezing a startup blip would
-// disable this resource type for the lifetime of the process.
+// Only success is remembered. A failure is retried on the next call, which
+// costs one discovery attempt on a path that is already failing the sync, and
+// buys two things: a startup blip does not disable this resource type for the
+// lifetime of the process, and an operator who installs the app or restores
+// the permission is picked up by the next sync instead of needing a restart.
+// GitHub answers 404 for an uninstalled app, a revoked permission and a typo
+// alike, so no error here can be trusted to be permanent.
 func (o *enterpriseRoleResourceType) clients(
 	ctx context.Context,
 ) (map[string]*githubEnterpriseAdministratorClient, error) {
@@ -80,14 +81,17 @@ func (o *enterpriseRoleResourceType) clients(
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	if o.enterpriseClientsSet && (o.enterpriseClientsErr == nil || isPermanentError(o.enterpriseClientsErr)) {
-		return o.enterpriseClients, o.enterpriseClientsErr
+	if o.enterpriseClients != nil {
+		return o.enterpriseClients, nil
 	}
 
-	o.enterpriseClients, o.enterpriseClientsErr = o.newEnterpriseClients(ctx)
-	o.enterpriseClientsSet = true
+	clients, err := o.newEnterpriseClients(ctx)
+	if err != nil {
+		return nil, err
+	}
+	o.enterpriseClients = clients
 
-	return o.enterpriseClients, o.enterpriseClientsErr
+	return o.enterpriseClients, nil
 }
 
 // noClientReason explains why no administration client exists, in the terms of

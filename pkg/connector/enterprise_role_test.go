@@ -853,8 +853,6 @@ func TestEnterpriseRoleFailsClosedWithoutEnterpriseClients(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The code that produces this answer marks it FailedPrecondition, which is
-	// what makes it safe to remember.
 	clientsErr := status.Error(codes.FailedPrecondition,
 		"github-connector: GitHub App is not installed on enterprise")
 	builds := 0
@@ -879,16 +877,19 @@ func TestEnterpriseRoleFailsClosedWithoutEnterpriseClients(t *testing.T) {
 	_, _, err = builder.Grants(ctx, roleResource, resourceSdk.SyncOpAttrs{})
 	require.ErrorIs(t, err, clientsErr)
 
-	// A misconfiguration answers the same way every time, so it is built once
-	// and remembered rather than re-probed on each call.
-	require.Equal(t, 1, builds)
+	// Nothing is remembered from a failure: GitHub answers 404 for an
+	// uninstalled app, a revoked permission and a typo alike, so an operator
+	// who fixes it is picked up by the next call rather than by a restart.
+	require.Equal(t, 2, builds)
 }
 
-// Building the clients calls go-github directly, whose errors arrive wrapped
-// with %w and carry no gRPC status, so a 502 and a cancelled sync both read as
-// Unknown. Remembering those would disable the resource type for the lifetime
-// of the process on a blip the operator cannot see or fix.
-func TestEnterpriseRoleRetriesAnUnclassifiedClientFailure(t *testing.T) {
+// No build failure is remembered. GitHub answers 404 for an uninstalled app,
+// a revoked permission and a typo alike, and errors from go-github or a
+// cancelled context arrive wrapped with %w carrying no gRPC status at all, so
+// nothing here can be classified as permanent. Remembering any of them would
+// disable the resource type until the process restarts, and would leave an
+// operator who fixed the configuration still reading the stale answer.
+func TestEnterpriseRoleRetriesAClientBuildFailure(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -896,6 +897,8 @@ func TestEnterpriseRoleRetriesAnUnclassifiedClientFailure(t *testing.T) {
 		name string
 		err  error
 	}{
+		{"a misconfiguration", status.Error(codes.FailedPrecondition, "not installed on the enterprise")},
+		{"a rate limit", status.Error(codes.Unavailable, "rate limited")},
 		{"a go-github failure", fmt.Errorf("github-connector: failed to create installation token: %w",
 			&github.ErrorResponse{
 				Response: &http.Response{StatusCode: http.StatusBadGateway, Request: &http.Request{}},
@@ -913,6 +916,8 @@ func TestEnterpriseRoleRetriesAnUnclassifiedClientFailure(t *testing.T) {
 					if builds == 1 {
 						return nil, tc.err
 					}
+					// List only checks the enterprise is present, so the
+					// client itself is never dereferenced here.
 					return map[string]*githubEnterpriseAdministratorClient{testEnterprise: nil}, nil
 				},
 			)
@@ -924,41 +929,13 @@ func TestEnterpriseRoleRetriesAnUnclassifiedClientFailure(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, resources, 1)
 			require.Equal(t, 2, builds)
+
+			// Once it succeeds the result is memoized.
+			_, _, err = builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+			require.NoError(t, err)
+			require.Equal(t, 2, builds)
 		})
 	}
-}
-
-// A transient failure must not be remembered: freezing a blip at startup would
-// disable the resource type until the process restarts.
-func TestEnterpriseRoleRetriesARetryableClientFailure(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	builds := 0
-	builder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise},
-		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
-			builds++
-			if builds == 1 {
-				return nil, status.Error(codes.Unavailable, "rate limited")
-			}
-			// List only checks the enterprise is present, so the client
-			// itself is never dereferenced here.
-			return map[string]*githubEnterpriseAdministratorClient{testEnterprise: nil}, nil
-		},
-	)
-
-	_, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
-	require.Equal(t, codes.Unavailable, status.Code(err))
-
-	resources, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
-	require.NoError(t, err)
-	require.Len(t, resources, 1)
-	require.Equal(t, 2, builds)
-
-	// Once it succeeds the result is memoized.
-	_, _, err = builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
-	require.NoError(t, err)
-	require.Equal(t, 2, builds)
 }
 
 // Provisioning is only possible through an enterprise installation, so the PAT
