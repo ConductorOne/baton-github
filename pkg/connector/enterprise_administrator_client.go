@@ -324,7 +324,7 @@ func (c *githubEnterpriseAdministratorClient) verifyOrganization(ctx context.Con
 	// not finding the organization: reporting the membership error there would
 	// send the operator to fix a membership that is already correct.
 	if !walked {
-		return fmt.Errorf(
+		return status.Errorf(codes.Internal,
 			"baton-github: gave up looking for organization %s in enterprise %s after %d pages",
 			c.org, enterprise, enterpriseMaxPages)
 	}
@@ -618,7 +618,7 @@ func (c *githubEnterpriseAdministratorClient) OwnerState(
 	// walk never finished reading, which Revoke would answer with
 	// GrantAlreadyRevoked while they still hold the role.
 	if !walked {
-		return state, annos, fmt.Errorf(
+		return state, annos, status.Errorf(codes.Internal,
 			"baton-github: gave up reading the owners of enterprise %s after %d pages",
 			enterprise, enterpriseMaxPages)
 	}
