@@ -89,7 +89,7 @@ func TestGraphQLErrorsCode(t *testing.T) {
 		// cannot mask it. UNPROCESSABLE is what the invite-to-promote fallback
 		// in Grant branches on, and a trailing FORBIDDEN used to overwrite it.
 		{name: "first classified wins", types: []string{"UNPROCESSABLE", "FORBIDDEN"}, want: codes.FailedPrecondition},
-		{name: "order independent", types: []string{"FORBIDDEN", "UNPROCESSABLE"}, want: codes.PermissionDenied},
+		{name: "first classified entry wins", types: []string{"FORBIDDEN", "UNPROCESSABLE"}, want: codes.PermissionDenied},
 		// NOT_FOUND is the one code a credential error may override. Callers
 		// read it as "already gone" and report success, so a batch whose
 		// missing invitations hide a FORBIDDEN must not look benign.

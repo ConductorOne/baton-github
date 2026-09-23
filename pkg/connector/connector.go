@@ -501,8 +501,12 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 // installations are separate, and an enterprise mutation rejects the org token.
 //
 // Fails closed when the app is not installed on an enterprise, or when the
-// organization does not belong to it — an empty or foreign owner list reads to
-// C1 as a revoke of every owner assignment.
+// organization does not belong to it. Returning no clients instead would let
+// the sync complete while reading no owners, and C1 deletes every resource of
+// a type that a completed sync did not report — the Owner role and every
+// grant on it. Failing is what stops a sync from being completed at all, so
+// an operator who has not installed the app on the enterprise account, or who
+// configured several, hears about it instead of losing the assignments.
 //
 // ctx scopes the discovery requests to the caller. connectorCtx outlives them
 // and is what the memoized clients keep for refreshing the installation token,
@@ -522,19 +526,13 @@ func newEnterpriseRoleClients(
 	}
 	// The owners are read through the single configured organization, and an
 	// organization belongs to exactly one enterprise, so app auth cannot serve
-	// a list and picking one of them would be a guess. Only this resource type
-	// stands down: returning an error instead would reach List, where the SDK
-	// aborts the entire sync over a configuration that syncs everything else
-	// today. The PAT path does support a list.
+	// a list and picking one of them would be a guess. The PAT path does
+	// support a list.
 	if len(enterprises) > 1 {
-		ctxzap.Extract(ctx).Debug(
-			"baton-github: GitHub App authentication serves one enterprise at a time, "+
-				"because the owners are read through one organization, which belongs to a single enterprise; "+
-				"enterprise roles will not be synced or provisioned",
-			zap.String("org", org),
-			zap.Strings("enterprises", enterprises),
-		)
-		return nil, nil
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"github-connector: GitHub App authentication serves one enterprise at a time, "+
+				"because the owners are read through organization %q, which belongs to a single enterprise; "+
+				"%d were configured", org, len(enterprises))
 	}
 
 	// NewBaseHttpClient reports a failed cache setup by returning nil, which
@@ -548,18 +546,12 @@ func newEnterpriseRoleClients(
 	for _, enterprise := range enterprises {
 		installation, _, err := installationClient.GetEnterpriseInstallation(ctx, enterprise)
 		if err != nil {
-			// A 404 is the app not being installed on the enterprise. That
-			// enterprise is skipped rather than failing: an error here aborts
-			// the whole sync, and before enterprise installations were read at
-			// all this configuration synced everything else fine. Provisioning
-			// still reports it, because there the operator asked for the role.
+			// A 404 is the app not being installed on the enterprise, which is
+			// the misconfiguration worth naming.
 			if status.Code(err) == codes.NotFound {
-				ctxzap.Extract(ctx).Debug(
-					"baton-github: GitHub App is not installed on the enterprise account, "+
-						"so its owners cannot be synced or provisioned",
-					zap.String("enterprise", enterprise),
-				)
-				continue
+				return nil, status.Errorf(codes.FailedPrecondition,
+					"github-connector: GitHub App is not installed on enterprise %q; install it on the enterprise account "+
+						"with the Enterprise people read and write permission", enterprise)
 			}
 			return nil, err
 		}

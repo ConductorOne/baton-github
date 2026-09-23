@@ -20,7 +20,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/conductorone/baton-github/pkg/customclient"
 	"github.com/conductorone/baton-github/test/mocks"
 )
 
@@ -846,9 +845,10 @@ func TestEnterpriseRoleVerifyOrganization(t *testing.T) {
 	require.ErrorContains(t, err, "does not belong to enterprise")
 }
 
-// A missing enterprise installation must fail this resource type and nothing
-// else, so the rest of the connector still syncs. Returning no resources would
-// read to C1 as a revoke of every owner assignment.
+// A missing enterprise installation must reach the syncer as an error. The
+// SDK fails the run on it, which is the point: C1 deletes every resource of a
+// type that a completed sync did not report, so finishing the sync while
+// reading no owners would drop the Owner role and every grant on it.
 func TestEnterpriseRoleFailsClosedWithoutEnterpriseClients(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -928,46 +928,6 @@ func TestEnterpriseRoleRetriesAnUnclassifiedClientFailure(t *testing.T) {
 	}
 }
 
-// An enterprise the app is not installed on is skipped, so the build succeeds
-// while resolving nothing. Remembering that would leave an operator who reads
-// the error from Grant, installs the app and retries still reading the old
-// answer until the process restarts.
-func TestEnterpriseRoleReprobesAnIncompleteClientBuild(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	// Without a client the list falls back to consumed-licenses, which is
-	// PAT-only and answers 403 to an app.
-	apiClient := newGitHubAPITestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-	}))
-
-	builds := 0
-	builder := EnterpriseRoleBuilder(apiClient, apiClient, customclient.New(apiClient), []string{testEnterprise},
-		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
-			builds++
-			if builds == 1 {
-				// The app is not installed yet: nothing resolved, no error.
-				return map[string]*githubEnterpriseAdministratorClient{}, nil
-			}
-			return map[string]*githubEnterpriseAdministratorClient{testEnterprise: nil}, nil
-		},
-	)
-
-	_, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
-	require.NoError(t, err)
-
-	resources, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
-	require.NoError(t, err)
-	require.Len(t, resources, 1)
-	require.Equal(t, 2, builds)
-
-	// Complete now, so it is remembered.
-	_, _, err = builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
-	require.NoError(t, err)
-	require.Equal(t, 2, builds)
-}
-
 // A transient failure must not be remembered: freezing a blip at startup would
 // disable the resource type until the process restarts.
 func TestEnterpriseRoleRetriesARetryableClientFailure(t *testing.T) {
@@ -1027,13 +987,13 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 		patBuilder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise}, nil)
 		_, _, err := patBuilder.Grant(ctx, principal, ent)
 		require.Equal(t, codes.FailedPrecondition, status.Code(err))
-		require.Contains(t, err.Error(), "requires GitHub App authentication")
+		require.Contains(t, err.Error(), "needs GitHub App authentication")
 	})
 
-	// With app auth the enterprise is skipped during sync when the app is not
-	// installed on it, so the client is missing here for a reason the operator
-	// can act on.
-	t.Run("names the missing installation under app auth", func(t *testing.T) {
+	// Under app auth every other reason already failed the client build, so
+	// what reaches here is an entitlement naming an enterprise this connector
+	// was never configured for.
+	t.Run("names an enterprise that is not configured", func(t *testing.T) {
 		t.Parallel()
 		appBuilder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise},
 			func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
@@ -1042,7 +1002,7 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 		)
 		_, _, err := appBuilder.Grant(ctx, principal, ent)
 		require.Equal(t, codes.FailedPrecondition, status.Code(err))
-		require.Contains(t, err.Error(), "installed on the enterprise account")
+		require.Contains(t, err.Error(), "not one of the configured enterprises")
 	})
 }
 

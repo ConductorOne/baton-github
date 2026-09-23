@@ -52,7 +52,8 @@ type enterpriseRoleResourceType struct {
 	newEnterpriseClients enterpriseClientProvider
 	// enterpriseClients is keyed by enterprise slug and memoized after the
 	// first successful build; enterpriseClientsErr is why it could not be
-	// built, which fails this resource type only so the rest still syncs.
+	// built, and is returned rather than swallowed so the sync fails instead
+	// of completing without owners.
 	enterpriseClients    map[string]*githubEnterpriseAdministratorClient
 	enterpriseClientsErr error
 	enterpriseClientsSet bool
@@ -65,10 +66,10 @@ func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.Resourc
 // clients returns the per-enterprise administration clients, building them on
 // first use and memoizing the outcome.
 //
-// Only a complete build, or a misconfiguration that will fail the same way
-// every time, is memoized. Anything else is built again on the next call:
-// discovering the installations is four network calls, and freezing a startup
-// blip would disable this resource type for the lifetime of the process.
+// Only a misconfiguration is memoized, because it will fail the same way every
+// time. Anything else is built again on the next call: discovering the
+// installations is four network calls, and freezing a startup blip would
+// disable this resource type for the lifetime of the process.
 func (o *enterpriseRoleResourceType) clients(
 	ctx context.Context,
 ) (map[string]*githubEnterpriseAdministratorClient, error) {
@@ -79,7 +80,7 @@ func (o *enterpriseRoleResourceType) clients(
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	if o.enterpriseClientsSet && (o.clientsAreComplete() || isPermanentError(o.enterpriseClientsErr)) {
+	if o.enterpriseClientsSet && (o.enterpriseClientsErr == nil || isPermanentError(o.enterpriseClientsErr)) {
 		return o.enterpriseClients, o.enterpriseClientsErr
 	}
 
@@ -89,12 +90,16 @@ func (o *enterpriseRoleResourceType) clients(
 	return o.enterpriseClients, o.enterpriseClientsErr
 }
 
-// clientsAreComplete reports whether every configured enterprise resolved to a
-// client. A build that skipped one succeeded without an error, so remembering
-// it would keep an operator who installs the app on that enterprise reading
-// the old answer until the process restarts.
-func (o *enterpriseRoleResourceType) clientsAreComplete() bool {
-	return o.enterpriseClientsErr == nil && len(o.enterpriseClients) == len(o.enterprises)
+// noClientReason explains why no administration client exists, in the terms of
+// the fix the operator has to make. Under app auth every reason already
+// surfaced as a build error, so what is left is the credential and an
+// enterprise this connector was not configured for.
+func (o *enterpriseRoleResourceType) noClientReason() string {
+	if o.newEnterpriseClients == nil {
+		return "a personal access token can sync enterprise roles but cannot provision them, " +
+			"which needs GitHub App authentication"
+	}
+	return "it is not one of the configured enterprises"
 }
 
 func (o *enterpriseRoleResourceType) cacheRole(roleId string, userLogin string) {
@@ -606,16 +611,8 @@ func (o *enterpriseRoleResourceType) provisioningTarget(
 	}
 	client, ok := enterpriseClients[enterprise]
 	if !ok {
-		// Naming the credential matters: under a PAT there is no App to
-		// install, so the other message sends the operator after a fix that
-		// cannot apply.
-		if o.newEnterpriseClients == nil {
-			return "", nil, status.Errorf(codes.FailedPrecondition,
-				"baton-github: provisioning enterprise %s requires GitHub App authentication; "+
-					"a personal access token can sync enterprise roles but cannot provision them", enterprise)
-		}
 		return "", nil, status.Errorf(codes.FailedPrecondition,
-			"baton-github: provisioning enterprise %s requires a GitHub App installed on the enterprise account", enterprise)
+			"baton-github: cannot provision enterprise %s: %s", enterprise, o.noClientReason())
 	}
 	return enterprise, client, nil
 }

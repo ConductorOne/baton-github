@@ -8,10 +8,11 @@ import (
 	"net/url"
 	"testing"
 
-	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/conductorone/baton-github/pkg/customclient"
 )
@@ -92,12 +93,12 @@ func TestGetEnterpriseInstallationUsesTheInstanceBaseURL(t *testing.T) {
 	require.Equal(t, int64(33), installation.ID)
 }
 
-// GitHub answers 404 when the app is not installed on the enterprise. That
-// enterprise is skipped instead of erroring: an error out of the build reaches
-// List, and the SDK aborts the entire sync on anything but NotFound, so a
-// configuration that synced users and orgs fine would stop syncing at all.
-// Skipping leaves no client, which is what makes Grant and Revoke report it.
-func TestNewEnterpriseRoleClientsSkipsAnEnterpriseWithoutAnInstall(t *testing.T) {
+// GitHub answers 404 when the app is not installed on the enterprise. Failing
+// is what protects the data: C1 deletes every resource of a type that a
+// completed sync did not report, so letting the sync finish while reading no
+// owners would drop the Owner role and every grant on it. An error keeps the
+// sync from completing at all.
+func TestNewEnterpriseRoleClientsRequiresEnterpriseInstall(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -108,7 +109,7 @@ func TestNewEnterpriseRoleClientsSkipsAnEnterpriseWithoutAnInstall(t *testing.T)
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"message": "Not Found"}))
 	}))
 
-	clients, err := newEnterpriseRoleClients(
+	_, err := newEnterpriseRoleClients(
 		ctx,
 		ctx,
 		"https://github.com",
@@ -118,15 +119,16 @@ func TestNewEnterpriseRoleClientsSkipsAnEnterpriseWithoutAnInstall(t *testing.T)
 		nil,
 		"example-org",
 	)
-	require.NoError(t, err)
-	require.Empty(t, clients)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Contains(t, err.Error(), `not installed on enterprise "example-enterprise"`)
+	require.NotContains(t, err.Error(), "personal access token")
 }
 
 // The owners are read through one organization, which belongs to one
-// enterprise, so app auth cannot serve a list. Standing down is what keeps it
-// to this resource type: an error would reach List, where the SDK aborts a
-// sync that delivers users, orgs, teams and repositories today.
-func TestNewEnterpriseRoleClientsStandsDownForSeveralEnterprises(t *testing.T) {
+// enterprise, so app auth cannot serve a list and picking one would be a
+// guess. This fails for the same reason as a missing installation: a sync that
+// completes without owners costs the operator every owner grant.
+func TestNewEnterpriseRoleClientsRejectsSeveralEnterprises(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -134,7 +136,7 @@ func TestNewEnterpriseRoleClientsStandsDownForSeveralEnterprises(t *testing.T) {
 		t.Errorf("no request expected, got %s", r.URL.Path)
 	}))
 
-	clients, err := newEnterpriseRoleClients(
+	_, err := newEnterpriseRoleClients(
 		ctx,
 		ctx,
 		"https://github.com",
@@ -144,31 +146,6 @@ func TestNewEnterpriseRoleClientsStandsDownForSeveralEnterprises(t *testing.T) {
 		nil,
 		"example-org",
 	)
-	require.NoError(t, err)
-	require.Empty(t, clients)
-}
-
-// An error out of List aborts the whole sync: the SDK downgrades only
-// NotFound, and anything else cancels the batch. So an app that is not
-// installed on the enterprise has to leave List reporting what it did before
-// enterprise installations were read at all, which under app auth is nothing:
-// the consumed-licenses API it falls back to is PAT-only and answers 403.
-func TestEnterpriseRoleListSurvivesWithoutEnterpriseClients(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	apiClient := newGitHubAPITestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"message": "Resource not accessible by integration"}))
-	}))
-
-	builder := EnterpriseRoleBuilder(apiClient, apiClient, customclient.New(apiClient), []string{"example-enterprise"},
-		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
-			return map[string]*githubEnterpriseAdministratorClient{}, nil
-		},
-	)
-
-	resources, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
-	require.NoError(t, err)
-	require.Empty(t, resources)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Contains(t, err.Error(), "one enterprise at a time")
 }

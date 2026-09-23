@@ -235,8 +235,16 @@ Consequences worth knowing:
 
 - Grant returns the grant in both cases: when it promoted an administrator, and when it only created an invitation. `Grants()` matches that and emits pending invitations alongside accepted Owners, so C1 keeps a record of the request from the moment it is made
 - Revoke clears both states rather than treating them as alternatives: it demotes an active Owner to `UNAFFILIATED`, which keeps them as a member of the enterprise rather than evicting them, and cancels an unaccepted invitation. A `NOT_FOUND` on either is success, because it means the state being asked for is already in place
-- Reading owners uses the **organization** installation token and every mutation uses the **enterprise** installation token; the enterprise token is rejected on organization fields. Startup verifies that the configured organization belongs to the configured enterprise, and a failure there fails only this resource type
-- Only one enterprise can be served under App authentication, because the owners are read through the single configured organization and an organization belongs to exactly one enterprise. A configuration naming several is rejected while the clients are built, which fails this resource type with an explanatory error rather than failing later on a check the operator cannot satisfy. The PAT path does accept a list
+- Reading owners uses the **organization** installation token and every mutation uses the **enterprise** installation token; the enterprise token is rejected on organization fields. Startup verifies that the configured organization belongs to the configured enterprise, and a failure there fails the sync
+- Only one enterprise can be served under App authentication, because the owners are read through the single configured organization and an organization belongs to exactly one enterprise. A configuration naming several is rejected while the clients are built, with an explanatory error rather than a later failure on a check the operator cannot satisfy. The PAT path does accept a list
+
+### A missing enterprise installation fails the sync rather than emitting nothing
+
+Under App authentication the connector refuses to sync when it cannot build an enterprise administration client: the app is not installed on the enterprise account, several enterprises are configured, or the organization does not belong to the configured one. The whole sync fails, not just this resource type.
+
+That is deliberate, and the alternative is worse. C1 deletes every resource of a type that a completed sync did not report, and it applies that to a resource type whose list came back empty for any reason. Letting the sync finish while reading no owners would therefore delete the Owner role and every grant on it, silently, and GitHub answers `404` for an uninstalled app, a revoked permission and a slug typo alike — the connector cannot tell a genuine uninstall from a blip. An error keeps the sync from completing, so nothing is deleted.
+
+The cost falls on a deployment that sets `--enterprises` under App authentication without installing the app on the enterprise account. That combination produced no enterprise data before this capability existed, and now stops the sync until the app is installed or the flag is removed.
 
 ### Pending invitations look the same as real access
 
