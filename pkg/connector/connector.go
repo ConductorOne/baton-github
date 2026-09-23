@@ -384,17 +384,6 @@ func appPrivateKeyPEM(ghc *cfg.Github) (string, error) {
 }
 
 func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
-	// Rejected at startup rather than when the enterprise clients are built:
-	// there the error would reach List, and the SDK aborts the whole sync on
-	// it. This needs no network call, so the operator hears about it before
-	// anything runs.
-	if len(ghc.Enterprises) > 1 {
-		return nil, status.Errorf(codes.InvalidArgument,
-			"github-connector: GitHub App authentication serves one enterprise at a time, "+
-				"because the owners are read through organization %q, which belongs to a single enterprise; "+
-				"%d were configured", ghc.Org, len(ghc.Enterprises))
-	}
-
 	privateKey, err := appPrivateKeyPEM(ghc)
 	if err != nil {
 		return nil, err
@@ -531,6 +520,23 @@ func newEnterpriseRoleClients(
 	if len(enterprises) == 0 {
 		return nil, nil
 	}
+	// The owners are read through the single configured organization, and an
+	// organization belongs to exactly one enterprise, so app auth cannot serve
+	// a list and picking one of them would be a guess. Only this resource type
+	// stands down: returning an error instead would reach List, where the SDK
+	// aborts the entire sync over a configuration that syncs everything else
+	// today. The PAT path does support a list.
+	if len(enterprises) > 1 {
+		ctxzap.Extract(ctx).Debug(
+			"baton-github: GitHub App authentication serves one enterprise at a time, "+
+				"because the owners are read through one organization, which belongs to a single enterprise; "+
+				"enterprise roles will not be synced or provisioned",
+			zap.String("org", org),
+			zap.Strings("enterprises", enterprises),
+		)
+		return nil, nil
+	}
+
 	// NewBaseHttpClient reports a failed cache setup by returning nil, which
 	// only panics later inside Do.
 	installationClient := customclient.New(appClient)

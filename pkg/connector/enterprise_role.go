@@ -65,10 +65,10 @@ func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.Resourc
 // clients returns the per-enterprise administration clients, building them on
 // first use and memoizing the outcome.
 //
-// Only a misconfiguration is memoized, because it will fail the same way every
-// time. Anything else is built again on the next call: discovering the
-// installations is four network calls, and freezing a startup blip would
-// disable this resource type for the lifetime of the process.
+// Only a complete build, or a misconfiguration that will fail the same way
+// every time, is memoized. Anything else is built again on the next call:
+// discovering the installations is four network calls, and freezing a startup
+// blip would disable this resource type for the lifetime of the process.
 func (o *enterpriseRoleResourceType) clients(
 	ctx context.Context,
 ) (map[string]*githubEnterpriseAdministratorClient, error) {
@@ -79,7 +79,7 @@ func (o *enterpriseRoleResourceType) clients(
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	if o.enterpriseClientsSet && (o.enterpriseClientsErr == nil || isPermanentError(o.enterpriseClientsErr)) {
+	if o.enterpriseClientsSet && (o.clientsAreComplete() || isPermanentError(o.enterpriseClientsErr)) {
 		return o.enterpriseClients, o.enterpriseClientsErr
 	}
 
@@ -87,6 +87,14 @@ func (o *enterpriseRoleResourceType) clients(
 	o.enterpriseClientsSet = true
 
 	return o.enterpriseClients, o.enterpriseClientsErr
+}
+
+// clientsAreComplete reports whether every configured enterprise resolved to a
+// client. A build that skipped one succeeded without an error, so remembering
+// it would keep an operator who installs the app on that enterprise reading
+// the old answer until the process restarts.
+func (o *enterpriseRoleResourceType) clientsAreComplete() bool {
+	return o.enterpriseClientsErr == nil && len(o.enterpriseClients) == len(o.enterprises)
 }
 
 func (o *enterpriseRoleResourceType) cacheRole(roleId string, userLogin string) {

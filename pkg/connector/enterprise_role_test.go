@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/conductorone/baton-github/pkg/customclient"
 	"github.com/conductorone/baton-github/test/mocks"
 )
 
@@ -925,6 +926,46 @@ func TestEnterpriseRoleRetriesAnUnclassifiedClientFailure(t *testing.T) {
 			require.Equal(t, 2, builds)
 		})
 	}
+}
+
+// An enterprise the app is not installed on is skipped, so the build succeeds
+// while resolving nothing. Remembering that would leave an operator who reads
+// the error from Grant, installs the app and retries still reading the old
+// answer until the process restarts.
+func TestEnterpriseRoleReprobesAnIncompleteClientBuild(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// Without a client the list falls back to consumed-licenses, which is
+	// PAT-only and answers 403 to an app.
+	apiClient := newGitHubAPITestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+
+	builds := 0
+	builder := EnterpriseRoleBuilder(apiClient, apiClient, customclient.New(apiClient), []string{testEnterprise},
+		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+			builds++
+			if builds == 1 {
+				// The app is not installed yet: nothing resolved, no error.
+				return map[string]*githubEnterpriseAdministratorClient{}, nil
+			}
+			return map[string]*githubEnterpriseAdministratorClient{testEnterprise: nil}, nil
+		},
+	)
+
+	_, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+	require.NoError(t, err)
+
+	resources, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Len(t, resources, 1)
+	require.Equal(t, 2, builds)
+
+	// Complete now, so it is remembered.
+	_, _, err = builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Equal(t, 2, builds)
 }
 
 // A transient failure must not be remembered: freezing a blip at startup would

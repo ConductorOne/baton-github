@@ -13,10 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 
-	cfg "github.com/conductorone/baton-github/pkg/config"
 	"github.com/conductorone/baton-github/pkg/customclient"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // newGitHubAPITestClient points the client at a test server through BaseURL
@@ -126,18 +123,29 @@ func TestNewEnterpriseRoleClientsSkipsAnEnterpriseWithoutAnInstall(t *testing.T)
 }
 
 // The owners are read through one organization, which belongs to one
-// enterprise, so app auth cannot serve a list. Rejecting it while the
-// connector is being built keeps it out of the sync, where the SDK would turn
-// it into an aborted run instead of a message about the configuration.
-func TestNewWithGithubAppRejectsSeveralEnterprises(t *testing.T) {
+// enterprise, so app auth cannot serve a list. Standing down is what keeps it
+// to this resource type: an error would reach List, where the SDK aborts a
+// sync that delivers users, orgs, teams and repositories today.
+func TestNewEnterpriseRoleClientsStandsDownForSeveralEnterprises(t *testing.T) {
 	t.Parallel()
 
-	_, err := newWithGithubApp(context.Background(), &cfg.Github{
-		Org:         "example-org",
-		Enterprises: []string{"one-enterprise", "another-enterprise"},
-	})
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	require.Contains(t, err.Error(), "one enterprise at a time")
+	ctx := context.Background()
+	client := newGitHubAPITestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request expected, got %s", r.URL.Path)
+	}))
+
+	clients, err := newEnterpriseRoleClients(
+		ctx,
+		ctx,
+		"https://github.com",
+		client,
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "unused"}),
+		[]string{"one-enterprise", "another-enterprise"},
+		nil,
+		"example-org",
+	)
+	require.NoError(t, err)
+	require.Empty(t, clients)
 }
 
 // An error out of List aborts the whole sync: the SDK downgrades only
