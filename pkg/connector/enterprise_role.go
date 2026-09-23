@@ -598,6 +598,14 @@ func (o *enterpriseRoleResourceType) provisioningTarget(
 	}
 	client, ok := enterpriseClients[enterprise]
 	if !ok {
+		// Naming the credential matters: under a PAT there is no App to
+		// install, so the other message sends the operator after a fix that
+		// cannot apply.
+		if o.newEnterpriseClients == nil {
+			return "", nil, status.Errorf(codes.FailedPrecondition,
+				"baton-github: provisioning enterprise %s requires GitHub App authentication; "+
+					"a personal access token can sync enterprise roles but cannot provision them", enterprise)
+		}
 		return "", nil, status.Errorf(codes.FailedPrecondition,
 			"baton-github: provisioning enterprise %s requires a GitHub App installed on the enterprise account", enterprise)
 	}

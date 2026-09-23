@@ -384,6 +384,17 @@ func appPrivateKeyPEM(ghc *cfg.Github) (string, error) {
 }
 
 func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
+	// Rejected at startup rather than when the enterprise clients are built:
+	// there the error would reach List, and the SDK aborts the whole sync on
+	// it. This needs no network call, so the operator hears about it before
+	// anything runs.
+	if len(ghc.Enterprises) > 1 {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"github-connector: GitHub App authentication serves one enterprise at a time, "+
+				"because the owners are read through organization %q, which belongs to a single enterprise; "+
+				"%d were configured", ghc.Org, len(ghc.Enterprises))
+	}
+
 	privateKey, err := appPrivateKeyPEM(ghc)
 	if err != nil {
 		return nil, err
@@ -520,19 +531,6 @@ func newEnterpriseRoleClients(
 	if len(enterprises) == 0 {
 		return nil, nil
 	}
-	// The owners are read through the single configured organization, and an
-	// organization belongs to exactly one enterprise, so only that enterprise
-	// can be served. Saying so here beats failing later on a verification the
-	// operator cannot satisfy. The PAT path does support a list.
-	// FailedPrecondition on the answers an operator has to change: it is what
-	// marks them safe to remember instead of rediscovering every call.
-	if len(enterprises) > 1 {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"github-connector: GitHub App authentication serves one enterprise at a time, "+
-				"because the owners are read through organization %q, which belongs to a single enterprise; "+
-				"%d were configured", org, len(enterprises))
-	}
-
 	// NewBaseHttpClient reports a failed cache setup by returning nil, which
 	// only panics later inside Do.
 	installationClient := customclient.New(appClient)
@@ -544,12 +542,18 @@ func newEnterpriseRoleClients(
 	for _, enterprise := range enterprises {
 		installation, _, err := installationClient.GetEnterpriseInstallation(ctx, enterprise)
 		if err != nil {
-			// A 404 is the app not being installed on the enterprise, which is
-			// the misconfiguration worth naming.
+			// A 404 is the app not being installed on the enterprise. That
+			// enterprise is skipped rather than failing: an error here aborts
+			// the whole sync, and before enterprise installations were read at
+			// all this configuration synced everything else fine. Provisioning
+			// still reports it, because there the operator asked for the role.
 			if status.Code(err) == codes.NotFound {
-				return nil, status.Errorf(codes.FailedPrecondition,
-					"github-connector: GitHub App is not installed on enterprise %q; install it on the enterprise account "+
-						"with the Enterprise people read and write permission", enterprise)
+				ctxzap.Extract(ctx).Debug(
+					"baton-github: GitHub App is not installed on the enterprise account, "+
+						"so its owners cannot be synced or provisioned",
+					zap.String("enterprise", enterprise),
+				)
+				continue
 			}
 			return nil, err
 		}

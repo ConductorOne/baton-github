@@ -979,11 +979,29 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 		require.Equal(t, codes.InvalidArgument, status.Code(err))
 	})
 
-	t.Run("rejects an enterprise without an app installation", func(t *testing.T) {
+	// Under a PAT there is no app to install, so naming one sends the operator
+	// after a fix that cannot apply.
+	t.Run("names the credential when the token cannot provision", func(t *testing.T) {
 		t.Parallel()
 		patBuilder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise}, nil)
 		_, _, err := patBuilder.Grant(ctx, principal, ent)
 		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Contains(t, err.Error(), "requires GitHub App authentication")
+	})
+
+	// With app auth the enterprise is skipped during sync when the app is not
+	// installed on it, so the client is missing here for a reason the operator
+	// can act on.
+	t.Run("names the missing installation under app auth", func(t *testing.T) {
+		t.Parallel()
+		appBuilder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise},
+			func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+				return map[string]*githubEnterpriseAdministratorClient{}, nil
+			},
+		)
+		_, _, err := appBuilder.Grant(ctx, principal, ent)
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Contains(t, err.Error(), "installed on the enterprise account")
 	})
 }
 
