@@ -448,19 +448,19 @@ func TestEnterpriseRoleGrant(t *testing.T) {
 		require.Empty(t, stub.updatedRole)
 	})
 
-	// A billing manager cannot be invited and is promoted in place instead.
-	// Which case applies is unreadable for a GitHub App, so the connector
-	// falls back once the invitation is rejected for that reason.
-	t.Run("promotes an administrator the invitation rejected", func(t *testing.T) {
+	// A billing manager cannot be invited. Which existing role caused the
+	// rejection is unreadable for a GitHub App, so promoting in place would
+	// make Revoke unable to restore the user's previous role.
+	t.Run("rejects an unsafe promotion after the invitation is rejected", func(t *testing.T) {
 		t.Parallel()
 		stub := &enterpriseStub{inviteErrorType: "UNPROCESSABLE"}
 		builder, principal, ent := newTestEnterpriseRoleBuilder(t, stub)
 
-		grants, annos, err := builder.Grant(ctx, principal, ent)
-		require.NoError(t, err)
-		requireNoIdempotencyClaim(t, annos)
-		require.Len(t, grants, 1)
-		require.Equal(t, githubv4.EnterpriseAdministratorRoleOwner, stub.updatedRole)
+		grants, _, err := builder.Grant(ctx, principal, ent)
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.ErrorContains(t, err, "promoting in place is not attempted")
+		require.Empty(t, grants)
+		require.Empty(t, stub.updatedRole)
 		require.Empty(t, stub.invitedLogin)
 	})
 
@@ -479,29 +479,21 @@ func TestEnterpriseRoleGrant(t *testing.T) {
 		require.Empty(t, stub.updatedRole)
 	})
 
-	// When both mutations fail, the promotion's status code is the one that
-	// reaches C1: it decides whether the task is worth retrying.
-	t.Run("surfaces the promotion status when both mutations fail", func(t *testing.T) {
+	// UNPROCESSABLE covers more than "already an administrator": seat limits
+	// and SSO or EMU restrictions land here too. Preserve GitHub's reason so
+	// the operator can distinguish those cases.
+	t.Run("preserves the invitation rejection reason", func(t *testing.T) {
 		t.Parallel()
-		// A reason other than "already an administrator", which is the case
-		// that makes carrying it worthwhile.
 		stub := &enterpriseStub{
 			inviteErrorType:    "UNPROCESSABLE",
 			inviteErrorMessage: "enterprise owner seat limit reached",
-			updateFails:        true,
 		}
 		builder, principal, ent := newTestEnterpriseRoleBuilder(t, stub)
 
 		_, _, err := builder.Grant(ctx, principal, ent)
-		require.Equal(t, codes.Unavailable, status.Code(err))
-		require.ErrorContains(t, err, "promoting in place also failed")
-		// GitHub's reason for refusing the invitation is carried too, because
-		// UNPROCESSABLE is not only "already an administrator" — a seat limit
-		// or an SSO restriction lands there as well, and then it is the
-		// actionable half. It is text, not a second %w: wrapping both would
-		// hand C1 the invitation's code instead of the promotion's.
-		require.ErrorContains(t, err, "was rejected")
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
 		require.ErrorContains(t, err, stub.inviteErrorMessage)
+		require.Empty(t, stub.updatedRole)
 	})
 
 	t.Run("reports an owner as already granted", func(t *testing.T) {

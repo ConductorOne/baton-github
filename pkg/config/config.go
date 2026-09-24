@@ -153,7 +153,7 @@ var Config = field.NewConfiguration(
 			DisplayName: "GitHub app",
 			HelpText:    "Use a github app for authentication",
 			Fields: []field.SchemaField{
-				appIDField, appPrivateKeyPath, appPrivateKey, orgField, syncSecrets,
+				appIDField, appPrivateKeyPath, appPrivateKey, orgField, EnterprisesField, syncSecrets,
 				enableEnterpriseOwnerProvisioning, omitArchivedRepositories, directCollaboratorsOnly,
 			},
 			Default: false,

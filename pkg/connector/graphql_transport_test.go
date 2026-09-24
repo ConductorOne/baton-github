@@ -86,8 +86,8 @@ func TestGraphQLErrorsCode(t *testing.T) {
 		// fail the sync.
 		{name: "rate limit wins", types: []string{"FORBIDDEN", "RATE_LIMITED"}, want: codes.Unavailable},
 		// Past a rate limit the first classified entry wins, so a later error
-		// cannot mask it. UNPROCESSABLE is what the invite-to-promote fallback
-		// in Grant branches on, and a trailing FORBIDDEN used to overwrite it.
+		// cannot mask it. Grant must preserve UNPROCESSABLE as the actionable
+		// FailedPrecondition, and a trailing FORBIDDEN used to overwrite it.
 		{name: "first classified wins", types: []string{"UNPROCESSABLE", "FORBIDDEN"}, want: codes.FailedPrecondition},
 		{name: "first classified entry wins", types: []string{"FORBIDDEN", "UNPROCESSABLE"}, want: codes.PermissionDenied},
 		// NOT_FOUND is the one code a credential error may override. Callers
@@ -96,8 +96,8 @@ func TestGraphQLErrorsCode(t *testing.T) {
 		{name: "credential error beats not found", types: []string{"NOT_FOUND", "FORBIDDEN"}, want: codes.PermissionDenied},
 		{name: "credential error beats not found, unauthenticated", types: []string{"NOT_FOUND", "UNAUTHENTICATED"}, want: codes.Unauthenticated},
 		{name: "not found alone still maps to not found", types: []string{"NOT_FOUND", "NOT_FOUND"}, want: codes.NotFound},
-		// Order must not decide whether Grant's invite-to-promote fallback
-		// fires, so UNPROCESSABLE outranks NOT_FOUND from either position.
+		// Order must not hide Grant's unsafe-promotion rejection, so
+		// UNPROCESSABLE outranks NOT_FOUND from either position.
 		{name: "unprocessable beats not found", types: []string{"NOT_FOUND", "UNPROCESSABLE"}, want: codes.FailedPrecondition},
 		{name: "unprocessable beats not found, reversed", types: []string{"UNPROCESSABLE", "NOT_FOUND"}, want: codes.FailedPrecondition},
 	}

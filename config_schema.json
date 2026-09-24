@@ -213,6 +213,7 @@
         "app-privatekey-path",
         "app-privatekey",
         "org",
+        "enterprises",
         "sync-secrets",
         "enable-enterprise-owner-provisioning",
         "omit-archived-repositories",

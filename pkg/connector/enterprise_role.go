@@ -499,11 +499,11 @@ func (o *enterpriseRoleResourceType) pendingInvitationGrants(
 
 // Grant gives a user the built-in Owner role and returns the resulting grant.
 //
-// A member can only become an owner by accepting an invitation, while someone
-// who already administers the enterprise is promoted in place. Which case
-// applies is unreadable for an installation token, so the invitation is tried
-// first and the promotion is the fallback, keyed on the FailedPrecondition
-// that GitHub's UNPROCESSABLE maps to.
+// A member can only become an owner by accepting an invitation. GitHub rejects
+// that invitation for existing administrators, but an installation token
+// cannot read their current role. Promoting one in place would therefore make
+// Revoke destructive: it could only demote them to UNAFFILIATED rather than
+// restore the role they held before the grant.
 //
 // An unaccepted invitation counts as held and returns a grant, the same way
 // Grants() emits it: returning nothing would make C1 drop an overlay that the
@@ -538,23 +538,17 @@ func (o *enterpriseRoleProvisioner) Grant(
 		if status.Code(inviteErr) != codes.FailedPrecondition {
 			return nil, annos, inviteErr
 		}
-		ctxzap.Extract(ctx).Debug("baton-github: invitation rejected, promoting in place instead",
+		ctxzap.Extract(ctx).Debug("baton-github: invitation rejected; refusing unsafe in-place promotion",
 			zap.String("login", login),
 			zap.Error(inviteErr),
 		)
-		if promoteErr := client.UpdateRole(
-			ctx, state.enterpriseID, login, githubv4.EnterpriseAdministratorRoleOwner,
-		); promoteErr != nil {
-			// UNPROCESSABLE covers more than "already an administrator" —
-			// seat limits and SSO or EMU restrictions land here too — and
-			// that reason is the actionable one when the promotion also
-			// fails. It is carried as text so the promotion keeps %w: its
-			// status code is what tells C1 whether to retry, and a second
-			// %w would put the invitation's code first instead.
-			return nil, annos, fmt.Errorf(
-				"inviting %s was rejected (%s); promoting in place also failed: %w",
-				login, inviteErr.Error(), promoteErr)
-		}
+		// The rejection is not always "already an administrator" — a seat
+		// limit or an SSO restriction lands here too — so the message states
+		// the policy and lets GitHub give the reason.
+		return nil, annos, fmt.Errorf(
+			"baton-github: cannot grant enterprise Owner to %s, and promoting in place is not attempted "+
+				"because a prior administrator role cannot be read back and revoke would discard it: %w",
+			login, inviteErr)
 	}
 
 	state, stateAnnos, err = client.OwnerState(ctx, enterprise, login)

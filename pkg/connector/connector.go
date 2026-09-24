@@ -363,6 +363,7 @@ func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.Conne
 }
 
 func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
+	enterprises := distinctEnterprises(ghc.Enterprises)
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: ghc.Token},
 	)
@@ -379,7 +380,7 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		customClient:             customclient.New(ghClient),
 		instanceURL:              ghc.InstanceUrl,
 		orgs:                     ghc.Orgs,
-		enterprises:              ghc.Enterprises,
+		enterprises:              enterprises,
 		graphqlClient:            graphqlClient,
 		orgCache:                 newOrgNameCache(ghClient),
 		syncSecrets:              ghc.SyncSecrets,
@@ -404,6 +405,7 @@ func appPrivateKeyPEM(ghc *cfg.Github) (string, error) {
 }
 
 func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
+	enterprises := distinctEnterprises(ghc.Enterprises)
 	privateKey, err := appPrivateKeyPEM(ghc)
 	if err != nil {
 		return nil, err
@@ -506,7 +508,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	if ghc.EnableEnterpriseOwnerProvisioning {
 		newEnterpriseRoleClientsFn = func(ctx context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
 			return newEnterpriseRoleClients(
-				ctx, connectorCtx, ghc.InstanceUrl, appClient, jwtts, ghc.Enterprises, appHTTPClient, ghc.Org)
+				ctx, connectorCtx, ghc.InstanceUrl, appClient, jwtts, enterprises, appHTTPClient, ghc.Org)
 		}
 	}
 
@@ -516,7 +518,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		customClient:             customclient.New(ghClient),
 		instanceURL:              ghc.InstanceUrl,
 		orgs:                     []string{ghc.Org},
-		enterprises:              ghc.Enterprises,
+		enterprises:              enterprises,
 		newEnterpriseRoleClients: newEnterpriseRoleClientsFn,
 		graphqlClient:            graphqlClient,
 		orgCache:                 newOrgNameCache(ghClient),

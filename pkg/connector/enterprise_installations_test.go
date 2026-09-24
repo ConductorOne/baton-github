@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	cfg "github.com/conductorone/baton-github/pkg/config"
 	"github.com/conductorone/baton-github/pkg/customclient"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -224,6 +225,25 @@ func TestNewEnterpriseRoleClientsFoldsRepeatedEnterprises(t *testing.T) {
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.Contains(t, err.Error(), "not installed on enterprise")
 	require.NotContains(t, err.Error(), "one enterprise at a time")
+}
+
+func TestConnectorFoldsRepeatedEnterprisesBeforeBuildingSyncers(t *testing.T) {
+	t.Parallel()
+
+	gh, err := newWithGithubPAT(context.Background(), &cfg.Github{
+		Token:       "test-token",
+		InstanceUrl: githubDotCom,
+		Enterprises: []string{"example-enterprise", "example-enterprise"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"example-enterprise"}, gh.enterprises)
+
+	resources, _, err := appList(
+		gh.enterprises,
+		map[string]*githubEnterpriseAdministratorClient{"example-enterprise": nil},
+	)
+	require.NoError(t, err)
+	require.Len(t, resources, 1)
 }
 
 // The owners are read through one organization, which belongs to one
