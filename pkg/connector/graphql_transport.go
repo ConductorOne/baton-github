@@ -103,9 +103,9 @@ func graphQLErrorType(graphQLErr graphQLError) string {
 // matching error text.
 //
 // It wraps only the enterprise administration client, because the enterprise
-// owner mutations rely on telling apart "already an administrator" (which has a
-// documented fallback), a rate limit (retryable) and a missing invitation
-// (already revoked). The shared GraphQL client keeps returning the library's
+// owner mutations rely on telling apart a rejected invitation (which Grant
+// refuses rather than working around), a rate limit (retryable) and a missing
+// invitation (already revoked). The shared GraphQL client keeps returning the library's
 // own error untouched, because userResourceType.checkOrgSAML detects
 // enterprise-level SAML by matching the text of that error.
 type enterpriseGraphQLTransport struct {
