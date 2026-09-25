@@ -22,6 +22,9 @@ Use this integration if your organization accesses GitHub at `github.com`. If yo
 | Orgs | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
 | GitHub Apps (NHI) | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |  |
 | Secrets - API keys | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |  |
+| Enterprise roles | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
+
+Enterprise roles are opt-in and off by default. Syncing them requires the **Enterprises** setting; provisioning the built-in **Enterprise Owner** role additionally requires **Enable enterprise owner provisioning** and a GitHub app installed on both the enterprise account and the organization. See the setup steps below.
 
 The GitHub connector supports [automatic account provisioning and deprovisioning](/product/admin/account-provisioning). New accounts will send an invitation to the account owner; while an invitation is pending, the account status will be shown as **Pending**. Expired invitations also report **Pending**, distinguished by `invitation_expired` in the status details. 
 
@@ -211,9 +214,6 @@ In the **Permissions** section of the page, give the app the following permissio
      For details, see the GitHub docs on [Permissions required for GitHub Apps](https://docs.github.com/en/enterprise-cloud@latest/rest/authentication/permissions-required-for-github-apps).
 </Step>
 <Step>
-**Optional.** If you want C1 to manage the built-in Enterprise Owner role, install the app on the **enterprise account** as well, from your enterprise's **Settings** > **GitHub Apps**. Granting the enterprise permission above is not enough on its own: without that second installation the connector cannot read or assign owners.
-</Step>
-<Step>
 In the **Where can this app be installed?** section of the page, choose **Only on this account**. This limits the app's scope to the GitHub Enterprise organization you've set it up on.
 </Step>
 <Step>
@@ -249,6 +249,9 @@ Select the repositories the app can act on.
 </Step>
 <Step>
 Click **Install**.
+</Step>
+<Step>
+**Optional.** If you want C1 to manage the built-in Enterprise Owner role, install the app a second time, on the **enterprise account**, from your enterprise's **Settings** > **GitHub Apps**. Granting the enterprise permission above is not enough on its own: without that second installation the connector cannot read or assign owners.
 </Step>
 </Steps> 
 
