@@ -69,6 +69,18 @@ var (
 		field.WithDisplayName("Sync secrets"),
 		field.WithDescription(`Whether to sync secrets or not`),
 	)
+	// Off by default because it needs setup nobody has done yet: turning it on
+	// without the enterprise installation fails the sync, which is only a fair
+	// trade for someone who asked for the capability.
+	enableEnterpriseOwnerProvisioning = field.BoolField(
+		"enable-enterprise-owner-provisioning",
+		field.WithDisplayName("Enable enterprise owner provisioning"),
+		field.WithDescription(
+			"Sync and provision the built-in Enterprise Owner role. Requires the GitHub App to be installed on "+
+				"the enterprise account as well as on the organization, with the \"Enterprise people: read and write\" "+
+				"permission, and requires --enterprises to name that enterprise. Not available with a personal access token.",
+		),
+	)
 	omitArchivedRepositories = field.BoolField(
 		"omit-archived-repositories",
 		field.WithDisplayName("Omit syncing archived repositories"),
@@ -120,6 +132,7 @@ var Config = field.NewConfiguration(
 		appPrivateKey,
 		orgField,
 		syncSecrets,
+		enableEnterpriseOwnerProvisioning,
 		omitArchivedRepositories,
 		directCollaboratorsOnly,
 		syncLastActivity,
@@ -139,8 +152,11 @@ var Config = field.NewConfiguration(
 			Name:        GithubAppGroup,
 			DisplayName: "GitHub app",
 			HelpText:    "Use a github app for authentication",
-			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, appPrivateKey, orgField, syncSecrets, omitArchivedRepositories, directCollaboratorsOnly},
-			Default:     false,
+			Fields: []field.SchemaField{
+				appIDField, appPrivateKeyPath, appPrivateKey, orgField, EnterprisesField, syncSecrets,
+				enableEnterpriseOwnerProvisioning, omitArchivedRepositories, directCollaboratorsOnly,
+			},
+			Default: false,
 		},
 	}),
 )

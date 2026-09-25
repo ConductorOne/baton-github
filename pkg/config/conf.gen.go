@@ -13,6 +13,7 @@ type Github struct {
 	AppPrivatekey string `mapstructure:"app-privatekey"`
 	Org string `mapstructure:"org"`
 	SyncSecrets bool `mapstructure:"sync-secrets"`
+	EnableEnterpriseOwnerProvisioning bool `mapstructure:"enable-enterprise-owner-provisioning"`
 	OmitArchivedRepositories bool `mapstructure:"omit-archived-repositories"`
 	DirectCollaboratorsOnly bool `mapstructure:"direct-collaborators-only"`
 	SyncLastActivity bool `mapstructure:"sync-last-activity"`

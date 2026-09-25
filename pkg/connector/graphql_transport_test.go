@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -68,6 +69,77 @@ func TestStatusClassifyingTransport_PassesThrough2xx(t *testing.T) {
 	require.NotNil(t, resp)
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestGraphQLErrorsCode(t *testing.T) {
+	cases := []struct {
+		name  string
+		types []string
+		want  codes.Code
+	}{
+		{name: "unclassified", types: []string{"SOMETHING_NEW"}, want: codes.Internal},
+		{name: "forbidden", types: []string{"FORBIDDEN"}, want: codes.PermissionDenied},
+		{name: "not found", types: []string{"NOT_FOUND"}, want: codes.NotFound},
+		{name: "unauthenticated", types: []string{"UNAUTHENTICATED"}, want: codes.Unauthenticated},
+		{name: "unprocessable", types: []string{"UNPROCESSABLE"}, want: codes.FailedPrecondition},
+		// A rate limit outranks everything: the SDK has to retry rather than
+		// fail the sync.
+		{name: "rate limit wins", types: []string{"FORBIDDEN", "RATE_LIMITED"}, want: codes.Unavailable},
+		// Past a rate limit the first classified entry wins, so a later error
+		// cannot mask it. Grant must preserve UNPROCESSABLE as the actionable
+		// FailedPrecondition, and a trailing FORBIDDEN used to overwrite it.
+		{name: "first classified wins", types: []string{"UNPROCESSABLE", "FORBIDDEN"}, want: codes.FailedPrecondition},
+		{name: "first classified entry wins", types: []string{"FORBIDDEN", "UNPROCESSABLE"}, want: codes.PermissionDenied},
+		// NOT_FOUND is the one code a credential error may override. Callers
+		// read it as "already gone" and report success, so a batch whose
+		// missing invitations hide a FORBIDDEN must not look benign.
+		{name: "credential error beats not found", types: []string{"NOT_FOUND", "FORBIDDEN"}, want: codes.PermissionDenied},
+		{name: "credential error beats not found, unauthenticated", types: []string{"NOT_FOUND", "UNAUTHENTICATED"}, want: codes.Unauthenticated},
+		{name: "not found alone still maps to not found", types: []string{"NOT_FOUND", "NOT_FOUND"}, want: codes.NotFound},
+		// Order must not hide Grant's unsafe-promotion rejection, so
+		// UNPROCESSABLE outranks NOT_FOUND from either position.
+		{name: "unprocessable beats not found", types: []string{"NOT_FOUND", "UNPROCESSABLE"}, want: codes.FailedPrecondition},
+		{name: "unprocessable beats not found, reversed", types: []string{"UNPROCESSABLE", "NOT_FOUND"}, want: codes.FailedPrecondition},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			graphQLErrors := make([]graphQLError, 0, len(tc.types))
+			for _, errorType := range tc.types {
+				graphQLErrors = append(graphQLErrors, graphQLError{Type: errorType})
+			}
+			require.Equal(t, tc.want, graphQLErrorsCode(graphQLErrors))
+		})
+	}
+}
+
+// extensions.code is preferred over the top-level type, because GitHub sets it
+// on the errors that carry a machine-readable classification.
+func TestGraphQLErrorsCodePrefersExtensionsCode(t *testing.T) {
+	graphQLErr := graphQLError{Type: "FORBIDDEN"}
+	graphQLErr.Extensions.Code = "RATE_LIMITED"
+
+	require.Equal(t, codes.Unavailable, graphQLErrorsCode([]graphQLError{graphQLErr}))
+}
+
+func TestEnterpriseGraphQLTransport_PassesThroughUnparseableBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`not json`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &http.Client{
+		Transport: &enterpriseGraphQLTransport{base: http.DefaultTransport},
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/graphql", nil)
+	require.NoError(t, err)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "not json", string(body))
 }
 
 func TestStatusClassifyingTransport_ClassifiesClient4xx(t *testing.T) {

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -127,6 +126,7 @@ type GitHub struct {
 	omitArchivedRepositories bool
 	directCollaboratorsOnly  bool
 	enterprises              []string
+	newEnterpriseRoleClients enterpriseClientProvider
 	syncLastActivity         bool
 }
 
@@ -155,10 +155,33 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	}
 
 	if len(gh.enterprises) > 0 {
-		resourceSyncers = append(resourceSyncers,
-			EnterpriseRoleBuilder(gh.client, gh.appClient, gh.customClient, gh.enterprises),
-			LicenseBuilder(gh.customClient, gh.enterprises),
-		)
+		// The provisioning-capable syncer is registered only where the role can
+		// actually be provisioned. The SDK reads CAPABILITY_PROVISION off the
+		// methods a syncer implements, so registering it everywhere would offer
+		// the role as requestable to PAT deployments, where every request fails.
+		if gh.newEnterpriseRoleClients != nil {
+			resourceSyncers = append(resourceSyncers, EnterpriseRoleProvisioningBuilder(
+				gh.client, gh.appClient, gh.customClient, gh.enterprises,
+				gh.newEnterpriseRoleClients,
+			))
+		} else {
+			resourceSyncers = append(resourceSyncers, EnterpriseRoleBuilder(
+				gh.client, gh.appClient, gh.customClient, gh.enterprises, nil,
+			))
+		}
+		// The consumed-licenses API behind this type is PAT-only, so under app
+		// auth its 403 fails the whole sync and it has never emitted a
+		// resource. It is dropped only once the operator opts into enterprise
+		// owner provisioning, which is the setup whose sync it would break.
+		//
+		// Keyed on the provider rather than on the credential on purpose:
+		// with the opt-in off this type has to stay registered, because its
+		// failure is what stops the run. Dropping it there would let the sync
+		// complete while reporting no enterprise roles, and C1 deletes the
+		// stored resources of a type a completed sync did not report.
+		if gh.newEnterpriseRoleClients == nil {
+			resourceSyncers = append(resourceSyncers, LicenseBuilder(gh.customClient, gh.enterprises))
+		}
 	}
 	return resourceSyncers
 }
@@ -288,9 +311,9 @@ func (gh *GitHub) validateAppCredentials(ctx context.Context) (annotations.Annot
 		l := ctxzap.Extract(ctx)
 		_, _, err := gh.customClient.ListEnterpriseConsumedLicenses(ctx, gh.enterprises[0], 1)
 		if err != nil {
-			l.Debug("baton-github: enterprise features (--enterprises) require a Personal Access Token. "+
-				"GitHub App authentication cannot access the consumed-licenses API. "+
-				"Either switch to PAT auth or remove the --enterprises flag.",
+			l.Debug("baton-github: enterprise license data requires a Personal Access Token. "+
+				"GitHub App authentication cannot access the consumed-licenses API, "+
+				"so the license resource type cannot sync.",
 				zap.Error(err))
 		}
 	}
@@ -340,6 +363,7 @@ func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.Conne
 }
 
 func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
+	enterprises := distinctEnterprises(ghc.Enterprises)
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: ghc.Token},
 	)
@@ -356,7 +380,7 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		customClient:             customclient.New(ghClient),
 		instanceURL:              ghc.InstanceUrl,
 		orgs:                     ghc.Orgs,
-		enterprises:              ghc.Enterprises,
+		enterprises:              enterprises,
 		graphqlClient:            graphqlClient,
 		orgCache:                 newOrgNameCache(ghClient),
 		syncSecrets:              ghc.SyncSecrets,
@@ -381,6 +405,7 @@ func appPrivateKeyPEM(ghc *cfg.Github) (string, error) {
 }
 
 func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
+	enterprises := distinctEnterprises(ghc.Enterprises)
 	privateKey, err := appPrivateKeyPEM(ghc)
 	if err != nil {
 		return nil, err
@@ -457,13 +482,44 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		return nil, err
 	}
 
+	// Enterprise administration needs its own installation token: the org
+	// installation token above carries no enterprise permissions. Reading the
+	// owners needs the org token, so both are handed to the client.
+	//
+	// Built on first use rather than here, so connector construction and
+	// Validate do not depend on the enterprise installation and a later sync
+	// retries the build. It does not narrow the blast radius of a failure:
+	// the error surfaces from List, which fails the whole sync, and that is
+	// deliberate — a sync that completed without owners would read to C1 as a
+	// revoke of every owner assignment.
+	//
+	// The construction context is captured separately: the clients are
+	// memoized for the process lifetime, so the token refresher inside them
+	// must not hold the context of whichever RPC happened to build them.
+	connectorCtx := ctx
+	// Left nil unless the operator opted in. Reading enterprise owners needs
+	// the app installed on the enterprise account too, which no existing
+	// deployment has done, and the connector fails the sync when it cannot
+	// read them. Nil keeps that path inert: enterprise roles then come from
+	// the consumed-licenses cache exactly as they did before this capability,
+	// which under app auth means nothing, so an upgrade changes no behaviour
+	// until it is asked for.
+	var newEnterpriseRoleClientsFn enterpriseClientProvider
+	if ghc.EnableEnterpriseOwnerProvisioning {
+		newEnterpriseRoleClientsFn = func(ctx context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+			return newEnterpriseRoleClients(
+				ctx, connectorCtx, ghc.InstanceUrl, appClient, jwtts, enterprises, appHTTPClient, ghc.Org)
+		}
+	}
+
 	gh := &GitHub{
 		client:                   ghClient,
 		appClient:                appClient,
 		customClient:             customclient.New(ghClient),
 		instanceURL:              ghc.InstanceUrl,
 		orgs:                     []string{ghc.Org},
-		enterprises:              ghc.Enterprises,
+		enterprises:              enterprises,
+		newEnterpriseRoleClients: newEnterpriseRoleClientsFn,
 		graphqlClient:            graphqlClient,
 		orgCache:                 newOrgNameCache(ghClient),
 		syncSecrets:              ghc.SyncSecrets,
@@ -474,17 +530,129 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	return gh, nil
 }
 
-func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
-	instanceURL = strings.TrimSuffix(instanceURL, "/")
+// newEnterpriseRoleClients builds one client per configured enterprise, each
+// with that enterprise's own installation token: enterprise and organization
+// installations are separate, and an enterprise mutation rejects the org token.
+//
+// Fails closed when the app is not installed on an enterprise, or when the
+// organization does not belong to it. Returning no clients instead would let
+// the sync complete while reading no owners, and C1 deletes every resource of
+// a type that a completed sync did not report — the Owner role and every
+// grant on it. Failing is what stops a sync from being completed at all, so
+// an operator who has not installed the app on the enterprise account, or who
+// configured several, hears about it instead of losing the assignments.
+//
+// ctx scopes the discovery requests to the caller. connectorCtx outlives them
+// and is what the memoized clients keep for refreshing the installation token,
+// which expires after an hour or on the first 401.
+func newEnterpriseRoleClients(
+	ctx context.Context,
+	connectorCtx context.Context,
+	instanceURL string,
+	appClient *github.Client,
+	jwtTokenSource oauth2.TokenSource,
+	enterprises []string,
+	orgHTTPClient *http.Client,
+	org string,
+) (map[string]*githubEnterpriseAdministratorClient, error) {
+	// Naming the same enterprise twice, which happens when the flag is set in
+	// both the environment and the command line, is one enterprise.
+	enterprises = distinctEnterprises(enterprises)
+	if len(enterprises) == 0 {
+		return nil, nil
+	}
+	// The owners are read through the single configured organization, and an
+	// organization belongs to exactly one enterprise, so app auth cannot serve
+	// a list and picking one of them would be a guess. The PAT path does
+	// support a list.
+	if len(enterprises) > 1 {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"github-connector: GitHub App authentication serves one enterprise at a time, "+
+				"because the owners are read through organization %q, which belongs to a single enterprise; "+
+				"%d were configured", org, len(enterprises))
+	}
 
-	var enterpriseGqlURL string
-	if instanceURL != "" && instanceURL != githubDotCom {
-		parsed, err := url.Parse(instanceURL)
+	// NewBaseHttpClient reports a failed cache setup by returning nil, which
+	// only panics later inside Do.
+	installationClient := customclient.New(appClient)
+	if installationClient.BaseHttpClient == nil {
+		return nil, fmt.Errorf("github-connector: error building the enterprise installation client")
+	}
+
+	clients := make(map[string]*githubEnterpriseAdministratorClient, len(enterprises))
+	for _, enterprise := range enterprises {
+		installation, _, err := installationClient.GetEnterpriseInstallation(ctx, enterprise)
+		if err != nil {
+			// A 404 is the app not being installed on the enterprise, which is
+			// the misconfiguration worth naming.
+			if status.Code(err) == codes.NotFound {
+				return nil, status.Errorf(codes.FailedPrecondition,
+					"github-connector: GitHub App is not installed on enterprise %q; install it on the enterprise account "+
+						"with the Enterprise people read and write permission", enterprise)
+			}
+			return nil, err
+		}
+		installationID := installation.ID
+
+		token, err := getInstallationToken(ctx, appClient, installationID)
 		if err != nil {
 			return nil, err
 		}
-		parsed.Path = "/api/graphql"
-		enterpriseGqlURL = parsed.String()
+
+		ts := newRefreshableTokenSource(
+			&oauth2.Token{
+				AccessToken: token.GetToken(),
+				Expiry:      token.GetExpiresAt().Time,
+			},
+			&appTokenRefresher{
+				ctx:            connectorCtx,
+				instanceURL:    instanceURL,
+				installationID: installationID,
+				jwtTokenSource: jwtTokenSource,
+			},
+		)
+
+		httpClient, err := newGitHubAppHTTPClient(connectorCtx, ts)
+		if err != nil {
+			return nil, err
+		}
+
+		client, err := newEnterpriseAdministratorClient(instanceURL, httpClient, orgHTTPClient, org)
+		if err != nil {
+			return nil, err
+		}
+		if err := client.verifyOrganization(ctx, enterprise); err != nil {
+			return nil, err
+		}
+		if err := client.resolveEnterpriseNodeID(ctx, enterprise); err != nil {
+			return nil, err
+		}
+		clients[enterprise] = client
+	}
+
+	return clients, nil
+}
+
+// distinctEnterprises folds the slugs, which GitHub matches case-insensitively,
+// so a repeated value does not read as several enterprises.
+func distinctEnterprises(enterprises []string) []string {
+	seen := make(map[string]struct{}, len(enterprises))
+	distinct := make([]string, 0, len(enterprises))
+	for _, enterprise := range enterprises {
+		key := strings.ToLower(enterprise)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		distinct = append(distinct, enterprise)
+	}
+	return distinct
+}
+
+func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
+	endpoint, err := enterpriseGraphQLEndpoint(instanceURL)
+	if err != nil {
+		return nil, err
 	}
 
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
@@ -496,10 +664,7 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.T
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	tc := oauth2.NewClient(ctx, ts)
 
-	if enterpriseGqlURL != "" {
-		return githubv4.NewEnterpriseClient(enterpriseGqlURL, tc), nil
-	}
-	return githubv4.NewClient(tc), nil
+	return githubv4.NewEnterpriseClient(endpoint.String(), tc), nil
 }
 
 // escapedLineBreaks unescapes LF-, CRLF-, and CR-escaped line breaks (`\r\n`,

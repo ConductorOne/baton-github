@@ -22,6 +22,9 @@ Use this integration if your organization accesses GitHub at `github.com`. If yo
 | Orgs | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
 | GitHub Apps (NHI) | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |  |
 | Secrets - API keys | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |  |
+| Enterprise roles | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
+
+Enterprise roles are opt-in and off by default. Syncing them requires the **Enterprises** setting; provisioning the built-in **Enterprise Owner** role additionally requires **Enable enterprise owner provisioning** and a GitHub app installed on both the enterprise account and the organization. See the setup steps below.
 
 The GitHub connector supports [automatic account provisioning and deprovisioning](/product/admin/account-provisioning). New accounts will send an invitation to the account owner; while an invitation is pending, the account status will be shown as **Pending**. Expired invitations also report **Pending**, distinguished by `invitation_expired` in the status details. 
 
@@ -158,6 +161,10 @@ This process creates a GitHub app that is only available to your GitHub organiza
 A user with the **Org Owner** permission in the GitHub organization to be integrated with C1 must perform this task.
 </Warning>
 
+<Note>
+If you want C1 to manage the built-in **Enterprise Owner** role, create the app under your **enterprise account** rather than under the organization — start from your enterprise's **Settings** > **GitHub Apps** > **New GitHub App** instead of Step 1 below — and install it twice: once on the enterprise account and once on the organization the connector syncs. The rest of the steps are the same.
+</Note>
+
 <Steps>
 <Step>
 In GitHub, navigate to **Your organizations** > **Settings**.
@@ -199,7 +206,11 @@ In the **Permissions** section of the page, give the app the following permissio
       - **Administration**: Read-only access (required to detect SAML/SSO configuration)
       - **Custom organization roles**: Read and write access
       - **Members**: Read and write access
-  
+
+    - Enterprise permissions, **only** if you want C1 to manage the built-in Enterprise Owner role:
+
+      - **People**: Read and write access
+
      For details, see the GitHub docs on [Permissions required for GitHub Apps](https://docs.github.com/en/enterprise-cloud@latest/rest/authentication/permissions-required-for-github-apps).
 </Step>
 <Step>
@@ -238,6 +249,9 @@ Select the repositories the app can act on.
 </Step>
 <Step>
 Click **Install**.
+</Step>
+<Step>
+**Optional.** If you want C1 to manage the built-in Enterprise Owner role, install the app a second time, on the **enterprise account**, from your enterprise's **Settings** > **GitHub Apps**. Granting the enterprise permission above is not enough on its own: without that second installation the connector cannot read or assign owners.
 </Step>
 </Steps> 
 
@@ -313,6 +327,12 @@ If you're using a GitHub app to set up the connector:
    1. In the **Organization** field, enter the name of the GitHub organization associated with the GitHub app. **You must enter a single organization name in this field or the connector configuration will fail.**
 
    1. **Optional.** Click to enable **Sync secrets**. [Synced secrets](/product/admin/inventory) are displayed on the **Inventory** page.
+
+   1. **Optional.** If you want C1 to manage the built-in Enterprise Owner role, enter your enterprise's slug in the **Enterprises** field and click to enable **Enable enterprise owner provisioning**. Both are required together, and the app must be installed on the enterprise account with the **Enterprise → People: Read and write** permission, as described above.
+
+      Enter a single enterprise. An organization belongs to exactly one enterprise, and owners are read through the organization you configured above, so naming more than one is rejected.
+
+      Leave these unset unless you need the role. While the option is off, the connector syncs exactly as it did before, and the Enterprise Owner role does not appear in C1. While it is on, the connector deliberately fails the sync if it cannot reach the enterprise — reporting no owners would make C1 delete the role and every grant on it.
 
    1. **Optional.** If you do not want to include archived repos in syncs, click to enable **Omit archived repositories**.
 
@@ -405,6 +425,13 @@ stringData:
 
   # Optional: include if you want C1 to provision access using this connector
   BATON_PROVISIONING: true
+
+  # Optional: GitHub app only. Include both if you want C1 to manage the built-in
+  # Enterprise Owner role. Requires the app to be installed on the enterprise
+  # account as well as on the org, with "Enterprise people: read and write".
+  # Name a single enterprise: the org you configured belongs to exactly one.
+  BATON_ENTERPRISES: <Enterprise slug>
+  BATON_ENABLE_ENTERPRISE_OWNER_PROVISIONING: true
 
   # Optional: include if you do not want to sync archived repos
   BATON_OMIT_ARCHIVED_REPOSITORIES: true

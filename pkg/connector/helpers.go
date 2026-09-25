@@ -324,6 +324,35 @@ func isAuthError(resp *github.Response) bool {
 	return resp.StatusCode == http.StatusUnauthorized
 }
 
+// freshestRateLimit returns current with the rate limit of latest applied,
+// keeping the earlier budget when latest reports none.
+//
+// It replaces rather than appends because Annotations.Pick returns the first
+// match: a second descriptor added by Merge is never read, so the stale one
+// would win over the fresh one.
+func freshestRateLimit(current, latest annotations.Annotations) annotations.Annotations {
+	var rateLimit v2.RateLimitDescription
+	found, err := latest.Pick(&rateLimit)
+	if err != nil || !found {
+		return current
+	}
+	current.Update(&rateLimit)
+
+	return current
+}
+
+// isPermissionDenied reports the same condition as isPermissionError, for the
+// paths that only have a typed error: the GraphQL clients return a gRPC status
+// rather than a *github.Response.
+func isPermissionDenied(err error) bool {
+	var grpcErr interface{ GRPCStatus() *status.Status }
+	if errors.As(err, &grpcErr) {
+		return grpcErr.GRPCStatus().Code() == codes.PermissionDenied
+	}
+
+	return false
+}
+
 func isPermissionError(resp *github.Response) bool {
 	if resp == nil {
 		return false

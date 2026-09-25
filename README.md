@@ -42,7 +42,11 @@ baton resources
 - Users
 - Teams
 - Repositories
+- Organization roles
+- Invitations (users invited to an organization who have not accepted yet)
 - GitHub Apps (installed in organizations, synced as non-human identities)
+- Enterprise roles, only when `--enterprises` is set. Provisioning the built-in Enterprise Owner role additionally requires `--enable-enterprise-owner-provisioning` and a GitHub App installed on the enterprise account
+- Enterprise licenses, only when `--enterprises` is set and the connector uses a personal access token. The API behind them is not available to GitHub Apps
 
 By default, `baton-github` will sync information from any organizations that the provided credential has Administrator permissions on. You can specify exactly which organizations you would like to sync using the `--orgs` flag.
 
@@ -78,6 +82,7 @@ Flags:
       --app-privatekey-path string                       Path to private key that is used to connect to the GitHub App. Ignored when app-privatekey is set. ($BATON_APP_PRIVATEKEY_PATH)
       --client-id string                                 The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
       --client-secret string                             The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
+      --enable-enterprise-owner-provisioning             Sync and provision the built-in Enterprise Owner role. Requires the GitHub App to be installed on the enterprise account as well as on the organization, with the "Enterprise people: read and write" permission, and requires --enterprises to name that enterprise. Not available with a personal access token. ($BATON_ENABLE_ENTERPRISE_OWNER_PROVISIONING)
       --enterprises strings                              Sync enterprise roles, must be an admin of the enterprise. ($BATON_ENTERPRISES)
       --external-resource-c1z string                     The path to the c1z file to sync external baton resources with ($BATON_EXTERNAL_RESOURCE_C1Z)
       --external-resource-entitlement-id-filter string   The entitlement that external users, groups must have access to sync external baton resources ($BATON_EXTERNAL_RESOURCE_ENTITLEMENT_ID_FILTER)
