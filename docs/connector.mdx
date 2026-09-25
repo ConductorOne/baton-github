@@ -158,6 +158,10 @@ This process creates a GitHub app that is only available to your GitHub organiza
 A user with the **Org Owner** permission in the GitHub organization to be integrated with C1 must perform this task.
 </Warning>
 
+<Note>
+If you want C1 to manage the built-in **Enterprise Owner** role, create the app under your **enterprise account** rather than under the organization — start from your enterprise's **Settings** > **GitHub Apps** > **New GitHub App** instead of Step 1 below — and install it twice: once on the enterprise account and once on the organization the connector syncs. The rest of the steps are the same.
+</Note>
+
 <Steps>
 <Step>
 In GitHub, navigate to **Your organizations** > **Settings**.
@@ -199,8 +203,15 @@ In the **Permissions** section of the page, give the app the following permissio
       - **Administration**: Read-only access (required to detect SAML/SSO configuration)
       - **Custom organization roles**: Read and write access
       - **Members**: Read and write access
-  
+
+    - Enterprise permissions, **only** if you want C1 to manage the built-in Enterprise Owner role:
+
+      - **People**: Read and write access
+
      For details, see the GitHub docs on [Permissions required for GitHub Apps](https://docs.github.com/en/enterprise-cloud@latest/rest/authentication/permissions-required-for-github-apps).
+</Step>
+<Step>
+**Optional.** If you want C1 to manage the built-in Enterprise Owner role, install the app on the **enterprise account** as well, from your enterprise's **Settings** > **GitHub Apps**. Granting the enterprise permission above is not enough on its own: without that second installation the connector cannot read or assign owners.
 </Step>
 <Step>
 In the **Where can this app be installed?** section of the page, choose **Only on this account**. This limits the app's scope to the GitHub Enterprise organization you've set it up on.
@@ -314,6 +325,12 @@ If you're using a GitHub app to set up the connector:
 
    1. **Optional.** Click to enable **Sync secrets**. [Synced secrets](/product/admin/inventory) are displayed on the **Inventory** page.
 
+   1. **Optional.** If you want C1 to manage the built-in Enterprise Owner role, enter your enterprise's slug in the **Enterprises** field and click to enable **Enable enterprise owner provisioning**. Both are required together, and the app must be installed on the enterprise account with the **Enterprise → People: Read and write** permission, as described above.
+
+      Enter a single enterprise. An organization belongs to exactly one enterprise, and owners are read through the organization you configured above, so naming more than one is rejected.
+
+      Leave these unset unless you need the role. While the option is off, the connector syncs exactly as it did before, and the Enterprise Owner role does not appear in C1. While it is on, the connector deliberately fails the sync if it cannot reach the enterprise — reporting no owners would make C1 delete the role and every grant on it.
+
    1. **Optional.** If you do not want to include archived repos in syncs, click to enable **Omit archived repositories**.
 
    1. **Optional.** If your GitHub organization has thousands of repositories or members, click to enable **Optimize sync for large organizations**. See [Optimize sync for large organizations](#optimize-sync-for-large-organizations) for what changes when this option is enabled.
@@ -405,6 +422,13 @@ stringData:
 
   # Optional: include if you want C1 to provision access using this connector
   BATON_PROVISIONING: true
+
+  # Optional: GitHub app only. Include both if you want C1 to manage the built-in
+  # Enterprise Owner role. Requires the app to be installed on the enterprise
+  # account as well as on the org, with "Enterprise people: read and write".
+  # Name a single enterprise: the org you configured belongs to exactly one.
+  BATON_ENTERPRISES: <Enterprise slug>
+  BATON_ENABLE_ENTERPRISE_OWNER_PROVISIONING: true
 
   # Optional: include if you do not want to sync archived repos
   BATON_OMIT_ARCHIVED_REPOSITORIES: true
