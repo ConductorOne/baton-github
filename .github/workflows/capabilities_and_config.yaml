@@ -36,10 +36,11 @@ jobs:
       - name: Run and save config output
         run: ./connector config > config_schema.json
 
+      # No credentials and no flags: the connector answers this from its
+      # default capabilities builder, which lists every resource type rather
+      # than only the ones a given configuration switches on.
       - name: Run and save capabilities output
-        env:
-          BATON_TOKEN: test
-        run: ./connector --sync-secrets capabilities > baton_capabilities.json
+        run: ./connector capabilities > baton_capabilities.json
 
       - name: Commit changes
         uses: EndBug/add-and-commit@v9
