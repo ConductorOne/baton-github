@@ -281,7 +281,7 @@ var BaseURLField = field.StringField(
 | Pagination termination | High | High | Easy (pattern match) |
 | HTTP nil pointer | High | Critical | Medium |
 | Type assertion panic | Medium | High | Easy (regex) |
-| Error swallowing | Medium | High | Medium |
+| Error swallowing | Medium | Critical | Medium |
 | Missing error prefix | High | Low | Easy |
 | Wrong error verb | Medium | Medium | Easy |
 | Defer before check | Low | Critical | Easy |

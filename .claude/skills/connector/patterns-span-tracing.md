@@ -163,8 +163,15 @@ for _, role := range roles {
     iterSpan.End()
 
     if err != nil {
-        l.Warn("failed to get grants for role, skipping",
-            zap.String("role_id", role.ID), zap.Error(err))
+        // Only a vanished role is skippable; anything else could be systemic and
+        // would return an empty page. Valid only where this vendor's 404 means
+        // absence — some APIs answer 404 for permission denial, and there this
+        // guard skips the whole page. See patterns-error-handling.md Rule 4.
+        if status.Code(err) != codes.NotFound {
+            return nil, "", nil, fmt.Errorf("baton-myservice: listing role grants: %w", err)
+        }
+        // Not actionable by the customer → Debug, not Warn (Rule 1).
+        l.Debug("role not found, skipping", zap.String("role_id", role.ID))
         continue
     }
     allGrants = append(allGrants, grants...)

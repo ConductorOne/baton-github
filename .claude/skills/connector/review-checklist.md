@@ -23,7 +23,7 @@ For each resource type (users, groups, roles):
 - [ ] Implements `ResourceSyncer` interface correctly
 - [ ] Registered with `connectorbuilder.WithResourceSyncers()`
 - [ ] Returns `ResourceType()` with correct traits
-- [ ] `List()` handles empty results without error
+- [ ] `List()` returns an empty page without error when the API genuinely has no items — but never after an error (an empty result plus a nil error is read as deletions)
 - [ ] `Entitlements()` returns at least one entitlement for membership resources
 - [ ] `Grants()` returns grants linking principals to entitlements
 

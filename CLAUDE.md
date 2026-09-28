@@ -179,7 +179,7 @@ func (c *Connector) Close() error {
 2. **Entity confusion** - Getting workspace from entitlement instead of principal
 3. **Swapped arguments** - Multiple string params in wrong order (check API docs!)
 4. **Nil pointer panic** - Accessing resp.Body when resp is nil
-5. **Error swallowing** - Logging but not returning errors (exception: intentional skip-and-continue with Warn log is OK — see `patterns-error-handling.md`)
+5. **Error swallowing** - Logging but not returning errors. Inside `List`/`Entitlements`/`Grants`, `continue` past an item only when the error is a `NotFound` on that item **and this vendor uses 404 for absence, not for permission denial** (log it at Debug); any other error must be returned, because a systemic one skips every item and the empty result C1 reads as deletions. See `patterns-error-handling.md`
 6. **Unstable IDs** - Using email instead of stable API ID
 7. **JSON type mismatch** - API returns number, Go expects string (use json.Number)
 8. **Wrong trait type** - Using User for service accounts (use App)

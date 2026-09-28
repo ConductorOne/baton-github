@@ -112,9 +112,12 @@ value, ok := data["key"].(string)
 if !ok { ... }
 ```
 
-### 5. Error Swallowing (Medium Severity)
+### 5. Error Swallowing (Blocking)
 
-Logging errors but continuing execution causes silent data loss.
+Logging errors but continuing execution causes silent data loss. Inside a
+resource-producing method it deletes customer data: C1 buckets whatever a sync does
+not emit as deleted, for grants as well as resources, so an empty `Grants()` revokes
+every principal's access to that resource.
 
 **Flag this pattern:**
 ```go
@@ -123,6 +126,18 @@ if err != nil {
     // No return - continues with bad state
 }
 ```
+
+**And this one, which is the same defect with a return statement:**
+```go
+if err != nil {
+    l.Debug("failed, skipping", zap.Error(err))
+    return nil, "", nil, nil   // empty result + nil error = deletions
+}
+```
+
+The one skippable case inside `List`/`Entitlements`/`Grants` is a `NotFound` on the
+item being fetched, and only on an API that uses 404 for absence rather than for
+permission denial. See `patterns-error-handling.md` Rule 4.
 
 ### 6. Error Wrapping (Low Severity)
 
