@@ -27,10 +27,10 @@ var (
 		"enterprises",
 		field.WithDisplayName("Enterprises"),
 		field.WithDescription("Sync enterprise roles, must be an admin of the enterprise. "+
-			"With a personal access token this is all that is needed. With a GitHub App it does nothing on its "+
-			"own, because the API behind enterprise roles and licenses is only available to a personal access "+
-			"token: pair it with \"Enable enterprise owner provisioning\", which switches to the endpoints an "+
-			"App can use."),
+			"With a personal access token this is all that is needed. With a GitHub App it does not work on its "+
+			"own: the API behind enterprise roles and licenses is only available to a personal access token, so "+
+			"no roles are returned and the license resource type fails the sync. Pair it with \"Enable "+
+			"enterprise owner provisioning\", which switches to the endpoints an App can use."),
 	)
 	instanceUrlField = field.StringField(
 		"instance-url",
