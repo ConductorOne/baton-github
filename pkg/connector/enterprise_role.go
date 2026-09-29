@@ -407,7 +407,7 @@ func (o *enterpriseRoleResourceType) appGrants(
 		return nil, nil, fmt.Errorf("baton-github: unexpected enterprise owner sync phase %q", phase)
 	}
 	if err != nil {
-		return nil, &resourceSdk.SyncOpResults{Annotations: annos}, err
+		return nil, &resourceSdk.SyncOpResults{Annotations: annos}, failClosedOnUnreadableEnterprise(err, enterprise)
 	}
 
 	if err := bag.Next(nextCursor); err != nil {
@@ -421,6 +421,25 @@ func (o *enterpriseRoleResourceType) appGrants(
 	}
 
 	return ret, &resourceSdk.SyncOpResults{Annotations: annos, NextPageToken: pageToken}, nil
+}
+
+// failClosedOnUnreadableEnterprise keeps NotFound from leaving the sync path.
+// It is the one code the SDK downgrades to a warning: SyncGrantsOp skips the
+// action and the sync still completes, and C1 deletes the grants a completed
+// sync did not report. An organization GitHub stops resolving -- renamed,
+// uninstalled, mistyped -- would therefore revoke every Owner silently, which
+// is the failure the rest of this resource type is built to avoid. Revoke
+// still reads NotFound as "already gone", so this belongs here rather than in
+// the client both paths share.
+func failClosedOnUnreadableEnterprise(err error, enterprise string) error {
+	if status.Code(err) != codes.NotFound {
+		return err
+	}
+
+	return status.Errorf(codes.FailedPrecondition,
+		"baton-github: enterprise %q or its configured organization could not be read, so no owners can be "+
+			"listed; failing rather than reporting none, which would revoke every Owner grant: %v",
+		enterprise, err)
 }
 
 // ownerGrants emits one page of the users who hold the role today.

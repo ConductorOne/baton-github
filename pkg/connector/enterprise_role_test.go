@@ -1062,3 +1062,42 @@ func TestEnterpriseRoleGrantsPagination(t *testing.T) {
 	require.Equal(t, 2, stub.ownerQueries, "the invitation phase must not re-read the owners")
 	require.Equal(t, 1, stub.memberQueries)
 }
+
+// GitHub answers NOT_FOUND when the configured organization stops resolving:
+// renamed, the app uninstalled, or the name mistyped. NotFound is the one code
+// the SDK downgrades to a warning, so letting it out of Grants would finish
+// the sync reporting no owners, and C1 deletes the grants a completed sync did
+// not report -- silently revoking every Owner.
+func TestEnterpriseRoleGrantsDoNotLetANotFoundSilenceTheSync(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(
+			`{"data":null,"errors":[{"type":"NOT_FOUND","message":"Could not resolve to an Organization with the login of 'gone'."}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := newEnterpriseAdministratorClient(srv.URL, srv.Client(), srv.Client(), testOrg)
+	require.NoError(t, err)
+
+	builder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise},
+		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+			return map[string]*githubEnterpriseAdministratorClient{testEnterprise: client}, nil
+		})
+
+	roleResource, err := resourceSdk.NewRoleResource(
+		enterpriseRoleOwner,
+		resourceTypeEnterpriseRole,
+		testEnterprise+":"+enterpriseRoleOwner,
+		[]resourceSdk.RoleTraitOption{},
+	)
+	require.NoError(t, err)
+
+	grants, _, err := builder.Grants(context.Background(), roleResource, resourceSdk.SyncOpAttrs{})
+
+	require.Error(t, err)
+	require.Empty(t, grants)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err),
+		"NotFound would be downgraded to a warning and the sync would complete with no owners")
+}
