@@ -19,7 +19,7 @@
    - Invitations (users invited to an organization who have not accepted, and invitations that expired)
    - Teams (including nested teams, with their parent team as the parent resource)
    - Repositories (optionally excluding archived ones)
-   - Organization roles (GitHub's built-in and custom org roles, also called "enterprise licenses" in GitHub's docs)
+   - Organization roles (GitHub's built-in and custom organization roles)
    - Enterprise roles (only when `--enterprises` is set; under App authentication the built-in Owner role also needs `--enable-enterprise-owner-provisioning`)
    - Licenses (enterprise seat consumption, only when `--enterprises` is set)
    - GitHub Apps installed on the organization
@@ -176,7 +176,7 @@
 ### Organization roles
 
 - **Resource type ID**: `org_role`
-- **Description**: GitHub's built-in and custom organization roles. GitHub's documentation also calls these "enterprise licenses"
+- **Description**: GitHub's built-in and custom organization roles
 - **Traits**: Role trait
 - **Parent**: Organization
 - **Entitlements**: `assigned` (assignment)
@@ -200,7 +200,7 @@
 - **Traits**: License profile trait
 - **Entitlements**: `assigned` (assignment)
 - **Grants**: One grant for the enterprise member role holding the license, expandable through that role's `assigned` entitlement
-- **Limitation**: Requires a personal access token. GitHub does not offer the enterprise administration permission to GitHub Apps, so this resource type cannot sync with an App installation token, and its failure fails the whole sync. Customers using a GitHub App with `--enterprises` set must disable this resource type in the connector's resource capabilities in C1
+- **Limitation**: Requires a personal access token. GitHub does not offer the enterprise administration permission to GitHub Apps, so this resource type cannot sync with an App installation token, and its failure fails the whole sync. Customers using a GitHub App with `--enterprises` set must disable this resource type in the connector's resource capabilities in C1, drop `--enterprises`, or enable `--enable-enterprise-owner-provisioning`, which stops registering the type altogether. The 403 is left to surface as a plain `PermissionDenied`: the three ways out are stated in the `Enterprises` field description, in the setup docs and in the README, all of which the operator reads before configuring, and special-casing one credential's 403 in shared code would not generalize — see the GHES note below
 
 ### GitHub Apps
 
@@ -239,9 +239,19 @@ Consequences worth knowing:
 - Reading owners uses the **organization** installation token and every mutation uses the **enterprise** installation token; the enterprise token is rejected on organization fields. Startup verifies that the configured organization belongs to the configured enterprise, and a failure there fails the sync
 - Only one enterprise can be served under App authentication, because the owners are read through the single configured organization and an organization belongs to exactly one enterprise. A configuration naming several is rejected while the clients are built, with an explanatory error rather than a later failure on a check the operator cannot satisfy. The PAT path does accept a list
 
+### The invitation model is GitHub Enterprise Cloud only, which matters for baton-github-enterprise
+
+This connector serves `github.com`, where enterprise accounts are GitHub Enterprise Cloud, so the invitation-based mutations above are the right ones. The wrapper `baton-github-enterprise` embeds this package and points it at a custom domain, and a custom domain is either Enterprise Cloud with data residency (`*.ghe.com`, same schema, everything here applies) **or** GitHub Enterprise Server, which models enterprise administrators differently.
+
+Checked against the GHES GraphQL reference for 3.14 and 3.15. `Organization.enterpriseOwners` and the `EnterpriseAdministratorRole` enum both exist there, so reading owners would work. The write path does not: GHES has `addEnterpriseAdmin` and `removeEnterpriseAdmin` and has no `inviteEnterpriseAdmin`, `updateEnterpriseAdministratorRole` or `cancelEnterpriseAdminInvitation`, and no `enterpriseAdministratorInvitation` query. That is a model difference rather than a version gap: a GHES user already exists on the instance, so an administrator is added directly instead of being emailed an invitation.
+
+The consequence for the wrapper is that enabling this capability on a GHES deployment would fail every Grant and Revoke, and would also fail the sync, because `Grants()` resolves invitations through a query that instance does not serve. Exposing the flag there needs a deliberate decision — restrict it to Enterprise Cloud, or implement the add/remove path for GHES — rather than inheriting it from this package by default.
+
+The `license` resource type has the same shape of problem, one step further along: `GET /enterprises/{enterprise}/consumed-licenses` is absent from the GHES REST reference for 3.14 and 3.15 entirely, so on a GHES instance it answers `404` rather than the `403` a GitHub App gets on `github.com`. That type is therefore unusable there for **either** credential, not only for an App, and the wrapper has no way to tell the operator so. This is the reason a credential-shaped special case does not belong in this package: the same `--enterprises` code path runs against three targets — `github.com`, `*.ghe.com` data residency, and GHES — and fails differently on each. Diagnosis for these belongs in the wrapper, which is the only layer that knows which instance it is pointed at, or in documentation. Both are open questions for the `baton-github-enterprise` PR.
+
 ### Enterprise owner provisioning is opt-in
 
-`--enable-enterprise-owner-provisioning` is off by default, and while it is off the connector behaves exactly as it did before this capability existed. Enterprise roles come from the consumed-licenses cache, which is PAT-only, so an App deployment reports none of them, and the `license` resource type still fails the sync on that same 403 — as it did before this change. Nothing about an upgrade is different until the capability is asked for.
+`--enable-enterprise-owner-provisioning` is off by default, and while it is off the connector behaves exactly as it did before this capability existed. Enterprise roles come from the consumed-licenses cache, which is PAT-only, so an App deployment reports none of them, and the `license` resource type still fails the sync on that same 403, reported the same way it always was. Nothing about an upgrade is different until the capability is asked for.
 
 The flag exists because turning the capability on requires setup nobody has done yet — a second installation of the App, on the enterprise account. Without the flag that requirement would reach every deployment that already passes `--enterprises` under App authentication, and the failure below would turn their working sync into a failing one on upgrade. With it, the failure is only reachable by an operator who asked for the capability.
 
@@ -252,6 +262,16 @@ Once the capability is enabled, the connector refuses to sync when it cannot bui
 That is deliberate, and the alternative is worse. C1 deletes every resource of a type that a completed sync did not report, and it applies that to a resource type whose list came back empty for any reason. Letting the sync finish while reading no owners would therefore delete the Owner role and every grant on it, silently, and GitHub answers `404` for an uninstalled app, a revoked permission and a slug typo alike — the connector cannot tell a genuine uninstall from a blip. An error keeps the sync from completing, so nothing is deleted.
 
 The cost falls on a deployment that enabled the capability without installing the app on the enterprise account, and the sync stops until the app is installed or the flag is turned back off.
+
+One limit of the companion protection is worth stating, because two sections of this file would otherwise appear to contradict each other. With the flag **off**, what stops the sync is the `license` type's own 403, and `license` carries `&v2.OptInRequired{}`. On a hosted tenant with selective sync enabled that annotation keeps the type out of the default selection, so it is never synced and the 403 never fires. That protection is therefore real on the CLI and on self-hosted runs, and on hosted tenants only where an operator selected the type. It is not load-bearing today either way: under App authentication `enterprise_role` has never emitted a resource, so a completed sync that reports none of them has nothing to delete. It would only matter for a deployment that had synced enterprise roles with a personal access token and then moved to App authentication.
+
+### The published capability set is what lets the role sync at all in C1
+
+`enterprise_role` and `license` used to be absent from `baton_capabilities.json`, because the file is generated by running the `capabilities` command with no credentials and no flags, and both types are only registered when `--enterprises` is set. That absence is not cosmetic. C1 stamps a connector's resource type selection at creation time from the **catalog release's** capabilities (in the `ductone/c1` monorepo, `pkg/controller/app/controller/connector.go:708` fetches them from the release and `:796` reduces them with `DefaultSyncResourceTypeIDs`), and at sync time it intersects that saved selection with what the live connector reports (`EffectiveSyncResourceTypeFilter`, `ductone/c1` `pkg/connector/resource_types.go:20`). A type missing from the catalog is therefore never stamped, and the intersection drops it — so on a hosted tenant with selective sync enabled, the Owner role would never have synced no matter how the deployment was configured. Registering a `DefaultCapabilitiesBuilder` for the `capabilities` command is what closes that.
+
+Regenerate `baton_capabilities.json` and `config_schema.json` by hand after any change to the resource types or the config fields: `./baton-github capabilities` and `./baton-github config`, run without credentials. This repo has no workflow that does it. `baton-admin`'s `connectors.yaml` sets `ci_workflows.capabilities: false` for `baton-github`, so it does not push the managed `generate-baton-metadata.yaml`, and the repo's own `capabilities_and_config.yaml` was removed. Enabling that flag in `baton-admin` restores automatic regeneration.
+
+`enterprise_role` deliberately does **not** carry `&v2.OptInRequired{}`, unlike `license`. The annotation excludes a type from the default stamp, which for `license` is correct because that type cannot sync under App authentication at all. Applying it here would exclude the Owner role from the selection of a tenant that configured everything correctly, and the intersection at sync would then drop it — the capability would silently do nothing until an admin enabled the type by hand. Leaving it off costs nothing in the other direction: a customer with no enterprise account has the type stamped but never reports it, so the same intersection filters it away and their sync is unchanged.
 
 ### Pending invitations look the same as real access
 

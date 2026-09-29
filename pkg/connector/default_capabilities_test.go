@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,9 +19,9 @@ func TestDefaultCapabilitiesCoverEverySyncerADeploymentCanRegister(t *testing.T)
 
 	ctx := context.Background()
 
-	advertised := make(map[string]bool)
+	advertised := make(map[string]connectorbuilder.ResourceSyncerV2)
 	for _, syncer := range (&DefaultCapabilitiesBuilder{}).ResourceSyncers(ctx) {
-		advertised[syncer.ResourceType(ctx).GetId()] = true
+		advertised[syncer.ResourceType(ctx).GetId()] = syncer
 	}
 
 	for _, gh := range []*GitHub{
@@ -32,8 +33,17 @@ func TestDefaultCapabilitiesCoverEverySyncerADeploymentCanRegister(t *testing.T)
 	} {
 		for _, syncer := range gh.ResourceSyncers(ctx) {
 			id := syncer.ResourceType(ctx).GetId()
-			require.True(t, advertised[id],
+			defaultSyncer, ok := advertised[id]
+			require.True(t, ok,
 				"resource type %q is registered by a real deployment but missing from DefaultCapabilitiesBuilder", id)
+
+			// The SDK derives CAPABILITY_PROVISION by type-asserting the
+			// syncer, so a matching ID does not imply a matching capability.
+			if _, deploymentProvisions := syncer.(connectorbuilder.ResourceProvisionerV2Limited); deploymentProvisions {
+				_, defaultProvisions := defaultSyncer.(connectorbuilder.ResourceProvisionerV2Limited)
+				require.True(t, defaultProvisions,
+					"resource type %q provisions in a real deployment, so DefaultCapabilitiesBuilder must register a provisioning syncer for it", id)
+			}
 		}
 	}
 }
