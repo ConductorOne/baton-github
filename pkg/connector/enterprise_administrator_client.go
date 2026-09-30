@@ -39,6 +39,9 @@ const (
 	enterpriseOwnerPageSize        = 100
 	enterpriseOrganizationPageSize = 100
 	enterpriseMemberPageSize       = 100
+	// A login search is a prefix match, so one login can return several
+	// accounts and the caller compares them.
+	enterpriseMemberLookupPageSize = 10
 	// One aliased invitation lookup per member of a page.
 	enterpriseInvitationBatchSize = enterpriseMemberPageSize
 	// Bounds the walks that happen inside one call rather than across page
@@ -53,6 +56,12 @@ type enterpriseOwnerState struct {
 	enterpriseID        string
 	isOwner             bool
 	pendingInvitationID string
+}
+
+// holdsRole reports whether C1 should see a grant. An unaccepted invitation
+// counts: C1 has no pending state, so both map onto the same grant.
+func (s enterpriseOwnerState) holdsRole() bool {
+	return s.isOwner || s.pendingInvitationID != ""
 }
 
 // githubEnterpriseAdministratorClient reads and writes the built-in Owner role
@@ -329,11 +338,63 @@ func (c *githubEnterpriseAdministratorClient) verifyOrganization(ctx context.Con
 			c.org, enterprise, enterpriseMaxPages)
 	}
 
-	// FailedPrecondition so the caller remembers it: only a configuration
-	// change can make this organization belong to that enterprise.
+	// FailedPrecondition because C1 treats it as non-retryable: only a
+	// configuration change can make this organization belong to that
+	// enterprise.
 	return status.Errorf(codes.FailedPrecondition,
 		"baton-github: organization %s does not belong to enterprise %s, so its owners cannot be synced",
 		c.org, enterprise)
+}
+
+// enterpriseMemberLookupQuery asks whether one login is a member of the
+// enterprise. The query argument is a search rather than an exact match, so
+// the caller compares the logins it returns.
+type enterpriseMemberLookupQuery struct {
+	Enterprise struct {
+		Members struct {
+			Nodes []struct {
+				EnterpriseUserAccount struct {
+					Login githubv4.String
+				} `graphql:"... on EnterpriseUserAccount"`
+				User struct {
+					Login githubv4.String
+				} `graphql:"... on User"`
+			}
+		} `graphql:"members(first: $first, query: $query)"`
+	} `graphql:"enterprise(slug: $slug)"`
+	RateLimit graphQLRateLimit
+}
+
+// isMember reports whether login belongs to the enterprise. Grants() can only
+// see an invitation addressed to a member, so an invitation sent to anyone
+// else would be created on GitHub and then be invisible to every later sync.
+func (c *githubEnterpriseAdministratorClient) isMember(
+	ctx context.Context,
+	enterprise string,
+	login string,
+) (bool, annotations.Annotations, error) {
+	var query enterpriseMemberLookupQuery
+	err := c.enterpriseClient.Query(ctx, &query, map[string]any{
+		enterpriseSlugVariable:  githubv4.String(enterprise),
+		enterpriseFirstVariable: githubv4.Int(enterpriseMemberLookupPageSize),
+		enterpriseQueryVariable: githubv4.String(login),
+	})
+	if err != nil {
+		return false, nil, fmt.Errorf("baton-github: error looking up member %s of enterprise %s: %w", login, enterprise, err)
+	}
+
+	annos := query.RateLimit.annotations()
+	for _, node := range query.Enterprise.Members.Nodes {
+		found := string(node.EnterpriseUserAccount.Login)
+		if found == "" {
+			found = string(node.User.Login)
+		}
+		if strings.EqualFold(found, login) {
+			return true, annos, nil
+		}
+	}
+
+	return false, annos, nil
 }
 
 // enterpriseMembersQuery reads one page of the enterprise's member accounts.
@@ -499,7 +560,14 @@ func (c *githubEnterpriseAdministratorClient) pendingOwnerInvitations(
 		var node struct {
 			ID string `json:"id"`
 		}
-		if err := json.Unmarshal(raw, &node); err != nil || node.ID == "" {
+		// A decode failure and an absent invitation are different answers.
+		// Treating the first as the second drops a live invitation from the
+		// sync, which C1 reads as a revoke, so only the absence is skipped.
+		if err := json.Unmarshal(raw, &node); err != nil {
+			return nil, annos, fmt.Errorf(
+				"baton-github: error decoding the invitation reported for %s: %w", login, err)
+		}
+		if node.ID == "" {
 			continue
 		}
 		invitations[login] = node.ID
@@ -524,7 +592,7 @@ func (c *githubEnterpriseAdministratorClient) doGraphQL(
 		uhttp.WithJSONBody(map[string]any{"query": query, "variables": variables}),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating GraphQL request: %w", err)
+		return nil, nil, fmt.Errorf("baton-github: error creating the GraphQL request: %w", err)
 	}
 
 	var envelope graphQLEnvelope

@@ -567,7 +567,7 @@ func newEnterpriseRoleClients(
 	// support a list.
 	if len(enterprises) > 1 {
 		return nil, status.Errorf(codes.FailedPrecondition,
-			"github-connector: GitHub App authentication serves one enterprise at a time, "+
+			"baton-github: GitHub App authentication serves one enterprise at a time, "+
 				"because the owners are read through organization %q, which belongs to a single enterprise; "+
 				"%d were configured", org, len(enterprises))
 	}
@@ -576,7 +576,7 @@ func newEnterpriseRoleClients(
 	// only panics later inside Do.
 	installationClient := customclient.New(appClient)
 	if installationClient.BaseHttpClient == nil {
-		return nil, fmt.Errorf("github-connector: error building the enterprise installation client")
+		return nil, fmt.Errorf("baton-github: error building the enterprise installation client")
 	}
 
 	clients := make(map[string]*githubEnterpriseAdministratorClient, len(enterprises))
@@ -587,7 +587,7 @@ func newEnterpriseRoleClients(
 			// the misconfiguration worth naming.
 			if status.Code(err) == codes.NotFound {
 				return nil, status.Errorf(codes.FailedPrecondition,
-					"github-connector: GitHub App is not installed on enterprise %q; install it on the enterprise account "+
+					"baton-github: GitHub App is not installed on enterprise %q; install it on the enterprise account "+
 						"with the Enterprise people read and write permission", enterprise)
 			}
 			return nil, err

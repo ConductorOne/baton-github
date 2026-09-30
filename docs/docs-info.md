@@ -285,7 +285,9 @@ C1 has no pending state for a grant, so an invitation nobody has accepted and an
 
 `Enterprise.ownerInfo.pendingAdminInvitations` is the only connection of invitations GitHub offers, and it resolves to `null` for an installation token. The root `enterpriseAdministratorInvitation` field answers for one login at a time, so the sync resolves invitations by asking about the enterprise members, batching up to 100 logins into one aliased request — GitHub charges that whole request a single rate-limit point.
 
-An invitation sent to someone who is not a member of the enterprise is therefore invisible to the sync, and that is not hypothetical: an owner invitation can be addressed to any GitHub user. Invitations that C1 itself creates are always visible, because C1 grants to a user it has already synced.
+An invitation sent to someone who is not a member of the enterprise is therefore invisible to the sync, and that is not hypothetical: an owner invitation can be addressed to any GitHub user. It is not enough that C1 has already synced the principal either — outside collaborators reach C1 through repository access without being enterprise members, so a grant to one of them would create an invitation on GitHub that no later sync could read, and C1 would drop the grant while it stayed live. Grant therefore checks membership first and rejects a non-member with `InvalidArgument` rather than creating state it cannot read back. The check is one filtered `Enterprise.members` lookup, and it compares the returned logins because that argument is a search rather than an exact match.
+
+The cost of resolving invitations scales with the enterprise, not with the organization: every sync walks the whole enterprise membership, one page of 100 per request, and asks one aliased batch per page. An enterprise of N members therefore adds roughly N/50 GraphQL requests per sync — about 1,000 for 50,000 members. Memory is unaffected, since the walk streams through the page token, and none of it happens unless the capability is enabled.
 
 ### Owner grants can reference a user the sync did not emit
 

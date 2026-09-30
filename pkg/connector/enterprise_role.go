@@ -548,9 +548,27 @@ func (o *enterpriseRoleProvisioner) Grant(
 	if err != nil {
 		return nil, annos, err
 	}
-	if state.isOwner || state.pendingInvitationID != "" {
+	if state.holdsRole() {
 		annos.Append(&v2.GrantAlreadyExists{})
 		return result, annos, nil
+	}
+
+	// GitHub accepts an owner invitation for any user, but Grants() resolves
+	// invitations by asking about the enterprise members, so one addressed to
+	// anyone else would be created and then be invisible to every later sync:
+	// C1 would drop the grant while the invitation stayed live on GitHub.
+	// Outside collaborators reach C1 as principals through repository access,
+	// so this is reachable rather than theoretical.
+	isMember, memberAnnos, err := client.isMember(ctx, enterprise, login)
+	annos = freshestRateLimit(annos, memberAnnos)
+	if err != nil {
+		return nil, annos, err
+	}
+	if !isMember {
+		return nil, annos, status.Errorf(codes.InvalidArgument,
+			"baton-github: %s is not a member of enterprise %s; inviting them as Owner would create an "+
+				"invitation this connector cannot read back, and the grant would disappear on the next sync",
+			login, enterprise)
 	}
 
 	if inviteErr := client.InviteOwner(ctx, state.enterpriseID, login); inviteErr != nil {
@@ -575,13 +593,12 @@ func (o *enterpriseRoleProvisioner) Grant(
 	if err != nil {
 		return nil, annos, err
 	}
-	switch {
-	case state.isOwner, state.pendingInvitationID != "":
-		return result, annos, nil
-	default:
+	if !state.holdsRole() {
 		return nil, annos, status.Errorf(codes.Unavailable,
 			"baton-github: enterprise owner grant for %s is not visible in GitHub", login)
 	}
+
+	return result, annos, nil
 }
 
 // Revoke takes the built-in Owner role away from a user.
@@ -610,7 +627,7 @@ func (o *enterpriseRoleProvisioner) Revoke(
 	if err != nil {
 		return annos, err
 	}
-	if !state.isOwner && state.pendingInvitationID == "" {
+	if !state.holdsRole() {
 		annos.Append(&v2.GrantAlreadyRevoked{})
 		return annos, nil
 	}
@@ -633,7 +650,7 @@ func (o *enterpriseRoleProvisioner) Revoke(
 	if err != nil {
 		return annos, err
 	}
-	if state.isOwner || state.pendingInvitationID != "" {
+	if state.holdsRole() {
 		return annos, status.Errorf(codes.Unavailable,
 			"baton-github: enterprise owner revoke for %s is not visible in GitHub", login)
 	}

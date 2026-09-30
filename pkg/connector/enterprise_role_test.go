@@ -45,6 +45,10 @@ type enterpriseStub struct {
 	// the members connection returns. They are the candidate set the pending
 	// invitation lookup asks about.
 	memberPages [][]enterpriseStubOwner
+	// nonMembers marks the logins the single-login membership lookup reports
+	// as outside the enterprise. Everyone else is a member, so the cases that
+	// exercise the invitation path do not have to declare one.
+	nonMembers map[string]bool
 
 	// inviteErrorType makes inviteEnterpriseAdmin fail with that GraphQL error
 	// type. UNPROCESSABLE is what GitHub returns for someone who already
@@ -109,6 +113,9 @@ func (s *enterpriseStub) handle(t *testing.T, w http.ResponseWriter, r *http.Req
 		require.NotContains(t, body.Query, "organizationRole",
 			"the owners query must not filter by the owner's role in the organization")
 		s.writeOwners(t, w, body.Variables)
+
+	case strings.Contains(body.Query, "members(") && body.Variables["query"] != nil:
+		s.writeMemberLookup(t, w, body.Variables)
 
 	case strings.Contains(body.Query, "members("):
 		s.writeMembers(t, w, body.Variables)
@@ -1100,4 +1107,38 @@ func TestEnterpriseRoleGrantsDoNotLetANotFoundSilenceTheSync(t *testing.T) {
 	require.Empty(t, grants)
 	require.Equal(t, codes.FailedPrecondition, status.Code(err),
 		"NotFound would be downgraded to a warning and the sync would complete with no owners")
+}
+
+// writeMemberLookup answers the single-login check Grant runs before inviting.
+func (s *enterpriseStub) writeMemberLookup(t *testing.T, w http.ResponseWriter, vars map[string]any) {
+	t.Helper()
+
+	login, _ := vars["query"].(string)
+	if s.nonMembers[login] {
+		_, _ = w.Write([]byte(`{"data":{"enterprise":{"members":{"nodes":[]}}}}`))
+		return
+	}
+
+	_, _ = fmt.Fprintf(w, `{"data":{"enterprise":{"members":{"nodes":[{"login":%q}]}}}}`, login)
+}
+
+// GitHub accepts an owner invitation for any user, but Grants() resolves
+// invitations by asking about the enterprise members, so one addressed to
+// anyone else is invisible to every later sync and C1 drops the grant while
+// the invitation stays live. Outside collaborators reach C1 as principals
+// through repository access, so the case is reachable.
+func TestEnterpriseRoleGrantRejectsANonMember(t *testing.T) {
+	t.Parallel()
+
+	stub := &enterpriseStub{nonMembers: map[string]bool{testLogin: true}}
+	builder, principal, ent := newTestEnterpriseRoleBuilder(t, stub)
+
+	grants, annos, err := builder.Grant(context.Background(), principal, ent)
+
+	require.Error(t, err)
+	require.Empty(t, grants)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Contains(t, err.Error(), "not a member of enterprise")
+	requireNoIdempotencyClaim(t, annos)
+	require.Empty(t, stub.invitations, "no invitation may be created for a non-member")
 }

@@ -26,7 +26,7 @@ Use this integration if your organization accesses GitHub at `github.com`. If yo
 
 Enterprise roles apply to organizations that belong to a **GitHub Enterprise Cloud** enterprise account. Enterprise Cloud is accessed at `github.com`, so it is covered by this integration — not by the separate [GitHub Enterprise](/baton/github-enterprise) integration, which is for custom domains. Skip this row if your organization does not belong to an enterprise account.
 
-The capability is opt-in and off by default. Syncing the roles requires the **Enterprises** setting; provisioning the built-in **Enterprise Owner** role additionally requires **Enable enterprise owner provisioning** and a GitHub app installed on both the enterprise account and the organization. See the setup steps below.
+The capability is opt-in and off by default, and what it takes depends on the credential. With a **personal access token**, the **Enterprises** setting is enough to sync the roles. With a **GitHub app**, that setting does nothing on its own: you also need **Enable enterprise owner provisioning**, which is what makes the roles sync at all and adds provisioning of the built-in **Enterprise Owner** role, plus the app installed on both the enterprise account and the organization. See the setup steps below.
 
 The GitHub connector supports [automatic account provisioning and deprovisioning](/product/admin/account-provisioning). New accounts will send an invitation to the account owner; while an invitation is pending, the account status will be shown as **Pending**. Expired invitations also report **Pending**, distinguished by `invitation_expired` in the status details. 
 

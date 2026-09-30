@@ -124,7 +124,7 @@ func (t *enterpriseGraphQLTransport) RoundTrip(req *http.Request) (*http.Respons
 	body, readErr := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if readErr != nil {
-		return nil, fmt.Errorf("read GraphQL response: %w", readErr)
+		return nil, fmt.Errorf("baton-github: error reading the GraphQL response: %w", readErr)
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 
