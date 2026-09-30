@@ -49,6 +49,10 @@ type enterpriseStub struct {
 	// as outside the enterprise. Everyone else is a member, so the cases that
 	// exercise the invitation path do not have to declare one.
 	nonMembers map[string]bool
+	// lookupDecoyPages are pages of accounts the membership search returns
+	// before the page holding the login itself.
+	lookupDecoyPages  [][]string
+	lookupPagesServed int
 
 	// inviteErrorType makes inviteEnterpriseAdmin fail with that GraphQL error
 	// type. UNPROCESSABLE is what GitHub returns for someone who already
@@ -1109,17 +1113,38 @@ func TestEnterpriseRoleGrantsDoNotLetANotFoundSilenceTheSync(t *testing.T) {
 		"NotFound would be downgraded to a warning and the sync would complete with no owners")
 }
 
-// writeMemberLookup answers the single-login check Grant runs before inviting.
+// writeMemberLookup answers the membership check Grant runs before inviting.
+// The search matches display names too, so lookupDecoyPages lets a case put
+// the real member behind pages of accounts that merely matched the query.
 func (s *enterpriseStub) writeMemberLookup(t *testing.T, w http.ResponseWriter, vars map[string]any) {
 	t.Helper()
 
 	login, _ := vars["query"].(string)
 	if s.nonMembers[login] {
-		_, _ = w.Write([]byte(`{"data":{"enterprise":{"members":{"nodes":[]}}}}`))
+		s.writeMemberLookupPage(t, w, nil, false)
 		return
 	}
 
-	_, _ = fmt.Fprintf(w, `{"data":{"enterprise":{"members":{"nodes":[{"login":%q}]}}}}`, login)
+	if s.lookupPagesServed < len(s.lookupDecoyPages) {
+		page := s.lookupDecoyPages[s.lookupPagesServed]
+		s.lookupPagesServed++
+		s.writeMemberLookupPage(t, w, page, true)
+		return
+	}
+
+	s.writeMemberLookupPage(t, w, []string{login}, false)
+}
+
+func (s *enterpriseStub) writeMemberLookupPage(t *testing.T, w http.ResponseWriter, logins []string, more bool) {
+	t.Helper()
+
+	nodes := make([]string, 0, len(logins))
+	for _, login := range logins {
+		nodes = append(nodes, fmt.Sprintf(`{"login":%q}`, login))
+	}
+	_, _ = fmt.Fprintf(w,
+		`{"data":{"enterprise":{"members":{"nodes":[%s],"pageInfo":{"hasNextPage":%t,"endCursor":"c%d"}}}}}`,
+		strings.Join(nodes, ","), more, s.lookupPagesServed)
 }
 
 // GitHub accepts an owner invitation for any user, but Grants() resolves
@@ -1141,4 +1166,24 @@ func TestEnterpriseRoleGrantRejectsANonMember(t *testing.T) {
 	require.Contains(t, err.Error(), "not a member of enterprise")
 	requireNoIdempotencyClaim(t, annos)
 	require.Empty(t, stub.invitations, "no invitation may be created for a non-member")
+}
+
+// The membership search matches display names as well as logins and returns
+// its results ordered by login, so a member whose login is short can sit
+// behind other accounts that merely matched. Reading one page would report
+// them as a non-member and reject a grant they are entitled to.
+func TestEnterpriseRoleGrantFindsAMemberBehindSearchNoise(t *testing.T) {
+	t.Parallel()
+
+	stub := &enterpriseStub{lookupDecoyPages: [][]string{
+		{"aardvark", "beatriz"},
+		{"carolina", "dimitri"},
+	}}
+	builder, principal, ent := newTestEnterpriseRoleBuilder(t, stub)
+
+	grants, _, err := builder.Grant(context.Background(), principal, ent)
+
+	require.NoError(t, err)
+	require.Len(t, grants, 1)
+	require.Equal(t, testLogin, stub.invitedLogin, "the invitation must still be sent")
 }

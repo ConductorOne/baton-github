@@ -39,9 +39,9 @@ const (
 	enterpriseOwnerPageSize        = 100
 	enterpriseOrganizationPageSize = 100
 	enterpriseMemberPageSize       = 100
-	// A login search is a prefix match, so one login can return several
-	// accounts and the caller compares them.
-	enterpriseMemberLookupPageSize = 10
+	// A login search also matches display names, so it can return many
+	// accounts for one login and the caller pages through them.
+	enterpriseMemberLookupPageSize = 100
 	// One aliased invitation lookup per member of a page.
 	enterpriseInvitationBatchSize = enterpriseMemberPageSize
 	// Bounds the walks that happen inside one call rather than across page
@@ -347,8 +347,11 @@ func (c *githubEnterpriseAdministratorClient) verifyOrganization(ctx context.Con
 }
 
 // enterpriseMemberLookupQuery asks whether one login is a member of the
-// enterprise. The query argument is a search rather than an exact match, so
-// the caller compares the logins it returns.
+// enterprise. The query argument is a search, not a filter: it matches the
+// display name as well as the login, and the results come back ordered by
+// login. A member whose login is short can therefore sit behind others whose
+// name happens to contain it, so the caller pages until it finds an exact
+// login rather than reading one page.
 type enterpriseMemberLookupQuery struct {
 	Enterprise struct {
 		Members struct {
@@ -360,7 +363,11 @@ type enterpriseMemberLookupQuery struct {
 					Login githubv4.String
 				} `graphql:"... on User"`
 			}
-		} `graphql:"members(first: $first, query: $query)"`
+			PageInfo struct {
+				HasNextPage githubv4.Boolean
+				EndCursor   githubv4.String
+			}
+		} `graphql:"members(first: $first, after: $after, query: $query)"`
 	} `graphql:"enterprise(slug: $slug)"`
 	RateLimit graphQLRateLimit
 }
@@ -373,28 +380,44 @@ func (c *githubEnterpriseAdministratorClient) isMember(
 	enterprise string,
 	login string,
 ) (bool, annotations.Annotations, error) {
-	var query enterpriseMemberLookupQuery
-	err := c.enterpriseClient.Query(ctx, &query, map[string]any{
-		enterpriseSlugVariable:  githubv4.String(enterprise),
-		enterpriseFirstVariable: githubv4.Int(enterpriseMemberLookupPageSize),
-		enterpriseQueryVariable: githubv4.String(login),
-	})
-	if err != nil {
-		return false, nil, fmt.Errorf("baton-github: error looking up member %s of enterprise %s: %w", login, enterprise, err)
+	var (
+		annos annotations.Annotations
+		after *githubv4.String
+	)
+	for page := 0; page < enterpriseMaxPages; page++ {
+		var query enterpriseMemberLookupQuery
+		err := c.enterpriseClient.Query(ctx, &query, map[string]any{
+			enterpriseSlugVariable:  githubv4.String(enterprise),
+			enterpriseFirstVariable: githubv4.Int(enterpriseMemberLookupPageSize),
+			enterpriseAfterVariable: after,
+			enterpriseQueryVariable: githubv4.String(login),
+		})
+		if err != nil {
+			return false, annos, fmt.Errorf("baton-github: error looking up member %s of enterprise %s: %w", login, enterprise, err)
+		}
+		annos = freshestRateLimit(annos, query.RateLimit.annotations())
+
+		for _, node := range query.Enterprise.Members.Nodes {
+			found := string(node.EnterpriseUserAccount.Login)
+			if found == "" {
+				found = string(node.User.Login)
+			}
+			if strings.EqualFold(found, login) {
+				return true, annos, nil
+			}
+		}
+
+		if !bool(query.Enterprise.Members.PageInfo.HasNextPage) {
+			return false, annos, nil
+		}
+		after = githubv4.NewString(query.Enterprise.Members.PageInfo.EndCursor)
 	}
 
-	annos := query.RateLimit.annotations()
-	for _, node := range query.Enterprise.Members.Nodes {
-		found := string(node.EnterpriseUserAccount.Login)
-		if found == "" {
-			found = string(node.User.Login)
-		}
-		if strings.EqualFold(found, login) {
-			return true, annos, nil
-		}
-	}
-
-	return false, annos, nil
+	// Refusing to guess: concluding "not a member" here would reject a grant
+	// for someone who may well be one.
+	return false, annos, status.Errorf(codes.Unavailable,
+		"baton-github: gave up looking for %s in enterprise %s after %d pages of search results",
+		login, enterprise, enterpriseMaxPages)
 }
 
 // enterpriseMembersQuery reads one page of the enterprise's member accounts.
