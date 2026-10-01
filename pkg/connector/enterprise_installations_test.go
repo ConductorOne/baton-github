@@ -96,16 +96,13 @@ func TestGetEnterpriseInstallationUsesTheInstanceBaseURL(t *testing.T) {
 	require.Equal(t, int64(33), installation.ID)
 }
 
-// Without the opt-in the enterprise owner path is left unwired, and this is
-// what that has to mean: the same answer the connector gave before the
-// capability existed. Reading owners needs the app installed on the enterprise
-// account, which no existing deployment has done, and the connector fails the
-// sync when it cannot read them — so if the unwired path did anything else,
-// upgrading would turn a working sync into a failing one for everyone already
-// passing --enterprises under app auth. Under app auth that answer is no
-// resources, because the consumed-licenses API it falls back to is PAT-only
-// and answers 403.
-func TestEnterpriseRoleListIsInertWithoutTheOptIn(t *testing.T) {
+// A nil client provider is the token path, where enterprise roles come from
+// the consumed-licenses API. That API answers 403 to anything but a personal
+// access token, and the fallback swallows it rather than failing, so the list
+// is empty. This is the shape the token path has always had; it is pinned
+// because the app path now depends on the provider being the only thing that
+// distinguishes them.
+func TestEnterpriseRoleListIsInertOnTheTokenPath(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -114,7 +111,7 @@ func TestEnterpriseRoleListIsInertWithoutTheOptIn(t *testing.T) {
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"message": "Resource not accessible by integration"}))
 	}))
 
-	// nil provider is how newWithGithubApp leaves it when the flag is off.
+	// nil provider is what newWithGithubPAT leaves behind.
 	builder := EnterpriseRoleBuilder(apiClient, apiClient, customclient.New(apiClient),
 		[]string{"example-enterprise"}, nil)
 

@@ -169,16 +169,10 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 				gh.client, gh.appClient, gh.customClient, gh.enterprises, nil,
 			))
 		}
-		// The consumed-licenses API behind this type is PAT-only, so under app
-		// auth its 403 fails the whole sync and it has never emitted a
-		// resource. It is dropped only once the operator opts into enterprise
-		// owner provisioning, which is the setup whose sync it would break.
-		//
-		// Keyed on the provider rather than on the credential on purpose:
-		// with the opt-in off this type has to stay registered, because its
-		// failure is what stops the run. Dropping it there would let the sync
-		// complete while reporting no enterprise roles, and C1 deletes the
-		// stored resources of a type a completed sync did not report.
+		// The consumed-licenses API behind this type answers 403 to anything
+		// but a personal access token, so it is registered on the token path
+		// and nowhere else. An app gets the enterprise administrator API
+		// instead, which serves the Owner role it can actually read.
 		if gh.newEnterpriseRoleClients == nil {
 			resourceSyncers = append(resourceSyncers, LicenseBuilder(gh.customClient, gh.enterprises))
 		}
