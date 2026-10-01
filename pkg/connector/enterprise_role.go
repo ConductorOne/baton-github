@@ -277,16 +277,18 @@ var _ connectorbuilder.ResourceProvisionerV2 = (*enterpriseRoleProvisioner)(nil)
 // enterpriseRoleProvisioner adds Grant and Revoke to the read-only syncer.
 //
 // It is a separate type because the SDK derives CAPABILITY_PROVISION from the
-// methods a syncer implements, with no way to vary it at runtime. Registering
-// it only when the enterprise clients can be built keeps C1 from offering the
-// role as requestable on a deployment that could never satisfy the request:
-// under a PAT there is no App to install, and every request would fail.
+// methods a syncer implements, with no way to vary it at runtime. It is
+// registered on either credential: a token cannot reach the enterprise
+// administrator API, so a request made with one fails naming the credential it
+// needs, which is more useful than hiding a role an app in the same tenant can
+// grant.
 type enterpriseRoleProvisioner struct {
 	*enterpriseRoleResourceType
 }
 
 // EnterpriseRoleProvisioningBuilder returns the syncer with Grant and Revoke.
-// Only for deployments whose enterprise administration clients can be built.
+// A nil provider is the token path, where the mutations report that they need
+// GitHub App authentication rather than being absent.
 func EnterpriseRoleProvisioningBuilder(
 	client *github.Client,
 	appClient *github.Client,
