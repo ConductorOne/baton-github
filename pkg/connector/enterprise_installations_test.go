@@ -165,8 +165,8 @@ func TestResourceSyncersOfferProvisioningOnlyWhenItWorks(t *testing.T) {
 		provider    enterpriseClientProvider
 		provisioned bool
 	}{
-		{"pat or opt-in off", nil, false},
-		{"app auth opted in", func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+		{"token", nil, false},
+		{"app", func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
 			return nil, nil
 		}, true},
 	} {
