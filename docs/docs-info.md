@@ -20,7 +20,7 @@
    - Teams (including nested teams, with their parent team as the parent resource)
    - Repositories (optionally excluding archived ones)
    - Organization roles (GitHub's built-in and custom organization roles)
-   - Enterprise roles (only when `--enterprises` is set; under App authentication the built-in Owner role also needs `--enable-enterprise-owner-provisioning`)
+   - Enterprise roles (only when `--enterprises` is set; under App authentication this is the built-in Owner role)
    - Licenses (enterprise seat consumption, only when `--enterprises` is set)
    - GitHub Apps installed on the organization
    - API keys (fine-grained personal access tokens with access to the org, only when `--sync-secrets` is set)
@@ -70,7 +70,6 @@
 
    Common to both:
    `--enterprises` — enterprises to sync enterprise roles and licenses for
-   `--enable-enterprise-owner-provisioning` — sync and provision the built-in Enterprise Owner role. Off by default, App authentication only, and requires the App installed on the enterprise account as well as the organization
    `--sync-secrets` — sync fine-grained personal access tokens as API keys
    `--sync-last-activity` — emit the audit-log usage event feed. Hidden from `--help` and from the GUI config here, because it only applies to GitHub Enterprise audit-log access; `baton-github-enterprise` sets it directly instead of going through this CLI layer
    `--omit-archived-repositories` — skip archived repositories
@@ -186,11 +185,11 @@
 ### Enterprise roles
 
 - **Resource type ID**: `enterprise_role`
-- **Description**: Roles of an enterprise account. Only synced when `--enterprises` is set. Under App authentication the built-in Owner role is only synced when `--enable-enterprise-owner-provisioning` is set as well
+- **Description**: Roles of an enterprise account, only synced when `--enterprises` is set. A personal access token reads every role from the consumed-licenses API; a GitHub App reads the built-in Owner role through the enterprise administrator API, which is the only one it can use
 - **Traits**: Role trait
 - **Entitlements**: `assigned` (assignment)
 - **Grants**: Under PAT authentication, one grant per user holding each role, read from the enterprise consumed-licenses API. Under GitHub App authentication, only the built-in **Owner** role is visible, and its grants are the users who hold it plus the users who have been invited and have not accepted. The two are emitted against the same entitlement and C1 cannot tell them apart
-- **Provisioning**: Only the built-in **Owner** role, only with GitHub App authentication, and only when `--enable-enterprise-owner-provisioning` is set. See [Enterprise Owner provisioning](#enterprise-owner-provisioning)
+- **Provisioning**: Only the built-in **Owner** role, and only with GitHub App authentication. See [Enterprise Owner provisioning](#enterprise-owner-provisioning)
 - **Limitation**: A GitHub App cannot read `Enterprise.ownerInfo`, so under App authentication the connector sees only the Owner role, not billing managers or custom enterprise roles
 
 ### Licenses
@@ -200,7 +199,7 @@
 - **Traits**: License profile trait
 - **Entitlements**: `assigned` (assignment)
 - **Grants**: One grant for the enterprise member role holding the license, expandable through that role's `assigned` entitlement
-- **Limitation**: Requires a personal access token. GitHub does not offer the enterprise administration permission to GitHub Apps, so this resource type cannot sync with an App installation token, and its failure fails the whole sync. Customers using a GitHub App with `--enterprises` set must disable this resource type in the connector's resource capabilities in C1, drop `--enterprises`, or enable `--enable-enterprise-owner-provisioning`, which stops registering the type altogether. The 403 is left to surface as a plain `PermissionDenied`: the three ways out are stated in the `Enterprises` field description, in the setup docs and in the README, all of which the operator reads before configuring, and special-casing one credential's 403 in shared code would not generalize — see the GHES note below
+- **Limitation**: Requires a personal access token. GitHub does not offer the enterprise administration permission to GitHub Apps, so this resource type cannot sync with an App installation token and is not registered on the app path at all. Nothing is lost there: the same `--enterprises` configuration gives an app the built-in Owner role through the enterprise administrator API instead
 
 ### GitHub Apps
 
@@ -251,7 +250,9 @@ The `license` resource type has the same shape of problem, one step further alon
 
 ### Enterprise owner provisioning is opt-in
 
-`--enable-enterprise-owner-provisioning` is off by default, and while it is off the connector behaves exactly as it did before this capability existed. Enterprise roles come from the consumed-licenses cache, which is PAT-only, so an App deployment reports none of them, and the `license` resource type still fails the sync on that same 403, reported the same way it always was. Nothing about an upgrade is different until the capability is asked for.
+There is no separate switch for this capability. `--enterprises` already says the deployment has an enterprise, and the credential already says which API can serve it, so `ResourceSyncers` keys on the two it has rather than on a third the operator would have to discover: a token registers the read-only role plus licenses, an app registers the provisioning-capable role and no licenses.
+
+The upgrade this changes is an app deployment that already passes `--enterprises`. It used to report no enterprise roles and fail the sync on the license 403; it now reads the Owner role through the enterprise administrator API, and fails at startup with an actionable error if the app is not installed on the enterprise account. That is a better failure than the one it replaces, and the configuration it breaks was never producing enterprise data.
 
 The flag exists because turning the capability on requires setup nobody has done yet — a second installation of the App, on the enterprise account. Without the flag that requirement would reach every deployment that already passes `--enterprises` under App authentication, and the failure below would turn their working sync into a failing one on upgrade. With it, the failure is only reachable by an operator who asked for the capability.
 

@@ -45,8 +45,8 @@ baton resources
 - Organization roles
 - Invitations (users invited to an organization who have not accepted yet)
 - GitHub Apps (installed in organizations, synced as non-human identities)
-- Enterprise roles, only when `--enterprises` is set. A personal access token syncs every role. A GitHub App syncs none of them until `--enable-enterprise-owner-provisioning` is also set, which switches to the endpoints an App can use and additionally provisions the built-in Enterprise Owner role; that needs the App installed on both the enterprise account and the organization
-- Enterprise licenses, only when `--enterprises` is set. The API behind them is available only to a personal access token. Under a GitHub App the type stays registered and its `403` fails the sync, which is deliberate, until `--enable-enterprise-owner-provisioning` stops registering it
+- Enterprise roles, only when `--enterprises` is set. A personal access token syncs every role, read-only. A GitHub App syncs and provisions the built-in Enterprise Owner role instead, and must be installed on both the enterprise account and the organization
+- Enterprise licenses, only when `--enterprises` is set and the connector authenticates with a personal access token. The API behind them is not available to GitHub Apps, so the type is not registered on the app path
 
 By default, `baton-github` will sync information from any organizations that the provided credential has Administrator permissions on. You can specify exactly which organizations you would like to sync using the `--orgs` flag.
 
@@ -82,8 +82,7 @@ Flags:
       --app-privatekey-path string                       Path to private key that is used to connect to the GitHub App. Ignored when app-privatekey is set. ($BATON_APP_PRIVATEKEY_PATH)
       --client-id string                                 The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
       --client-secret string                             The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
-      --enable-enterprise-owner-provisioning             Sync and provision the built-in Owner role of the GitHub Enterprise Cloud enterprise account the organization belongs to. Requires the GitHub App to be installed on the enterprise account as well as on the organization, with the "Enterprise people: read and write" permission, and requires "Enterprises" to name that enterprise. Not available with a personal access token. ($BATON_ENABLE_ENTERPRISE_OWNER_PROVISIONING)
-      --enterprises strings                              Sync enterprise roles, must be an admin of the enterprise. With a personal access token this is all that is needed. With a GitHub App it does not work on its own: the API behind enterprise roles and licenses is only available to a personal access token, so no roles are returned and the license resource type fails the sync. Pair it with "Enable enterprise owner provisioning", which switches to the endpoints an App can use. ($BATON_ENTERPRISES)
+      --enterprises strings                              Sync enterprise roles, must be an admin of the enterprise. A personal access token syncs every role. A GitHub App syncs and provisions the built-in Owner role instead, and needs to be installed on the enterprise account as well as on the organization, with the "Enterprise people: read and write" permission. ($BATON_ENTERPRISES)
       --external-resource-c1z string                     The path to the c1z file to sync external baton resources with ($BATON_EXTERNAL_RESOURCE_C1Z)
       --external-resource-entitlement-id-filter string   The entitlement that external users, groups must have access to sync external baton resources ($BATON_EXTERNAL_RESOURCE_ENTITLEMENT_ID_FILTER)
   -f, --file string                                      The path to the c1z file to sync with ($BATON_FILE) (default "sync.c1z")

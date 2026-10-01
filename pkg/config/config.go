@@ -27,10 +27,9 @@ var (
 		"enterprises",
 		field.WithDisplayName("Enterprises"),
 		field.WithDescription("Sync enterprise roles, must be an admin of the enterprise. "+
-			"With a personal access token this is all that is needed. With a GitHub App it does not work on its "+
-			"own: the API behind enterprise roles and licenses is only available to a personal access token, so "+
-			"no roles are returned and the license resource type fails the sync. Pair it with \"Enable "+
-			"enterprise owner provisioning\", which switches to the endpoints an App can use."),
+			"A personal access token syncs every role. A GitHub App syncs and provisions the built-in Owner "+
+			"role instead, and needs to be installed on the enterprise account as well as on the organization, "+
+			"with the \"Enterprise people: read and write\" permission."),
 	)
 	instanceUrlField = field.StringField(
 		"instance-url",
@@ -72,19 +71,6 @@ var (
 		"sync-secrets",
 		field.WithDisplayName("Sync secrets"),
 		field.WithDescription(`Whether to sync secrets or not`),
-	)
-	// Off by default because it needs setup nobody has done yet: turning it on
-	// without the enterprise installation fails the sync, which is only a fair
-	// trade for someone who asked for the capability.
-	enableEnterpriseOwnerProvisioning = field.BoolField(
-		"enable-enterprise-owner-provisioning",
-		field.WithDisplayName("Enable enterprise owner provisioning"),
-		field.WithDescription(
-			"Sync and provision the built-in Owner role of the GitHub Enterprise Cloud enterprise account the "+
-				"organization belongs to. Requires the GitHub App to be installed on the enterprise account as well "+
-				"as on the organization, with the \"Enterprise people: read and write\" permission, and requires "+
-				"\"Enterprises\" to name that enterprise. Not available with a personal access token.",
-		),
 	)
 	omitArchivedRepositories = field.BoolField(
 		"omit-archived-repositories",
@@ -137,7 +123,6 @@ var Config = field.NewConfiguration(
 		appPrivateKey,
 		orgField,
 		syncSecrets,
-		enableEnterpriseOwnerProvisioning,
 		omitArchivedRepositories,
 		directCollaboratorsOnly,
 		syncLastActivity,
@@ -159,7 +144,7 @@ var Config = field.NewConfiguration(
 			HelpText:    "Use a github app for authentication",
 			Fields: []field.SchemaField{
 				appIDField, appPrivateKeyPath, appPrivateKey, orgField, EnterprisesField, syncSecrets,
-				enableEnterpriseOwnerProvisioning, omitArchivedRepositories, directCollaboratorsOnly,
+				omitArchivedRepositories, directCollaboratorsOnly,
 			},
 			Default: false,
 		},

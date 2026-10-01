@@ -173,7 +173,7 @@ func (o *enterpriseRoleResourceType) List(
 ) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
 	enterpriseClients, err := o.clients(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, failClosedOnUnreadableEnterprise(err, strings.Join(o.enterprises, ", "))
 	}
 
 	// The consumed-licenses API that backs the cache is PAT-only, so a GitHub
@@ -236,7 +236,7 @@ func (o *enterpriseRoleResourceType) Grants(
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
 	enterpriseClients, err := o.clients(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, failClosedOnUnreadableEnterprise(err, strings.Join(o.enterprises, ", "))
 	}
 	if len(enterpriseClients) > 0 {
 		return o.appGrants(ctx, enterpriseClients, resource, opts)

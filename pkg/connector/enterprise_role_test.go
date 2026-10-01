@@ -1187,3 +1187,54 @@ func TestEnterpriseRoleGrantFindsAMemberBehindSearchNoise(t *testing.T) {
 	require.Len(t, grants, 1)
 	require.Equal(t, testLogin, stub.invitedLogin, "the invitation must still be sent")
 }
+
+// The client build runs on the first List and queries enterprise(slug:) twice.
+// A NOT_FOUND there used to leave List and Grants raw, and NotFound is the one
+// code the SDK downgrades to a warning: the type would report nothing, the
+// sync would complete, and C1 would delete the role and every grant on it.
+func TestEnterpriseRoleFailsClosedWhenTheClientBuildCannotSeeTheEnterprise(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(
+			`{"data":null,"errors":[{"type":"NOT_FOUND","message":"Could not resolve to an Enterprise with the slug of 'gone'."}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	build := func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+		client, err := newEnterpriseAdministratorClient(srv.URL, srv.Client(), srv.Client(), testOrg)
+		require.NoError(t, err)
+		return nil, client.resolveEnterpriseNodeID(context.Background(), testEnterprise)
+	}
+
+	roleResource, err := resourceSdk.NewRoleResource(
+		enterpriseRoleOwner, resourceTypeEnterpriseRole,
+		testEnterprise+":"+enterpriseRoleOwner, []resourceSdk.RoleTraitOption{})
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name string
+		call func(b *enterpriseRoleProvisioner) error
+	}{
+		{"List", func(b *enterpriseRoleProvisioner) error {
+			_, _, err := b.List(context.Background(), nil, resourceSdk.SyncOpAttrs{})
+			return err
+		}},
+		{"Grants", func(b *enterpriseRoleProvisioner) error {
+			_, _, err := b.Grants(context.Background(), roleResource, resourceSdk.SyncOpAttrs{})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			builder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise}, build)
+			err := tc.call(builder)
+
+			require.Error(t, err)
+			require.Equal(t, codes.FailedPrecondition, status.Code(err),
+				"NotFound would be downgraded to a warning and the sync would complete with no owners")
+		})
+	}
+}

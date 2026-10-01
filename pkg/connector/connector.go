@@ -497,19 +497,15 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	// memoized for the process lifetime, so the token refresher inside them
 	// must not hold the context of whichever RPC happened to build them.
 	connectorCtx := ctx
-	// Left nil unless the operator opted in. Reading enterprise owners needs
-	// the app installed on the enterprise account too, which no existing
-	// deployment has done, and the connector fails the sync when it cannot
-	// read them. Nil keeps that path inert: enterprise roles then come from
-	// the consumed-licenses cache exactly as they did before this capability,
-	// which under app auth means nothing, so an upgrade changes no behaviour
-	// until it is asked for.
-	var newEnterpriseRoleClientsFn enterpriseClientProvider
-	if ghc.EnableEnterpriseOwnerProvisioning {
-		newEnterpriseRoleClientsFn = func(ctx context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
-			return newEnterpriseRoleClients(
-				ctx, connectorCtx, ghc.InstanceUrl, appClient, jwtts, enterprises, appHTTPClient, ghc.Org)
-		}
+	// Set on the app path and left nil on the token path, which is what
+	// ResourceSyncers reads to tell the two apart: the enterprise
+	// administrator API is the only one an app can use for these roles, and
+	// the consumed-licenses API behind the token path is the only one a token
+	// can use. The clients are built lazily, so configuring no enterprise
+	// costs nothing.
+	newEnterpriseRoleClientsFn := func(ctx context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+		return newEnterpriseRoleClients(
+			ctx, connectorCtx, ghc.InstanceUrl, appClient, jwtts, enterprises, appHTTPClient, ghc.Org)
 	}
 
 	gh := &GitHub{
