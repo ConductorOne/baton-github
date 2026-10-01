@@ -42,7 +42,11 @@ baton resources
 - Users
 - Teams
 - Repositories
+- Organization roles
+- Invitations (users invited to an organization who have not accepted yet)
 - GitHub Apps (installed in organizations, synced as non-human identities)
+- Enterprise roles, only when `--enterprises` is set. A personal access token syncs every role; a GitHub App syncs the built-in Enterprise Owner role and can also grant and revoke it, with the app installed on both the enterprise account and the organization
+- Enterprise licenses, only when `--enterprises` is set and the connector authenticates with a personal access token. The API behind them is not available to GitHub Apps, so the type is not registered on the app path
 
 By default, `baton-github` will sync information from any organizations that the provided credential has Administrator permissions on. You can specify exactly which organizations you would like to sync using the `--orgs` flag.
 
@@ -78,7 +82,7 @@ Flags:
       --app-privatekey-path string                       Path to private key that is used to connect to the GitHub App. Ignored when app-privatekey is set. ($BATON_APP_PRIVATEKEY_PATH)
       --client-id string                                 The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
       --client-secret string                             The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
-      --enterprises strings                              Sync enterprise roles, must be an admin of the enterprise. ($BATON_ENTERPRISES)
+      --enterprises strings                              Sync enterprise roles, must be an admin of the enterprise. A personal access token syncs every role. A GitHub App syncs and provisions the built-in Owner role instead, and needs to be installed on the enterprise account as well as on the organization, with the "Enterprise people: read and write" permission. ($BATON_ENTERPRISES)
       --external-resource-c1z string                     The path to the c1z file to sync external baton resources with ($BATON_EXTERNAL_RESOURCE_C1Z)
       --external-resource-entitlement-id-filter string   The entitlement that external users, groups must have access to sync external baton resources ($BATON_EXTERNAL_RESOURCE_ENTITLEMENT_ID_FILTER)
   -f, --file string                                      The path to the c1z file to sync with ($BATON_FILE) (default "sync.c1z")
@@ -113,3 +117,10 @@ Org:
 Repo:
 - Administrator: Read and Write
   - This permission implies Metadata: Read
+
+Enterprise, only when `--enterprises` is set:
+- GitHub App: People: Read and Write, and the app installed on the enterprise
+  account as well as the organization — required to sync and provision the
+  built-in Enterprise Owner role
+- Personal access token: `read:enterprise` — required to sync enterprise roles
+  and licenses

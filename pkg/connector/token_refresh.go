@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 
@@ -158,16 +157,10 @@ func newGitHubAppClients(instanceURL string, httpClient *http.Client) (*github.C
 		Transport: &statusClassifyingTransport{base: httpClient.Transport},
 	}
 
-	var gqlClient *githubv4.Client
-	if instanceURL != "" && instanceURL != githubDotCom {
-		gqlURL, err := url.Parse(instanceURL)
-		if err != nil {
-			return nil, nil, err
-		}
-		gqlURL.Path = "/api/graphql"
-		gqlClient = githubv4.NewEnterpriseClient(gqlURL.String(), gqlHTTPClient)
-	} else {
-		gqlClient = githubv4.NewClient(gqlHTTPClient)
+	endpoint, err := enterpriseGraphQLEndpoint(instanceURL)
+	if err != nil {
+		return nil, nil, err
 	}
-	return gc, gqlClient, nil
+
+	return gc, githubv4.NewEnterpriseClient(endpoint.String(), gqlHTTPClient), nil
 }

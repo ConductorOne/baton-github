@@ -57,6 +57,29 @@
     },
     {
       "resourceType": {
+        "id": "enterprise_role",
+        "displayName": "Enterprise Role",
+        "traits": [
+          "TRAIT_ROLE"
+        ],
+        "annotations": [
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.V1Identifier",
+            "id": "enterprise_role"
+          },
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlements"
+          }
+        ]
+      },
+      "capabilities": [
+        "CAPABILITY_SYNC",
+        "CAPABILITY_PROVISION"
+      ],
+      "permissions": {}
+    },
+    {
+      "resourceType": {
         "id": "invitation",
         "displayName": "Invitation",
         "traits": [
@@ -79,6 +102,32 @@
       ],
       "permissions": {},
       "skipSyncAnomalyDetection": true
+    },
+    {
+      "resourceType": {
+        "id": "license",
+        "displayName": "License",
+        "traits": [
+          "TRAIT_LICENSE_PROFILE"
+        ],
+        "annotations": [
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.V1Identifier",
+            "id": "license"
+          },
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlements"
+          },
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.OptInRequired"
+          }
+        ]
+      },
+      "capabilities": [
+        "CAPABILITY_SYNC"
+      ],
+      "permissions": {},
+      "optInRequired": true
     },
     {
       "resourceType": {
@@ -168,6 +217,24 @@
     },
     {
       "resourceType": {
+        "id": "usage-app",
+        "displayName": "GitHub Activity",
+        "traits": [
+          "TRAIT_APP"
+        ],
+        "annotations": [
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipGrants"
+          }
+        ]
+      },
+      "capabilities": [
+        "CAPABILITY_SYNC"
+      ],
+      "permissions": {}
+    },
+    {
+      "resourceType": {
         "id": "user",
         "displayName": "User",
         "traits": [
@@ -191,7 +258,8 @@
     "CAPABILITY_PROVISION",
     "CAPABILITY_SYNC",
     "CAPABILITY_ACCOUNT_PROVISIONING",
-    "CAPABILITY_RESOURCE_DELETE"
+    "CAPABILITY_RESOURCE_DELETE",
+    "CAPABILITY_EVENT_FEED_V2"
   ],
   "credentialDetails": {
     "capabilityAccountProvisioning": {
