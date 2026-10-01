@@ -118,6 +118,9 @@ Repo:
 - Administrator: Read and Write
   - This permission implies Metadata: Read
 
-Enterprise, only to sync and provision the built-in Enterprise Owner role:
-- People: Read and Write
-  - The App must also be installed on the enterprise account, not only on the organization
+Enterprise, only when `--enterprises` is set:
+- GitHub App: People: Read and Write, and the app installed on the enterprise
+  account as well as the organization — required to sync and provision the
+  built-in Enterprise Owner role
+- Personal access token: `read:enterprise` — required to sync enterprise roles
+  and licenses
