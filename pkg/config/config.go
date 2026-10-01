@@ -135,18 +135,15 @@ var Config = field.NewConfiguration(
 			Name:        GithubPersonalAccessTokenGroup,
 			DisplayName: "Personal access token",
 			HelpText:    "Use a personal access token for authentication.",
-			Fields:      []field.SchemaField{accessTokenField, orgsField, EnterprisesField, omitArchivedRepositories, directCollaboratorsOnly},
+			Fields:      []field.SchemaField{accessTokenField, orgsField, omitArchivedRepositories, directCollaboratorsOnly},
 			Default:     true,
 		},
 		{
 			Name:        GithubAppGroup,
 			DisplayName: "GitHub app",
 			HelpText:    "Use a github app for authentication",
-			Fields: []field.SchemaField{
-				appIDField, appPrivateKeyPath, appPrivateKey, orgField, EnterprisesField, syncSecrets,
-				omitArchivedRepositories, directCollaboratorsOnly,
-			},
-			Default: false,
+			Fields:      []field.SchemaField{appIDField, appPrivateKeyPath, appPrivateKey, orgField, syncSecrets, omitArchivedRepositories, directCollaboratorsOnly},
+			Default:     false,
 		},
 	}),
 )

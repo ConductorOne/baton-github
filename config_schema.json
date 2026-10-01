@@ -193,7 +193,6 @@
       "fields": [
         "token",
         "orgs",
-        "enterprises",
         "omit-archived-repositories",
         "direct-collaborators-only"
       ],
@@ -208,7 +207,6 @@
         "app-privatekey-path",
         "app-privatekey",
         "org",
-        "enterprises",
         "sync-secrets",
         "omit-archived-repositories",
         "direct-collaborators-only"

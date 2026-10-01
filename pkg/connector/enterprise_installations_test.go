@@ -14,7 +14,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	cfg "github.com/conductorone/baton-github/pkg/config"
 	"github.com/conductorone/baton-github/pkg/customclient"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -151,24 +150,23 @@ func TestNewEnterpriseRoleClientsRequiresEnterpriseInstall(t *testing.T) {
 	require.NotContains(t, err.Error(), "personal access token")
 }
 
-// The SDK derives CAPABILITY_PROVISION by type-asserting each registered
-// syncer, so the split between the two types is the whole mechanism keeping
-// provisioning off PAT deployments. Nothing else fails if it is undone: moving
-// Grant and Revoke back onto the read-only type, or dropping the check in
-// ResourceSyncers, would re-advertise provisioning to PAT with every other
-// test still green.
-func TestResourceSyncersOfferProvisioningOnlyWhenItWorks(t *testing.T) {
+// The enterprise role is registered with Grant and Revoke on both credentials
+// on purpose. A token cannot reach the enterprise administrator API, so a
+// request made against it fails with a message saying so rather than being
+// hidden from C1 -- the alternative, registering the read-only type there,
+// also advertises a role nobody can be granted.
+func TestResourceSyncersRegisterTheEnterpriseRoleWithProvisioning(t *testing.T) {
 	t.Parallel()
 
+	ctx := context.Background()
 	for _, tc := range []struct {
-		name        string
-		provider    enterpriseClientProvider
-		provisioned bool
+		name     string
+		provider enterpriseClientProvider
 	}{
-		{"token", nil, false},
+		{"token", nil},
 		{"app", func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
 			return nil, nil
-		}, true},
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -179,13 +177,13 @@ func TestResourceSyncersOfferProvisioningOnlyWhenItWorks(t *testing.T) {
 			}
 
 			var found bool
-			for _, syncer := range gh.ResourceSyncers(context.Background()) {
-				if syncer.ResourceType(context.Background()).GetId() != resourceTypeEnterpriseRole.Id {
+			for _, syncer := range gh.ResourceSyncers(ctx) {
+				if syncer.ResourceType(ctx).GetId() != resourceTypeEnterpriseRole.Id {
 					continue
 				}
 				found = true
 				_, provisions := syncer.(connectorbuilder.ResourceProvisionerV2Limited)
-				require.Equal(t, tc.provisioned, provisions)
+				require.True(t, provisions)
 			}
 			require.True(t, found, "enterprise_role must be synced either way")
 		})
@@ -227,16 +225,14 @@ func TestNewEnterpriseRoleClientsFoldsRepeatedEnterprises(t *testing.T) {
 func TestConnectorFoldsRepeatedEnterprisesBeforeBuildingSyncers(t *testing.T) {
 	t.Parallel()
 
-	gh, err := newWithGithubPAT(context.Background(), &cfg.Github{
-		Token:       "test-token",
-		InstanceUrl: githubDotCom,
-		Enterprises: []string{"example-enterprise", "example-enterprise"},
-	})
-	require.NoError(t, err)
-	require.Equal(t, []string{"example-enterprise"}, gh.enterprises)
+	// App authentication serves one enterprise, so the same slug named twice
+	// must not read as two and be rejected for a count the operator never
+	// chose. GitHub matches slugs case-insensitively, so the fold does too.
+	enterprises := distinctEnterprises([]string{"example-enterprise", "Example-Enterprise"})
+	require.Equal(t, []string{"example-enterprise"}, enterprises)
 
 	resources, _, err := appList(
-		gh.enterprises,
+		enterprises,
 		map[string]*githubEnterpriseAdministratorClient{"example-enterprise": nil},
 	)
 	require.NoError(t, err)

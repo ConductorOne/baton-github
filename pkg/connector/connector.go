@@ -155,20 +155,10 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	}
 
 	if len(gh.enterprises) > 0 {
-		// The provisioning-capable syncer is registered only where the role can
-		// actually be provisioned. The SDK reads CAPABILITY_PROVISION off the
-		// methods a syncer implements, so registering it everywhere would offer
-		// the role as requestable to PAT deployments, where every request fails.
-		if gh.newEnterpriseRoleClients != nil {
-			resourceSyncers = append(resourceSyncers, EnterpriseRoleProvisioningBuilder(
-				gh.client, gh.appClient, gh.customClient, gh.enterprises,
-				gh.newEnterpriseRoleClients,
-			))
-		} else {
-			resourceSyncers = append(resourceSyncers, EnterpriseRoleBuilder(
-				gh.client, gh.appClient, gh.customClient, gh.enterprises, nil,
-			))
-		}
+		resourceSyncers = append(resourceSyncers, EnterpriseRoleProvisioningBuilder(
+			gh.client, gh.appClient, gh.customClient, gh.enterprises,
+			gh.newEnterpriseRoleClients,
+		))
 		// The consumed-licenses API behind this type answers 403 to anything
 		// but a personal access token, so it is registered on the token path
 		// and nowhere else. An app gets the enterprise administrator API
@@ -357,7 +347,6 @@ func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.Conne
 }
 
 func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
-	enterprises := distinctEnterprises(ghc.Enterprises)
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: ghc.Token},
 	)
@@ -374,7 +363,7 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		customClient:             customclient.New(ghClient),
 		instanceURL:              ghc.InstanceUrl,
 		orgs:                     ghc.Orgs,
-		enterprises:              enterprises,
+		enterprises:              ghc.Enterprises,
 		graphqlClient:            graphqlClient,
 		orgCache:                 newOrgNameCache(ghClient),
 		syncSecrets:              ghc.SyncSecrets,

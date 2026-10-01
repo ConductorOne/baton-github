@@ -45,7 +45,7 @@ baton resources
 - Organization roles
 - Invitations (users invited to an organization who have not accepted yet)
 - GitHub Apps (installed in organizations, synced as non-human identities)
-- Enterprise roles, only when `--enterprises` is set. A personal access token syncs every role, read-only. A GitHub App syncs and provisions the built-in Enterprise Owner role instead, and must be installed on both the enterprise account and the organization
+- Enterprise roles, only when `--enterprises` is set. A personal access token syncs every role; a GitHub App syncs the built-in Enterprise Owner role and can also grant and revoke it, with the app installed on both the enterprise account and the organization
 - Enterprise licenses, only when `--enterprises` is set and the connector authenticates with a personal access token. The API behind them is not available to GitHub Apps, so the type is not registered on the app path
 
 By default, `baton-github` will sync information from any organizations that the provided credential has Administrator permissions on. You can specify exactly which organizations you would like to sync using the `--orgs` flag.

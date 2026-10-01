@@ -189,7 +189,7 @@
 - **Traits**: Role trait
 - **Entitlements**: `assigned` (assignment)
 - **Grants**: Under PAT authentication, one grant per user holding each role, read from the enterprise consumed-licenses API. Under GitHub App authentication, only the built-in **Owner** role is visible, and its grants are the users who hold it plus the users who have been invited and have not accepted. The two are emitted against the same entitlement and C1 cannot tell them apart
-- **Provisioning**: Only the built-in **Owner** role, and only with GitHub App authentication. See [Enterprise Owner provisioning](#enterprise-owner-provisioning)
+- **Provisioning**: Only the built-in **Owner** role, and it only succeeds under GitHub App authentication. The capability is advertised on both credentials; a request made with a personal access token fails with a message naming the credential it needs. See [Enterprise Owner provisioning](#enterprise-owner-provisioning)
 - **Limitation**: A GitHub App cannot read `Enterprise.ownerInfo`, so under App authentication the connector sees only the Owner role, not billing managers or custom enterprise roles
 
 ### Licenses
@@ -250,7 +250,7 @@ The `license` resource type has the same shape of problem, one step further alon
 
 ### There is no separate switch for this capability
 
-`--enterprises` already says the deployment has an enterprise, and the credential already says which API can serve it, so `ResourceSyncers` keys on the two values it has rather than on a third the operator would have to discover: a token registers the read-only role plus licenses, an app registers the provisioning-capable role and no licenses.
+`--enterprises` already says the deployment has an enterprise, and the credential already says which API can serve it, so `ResourceSyncers` keys on the two values it has rather than on a third the operator would have to discover. The enterprise role is registered with Grant and Revoke either way; a token cannot reach the enterprise administrator API, so a request made against it fails saying so rather than the role being hidden from C1. Licenses are registered on the token path only, since their API answers 403 to anything else.
 
 **This is a behaviour change for an app deployment that already passes `--enterprises`, and it is the one thing to weigh before upgrading.** Such a deployment used to report no enterprise roles, because the consumed-licenses API it fell back to is token-only. It now reads the Owner role through the enterprise administrator API, and if the app is not installed on the enterprise account the client build fails and takes the sync with it. The clients are built lazily on the first `List`, so that surfaces on the first sync rather than at startup.
 
