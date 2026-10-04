@@ -150,6 +150,10 @@ func (mgh MockGitHub) Seed() (
 	return &githubOrganization, &githubRepository, &githubTeam, &githubUser, orgRole, nil
 }
 
+func (mgh MockGitHub) SetUser(user github.User) {
+	mgh.users[user.GetID()] = user
+}
+
 func getResource[T interface{}](
 	w http.ResponseWriter,
 	idStr string,

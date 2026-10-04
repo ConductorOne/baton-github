@@ -286,6 +286,37 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 			// no SAML enrichment
 		}
 
+		if !isEmail(userEmail) {
+			// Enterprise-level SAML hides identities from org-scoped credentials; verified-domain emails stay readable.
+			q := verifiedDomainEmailsQuery{}
+			variables := map[string]interface{}{
+				"orgLoginName": githubv4.String(orgName),
+				"userName":     githubv4.String(ghUser.GetLogin()),
+			}
+			if err := u.graphqlClient.Query(ctx, &q, variables); err != nil {
+				l.Warn("failed to fetch verified domain emails", zap.String("login", ghUser.GetLogin()), zap.Error(err))
+			} else {
+				for _, email := range q.User.OrganizationVerifiedDomainEmails {
+					switch {
+					case !isEmail(email) || email == userEmail:
+					case !isEmail(userEmail):
+						userEmail = email
+					default:
+						extraEmails = append(extraEmails, email)
+					}
+				}
+				lastGraphQLRateLimit = &struct {
+					Limit     int
+					Remaining int
+					ResetAt   githubv4.DateTime
+				}{
+					Limit:     q.RateLimit.Limit,
+					Remaining: q.RateLimit.Remaining,
+					ResetAt:   q.RateLimit.ResetAt,
+				}
+			}
+		}
+
 		ur, err := userResource(ctx, ghUser, userEmail, extraEmails)
 		if err != nil {
 			return nil, nil, err

@@ -291,6 +291,18 @@ type listUsersQuery struct {
 	}
 }
 
+type verifiedDomainEmailsQuery struct {
+	User struct {
+		OrganizationVerifiedDomainEmails []string `graphql:"organizationVerifiedDomainEmails(login: $orgLoginName)"`
+	} `graphql:"user(login: $userName)"`
+	RateLimit struct {
+		Limit     int
+		Cost      int
+		Remaining int
+		ResetAt   githubv4.DateTime
+	}
+}
+
 type hasSAMLQuery struct {
 	Organization struct {
 		SamlIdentityProvider struct {
