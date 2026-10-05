@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/conductorone/baton-github/pkg/customclient"
 	"github.com/conductorone/baton-github/test/mocks"
 )
 
@@ -379,10 +380,14 @@ func requireNoIdempotencyClaim(t *testing.T, annos annotations.Annotations) {
 	require.False(t, annos.Contains(&alreadyRevoked))
 }
 
-func newTestEnterpriseRoleBuilder(
+// newTestEnterpriseAdminClient serves both installations from the same stub:
+// the tests exercise the queries, not the two-token split. The organization is
+// a parameter because verifyOrganization is about a mismatched one.
+func newTestEnterpriseAdminClient(
 	t *testing.T,
 	stub *enterpriseStub,
-) (*enterpriseRoleProvisioner, *v2.Resource, *v2.Entitlement) {
+	org string,
+) *customclient.EnterpriseAdminClient {
 	t.Helper()
 
 	if stub.invitations == nil {
@@ -394,13 +399,26 @@ func newTestEnterpriseRoleBuilder(
 	}))
 	t.Cleanup(graphqlSrv.Close)
 
-	// Both installations point at the same stub: the test exercises the
-	// queries, not the two-token split.
-	enterpriseClient, err := newEnterpriseAdministratorClient(
-		graphqlSrv.URL, graphqlSrv.Client(), graphqlSrv.Client(), testOrg)
+	client, err := customclient.NewEnterpriseAdminClient(
+		graphqlSrv.URL, graphqlSrv.Client(), graphqlSrv.Client(), org)
 	require.NoError(t, err)
 	// Mirrors construction: the node ID is resolved once, not per operation.
-	require.NoError(t, enterpriseClient.resolveEnterpriseNodeID(context.Background(), testEnterprise))
+	require.NoError(t, client.ResolveEnterpriseNodeID(context.Background(), testEnterprise))
+
+	return client
+}
+
+func newTestEnterpriseRoleBuilder(
+	t *testing.T,
+	stub *enterpriseStub,
+) (*enterpriseRoleProvisioner, *v2.Resource, *v2.Entitlement) {
+	t.Helper()
+
+	if stub.invitations == nil {
+		stub.invitations = make(map[string]string)
+	}
+
+	enterpriseClient := newTestEnterpriseAdminClient(t, stub, testOrg)
 
 	mgh := mocks.NewMockGitHub()
 	_, _, _, githubUser, _, err := mgh.Seed()
@@ -411,8 +429,8 @@ func newTestEnterpriseRoleBuilder(
 		nil,
 		nil,
 		[]string{testEnterprise},
-		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
-			return map[string]*githubEnterpriseAdministratorClient{testEnterprise: enterpriseClient}, nil
+		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+			return map[string]*customclient.EnterpriseAdminClient{testEnterprise: enterpriseClient}, nil
 		},
 	)
 
@@ -847,14 +865,30 @@ func TestEnterpriseRoleVerifyOrganization(t *testing.T) {
 	builder, _, _ := newTestEnterpriseRoleBuilder(t, stub)
 	enterpriseClients, err := builder.clients(ctx)
 	require.NoError(t, err)
-	client := enterpriseClients[testEnterprise]
-
-	require.NoError(t, client.verifyOrganization(ctx, testEnterprise))
+	require.NoError(t, enterpriseClients[testEnterprise].VerifyOrganization(ctx, testEnterprise))
 	require.Equal(t, 1, stub.organizationChecks)
 
-	client.org = "org-of-another-enterprise"
-	err = client.verifyOrganization(ctx, testEnterprise)
+	other := newTestEnterpriseAdminClient(t, &enterpriseStub{}, "org-of-another-enterprise")
+	err = other.VerifyOrganization(ctx, testEnterprise)
 	require.ErrorContains(t, err, "does not belong to enterprise")
+}
+
+// VerifyOrganization lives in the client package now, so it returns a plain
+// status rather than the connector's error type and the caller classifies it.
+// Only the configuration answer may skip the sync.
+func TestOrganizationMismatchIsASetupErrorButGivingUpIsNot(t *testing.T) {
+	t.Parallel()
+
+	mismatch := status.Error(codes.FailedPrecondition,
+		"baton-github: organization x does not belong to enterprise y, so its owners cannot be synced")
+	require.True(t, isEnterpriseSetupError(asEnterpriseSetupError(mismatch)))
+
+	gaveUp := status.Error(codes.Internal,
+		"baton-github: gave up looking for organization x in enterprise y after 1000 pages")
+	require.False(t, isEnterpriseSetupError(asEnterpriseSetupError(gaveUp)))
+	require.Equal(t, codes.Internal, status.Code(asEnterpriseSetupError(gaveUp)))
+
+	require.NoError(t, asEnterpriseSetupError(nil))
 }
 
 // A client build that fails for any reason other than configuration must
@@ -868,7 +902,7 @@ func TestEnterpriseRoleFailsClosedWithoutEnterpriseClients(t *testing.T) {
 	clientsErr := status.Error(codes.Unavailable, "github-connector: rate limited")
 	builds := 0
 	builder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise},
-		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 			builds++
 			return nil, clientsErr
 		},
@@ -906,7 +940,7 @@ func TestEnterpriseRoleSkipsSyncOnASetupError(t *testing.T) {
 		"github-connector: GitHub App is not installed on enterprise")}
 	builds := 0
 	builder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise},
-		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 			builds++
 			return nil, clientsErr
 		},
@@ -966,14 +1000,14 @@ func TestEnterpriseRoleRetriesAClientBuildFailure(t *testing.T) {
 
 			builds := 0
 			builder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise},
-				func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+				func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 					builds++
 					if builds == 1 {
 						return nil, tc.err
 					}
 					// List only checks the enterprise is present, so the
 					// client itself is never dereferenced here.
-					return map[string]*githubEnterpriseAdministratorClient{testEnterprise: nil}, nil
+					return map[string]*customclient.EnterpriseAdminClient{testEnterprise: nil}, nil
 				},
 			)
 
@@ -1028,8 +1062,8 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 	t.Run("names an enterprise that is not configured", func(t *testing.T) {
 		t.Parallel()
 		appBuilder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise},
-			func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
-				return map[string]*githubEnterpriseAdministratorClient{}, nil
+			func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+				return map[string]*customclient.EnterpriseAdminClient{}, nil
 			},
 		)
 		_, _, err := appBuilder.Grant(ctx, principal, ent)
@@ -1132,12 +1166,12 @@ func TestEnterpriseRoleGrantsDoNotLetANotFoundSilenceTheSync(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client, err := newEnterpriseAdministratorClient(srv.URL, srv.Client(), srv.Client(), testOrg)
+	client, err := customclient.NewEnterpriseAdminClient(srv.URL, srv.Client(), srv.Client(), testOrg)
 	require.NoError(t, err)
 
 	builder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise},
-		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
-			return map[string]*githubEnterpriseAdministratorClient{testEnterprise: client}, nil
+		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+			return map[string]*customclient.EnterpriseAdminClient{testEnterprise: client}, nil
 		})
 
 	roleResource, err := resourceSdk.NewRoleResource(
@@ -1245,10 +1279,10 @@ func TestEnterpriseRoleFailsClosedWhenTheClientBuildCannotSeeTheEnterprise(t *te
 	}))
 	t.Cleanup(srv.Close)
 
-	build := func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
-		client, err := newEnterpriseAdministratorClient(srv.URL, srv.Client(), srv.Client(), testOrg)
+	build := func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+		client, err := customclient.NewEnterpriseAdminClient(srv.URL, srv.Client(), srv.Client(), testOrg)
 		require.NoError(t, err)
-		return nil, client.resolveEnterpriseNodeID(context.Background(), testEnterprise)
+		return nil, client.ResolveEnterpriseNodeID(context.Background(), testEnterprise)
 	}
 
 	roleResource, err := resourceSdk.NewRoleResource(

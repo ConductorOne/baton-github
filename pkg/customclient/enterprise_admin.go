@@ -1,4 +1,4 @@
-package connector
+package customclient
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strings"
 
-	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -16,7 +15,6 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -29,7 +27,10 @@ const (
 	enterpriseFirstVariable = "first"
 	enterpriseAfterVariable = "after"
 
-	enterpriseGraphQLPath    = "/api/graphql"
+	enterpriseGraphQLPath = "/api/graphql"
+	// GitHubDotCom is the default instance; anything else is self-hosted or a
+	// data-residency host.
+	GitHubDotCom             = "https://github.com"
 	githubDotComGraphQL      = "https://api.github.com/graphql"
 	enterpriseRateLimitField = "rateLimit"
 
@@ -45,20 +46,7 @@ const (
 	enterpriseMaxPages = 1000
 )
 
-// enterpriseOwnerState is a user's Owner role and pending Owner invitation, if any.
-type enterpriseOwnerState struct {
-	enterpriseID        string
-	isOwner             bool
-	pendingInvitationID string
-}
-
-// holdsRole reports whether C1 should see a grant. C1 has no pending state, so an
-// unaccepted invitation counts.
-func (s enterpriseOwnerState) holdsRole() bool {
-	return s.isOwner || s.pendingInvitationID != ""
-}
-
-// githubEnterpriseAdministratorClient reads and writes the Owner role of one
+// EnterpriseAdminClient reads and writes the Owner role of one
 // enterprise. It needs both installation tokens:
 //
 //   - Enterprise.ownerInfo is null for installation tokens, so owners are read
@@ -67,7 +55,7 @@ func (s enterpriseOwnerState) holdsRole() bool {
 //
 // Enterprise.members(role: OWNER) is not used: it returns owners of organizations
 // in the enterprise, not owners of the enterprise account.
-type githubEnterpriseAdministratorClient struct {
+type EnterpriseAdminClient struct {
 	enterpriseClient *githubv4.Client
 	orgClient        *githubv4.Client
 	org              string
@@ -78,15 +66,15 @@ type githubEnterpriseAdministratorClient struct {
 	batchClient *uhttp.BaseHttpClient
 }
 
-// newEnterpriseAdministratorClient returns the client for one enterprise, with a
+// NewEnterpriseAdminClient returns the client for one enterprise, with a
 // GraphQL client per installation token.
-func newEnterpriseAdministratorClient(
+func NewEnterpriseAdminClient(
 	instanceURL string,
 	enterpriseHTTPClient *http.Client,
 	orgHTTPClient *http.Client,
 	org string,
-) (*githubEnterpriseAdministratorClient, error) {
-	endpoint, err := enterpriseGraphQLEndpoint(instanceURL)
+) (*EnterpriseAdminClient, error) {
+	endpoint, err := EnterpriseGraphQLEndpoint(instanceURL)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +85,7 @@ func newEnterpriseAdministratorClient(
 		return nil, fmt.Errorf("baton-github: error building the enterprise GraphQL batch client")
 	}
 
-	return &githubEnterpriseAdministratorClient{
+	return &EnterpriseAdminClient{
 		enterpriseClient: newEnterpriseGraphQLClient(endpoint.String(), enterpriseHTTPClient),
 		orgClient:        newEnterpriseGraphQLClient(endpoint.String(), orgHTTPClient),
 		org:              org,
@@ -122,11 +110,11 @@ func newEnterpriseGraphQLClient(endpoint string, httpClient *http.Client) *githu
 	})
 }
 
-// enterpriseGraphQLEndpoint returns the instance's GraphQL URL: api.github.com
+// EnterpriseGraphQLEndpoint returns the instance's GraphQL URL: api.github.com
 // for GitHub.com, /api/graphql on a self-hosted host.
-func enterpriseGraphQLEndpoint(instanceURL string) (*url.URL, error) {
+func EnterpriseGraphQLEndpoint(instanceURL string) (*url.URL, error) {
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
-	if instanceURL == "" || instanceURL == githubDotCom {
+	if instanceURL == "" || instanceURL == GitHubDotCom {
 		return url.Parse(githubDotComGraphQL)
 	}
 
@@ -139,63 +127,11 @@ func enterpriseGraphQLEndpoint(instanceURL string) (*url.URL, error) {
 	return gqlURL, nil
 }
 
-type graphQLRateLimit struct {
-	Limit     githubv4.Int
-	Remaining githubv4.Int
-	ResetAt   githubv4.DateTime
-}
-
-// annotations returns the remaining GraphQL budget, or nil when the response had
-// no rateLimit block.
-func (r graphQLRateLimit) annotations() annotations.Annotations {
-	if r.Limit == 0 && r.ResetAt.IsZero() {
-		return nil
-	}
-
-	rateLimit := &v2.RateLimitDescription{
-		Status:    v2.RateLimitDescription_STATUS_OK,
-		Limit:     int64(r.Limit),
-		Remaining: int64(r.Remaining),
-	}
-	if r.Remaining <= 0 {
-		rateLimit.Status = v2.RateLimitDescription_STATUS_OVERLIMIT
-	}
-	if !r.ResetAt.IsZero() {
-		rateLimit.ResetAt = timestamppb.New(r.ResetAt.Time)
-	}
-
-	return annotations.New(rateLimit)
-}
-
-// enterpriseOwnersQuery reads one page of the enterprise account's owners
-// through the organization the app is installed on.
-type enterpriseOwnersQuery struct {
-	Organization struct {
-		EnterpriseOwners struct {
-			Nodes []struct {
-				DatabaseID githubv4.Int
-				Login      githubv4.String
-			}
-			PageInfo struct {
-				HasNextPage githubv4.Boolean
-				EndCursor   githubv4.String
-			}
-		} `graphql:"enterpriseOwners(first: $first, after: $after)"`
-	} `graphql:"organization(login: $org)"`
-	RateLimit graphQLRateLimit
-}
-
-// enterpriseUser is a user account as the enterprise reports it.
-type enterpriseUser struct {
-	databaseID int64
-	login      string
-}
-
-// owners returns one page of the enterprise account's owners.
-func (c *githubEnterpriseAdministratorClient) owners(
+// Owners returns one page of the enterprise account's Owners.
+func (c *EnterpriseAdminClient) Owners(
 	ctx context.Context,
 	after *githubv4.String,
-) ([]enterpriseUser, string, annotations.Annotations, error) {
+) ([]EnterpriseUser, string, annotations.Annotations, error) {
 	var query enterpriseOwnersQuery
 	err := c.orgClient.Query(ctx, &query, map[string]any{
 		enterpriseOrgVariable:   githubv4.String(c.org),
@@ -206,11 +142,11 @@ func (c *githubEnterpriseAdministratorClient) owners(
 		return nil, "", nil, fmt.Errorf("baton-github: error listing enterprise owners of org %s: %w", c.org, err)
 	}
 
-	owners := make([]enterpriseUser, 0, len(query.Organization.EnterpriseOwners.Nodes))
+	owners := make([]EnterpriseUser, 0, len(query.Organization.EnterpriseOwners.Nodes))
 	for _, node := range query.Organization.EnterpriseOwners.Nodes {
-		owners = append(owners, enterpriseUser{
-			databaseID: int64(node.DatabaseID),
-			login:      string(node.Login),
+		owners = append(owners, EnterpriseUser{
+			DatabaseID: int64(node.DatabaseID),
+			Login:      string(node.Login),
 		})
 	}
 
@@ -222,9 +158,9 @@ func (c *githubEnterpriseAdministratorClient) owners(
 	return owners, nextCursor, query.RateLimit.annotations(), nil
 }
 
-// resolveEnterpriseNodeID stores the node ID enterprise mutations take. It also
+// ResolveEnterpriseNodeID stores the node ID enterprise mutations take. It also
 // checks that the enterprise is visible to this installation.
-func (c *githubEnterpriseAdministratorClient) resolveEnterpriseNodeID(ctx context.Context, enterprise string) error {
+func (c *EnterpriseAdminClient) ResolveEnterpriseNodeID(ctx context.Context, enterprise string) error {
 	var query struct {
 		Enterprise struct {
 			ID githubv4.String
@@ -244,26 +180,10 @@ func (c *githubEnterpriseAdministratorClient) resolveEnterpriseNodeID(ctx contex
 	return nil
 }
 
-// enterpriseOrganizationsQuery reads one page of an enterprise's
-// organizations, narrowed by a search term.
-type enterpriseOrganizationsQuery struct {
-	Enterprise struct {
-		Organizations struct {
-			Nodes []struct {
-				Login githubv4.String
-			}
-			PageInfo struct {
-				HasNextPage githubv4.Boolean
-				EndCursor   githubv4.String
-			}
-		} `graphql:"organizations(first: $first, after: $after, query: $query)"`
-	} `graphql:"enterprise(slug: $slug)"`
-}
-
-// verifyOrganization checks that the organization owners are read through
+// VerifyOrganization checks that the organization owners are read through
 // belongs to this enterprise. organizations(query:) is a substring search, so
 // every page is read before concluding it is not there.
-func (c *githubEnterpriseAdministratorClient) verifyOrganization(ctx context.Context, enterprise string) error {
+func (c *EnterpriseAdminClient) VerifyOrganization(ctx context.Context, enterprise string) error {
 	var after *githubv4.String
 	walked := false
 	for page := 0; page < enterpriseMaxPages; page++ {
@@ -297,36 +217,16 @@ func (c *githubEnterpriseAdministratorClient) verifyOrganization(ctx context.Con
 			c.org, enterprise, enterpriseMaxPages)
 	}
 
-	return enterpriseSetupError{status.Errorf(codes.FailedPrecondition,
+	// FailedPrecondition is what the caller keys on to tell this apart from the
+	// Internal above, which is not a configuration problem.
+	return status.Errorf(codes.FailedPrecondition,
 		"baton-github: organization %s does not belong to enterprise %s, so its owners cannot be synced",
-		c.org, enterprise)}
+		c.org, enterprise)
 }
 
-// enterpriseMemberLookupQuery searches the enterprise's members by login. The
-// search also matches display names, so the caller pages until an exact login.
-type enterpriseMemberLookupQuery struct {
-	Enterprise struct {
-		Members struct {
-			Nodes []struct {
-				EnterpriseUserAccount struct {
-					Login githubv4.String
-				} `graphql:"... on EnterpriseUserAccount"`
-				User struct {
-					Login githubv4.String
-				} `graphql:"... on User"`
-			}
-			PageInfo struct {
-				HasNextPage githubv4.Boolean
-				EndCursor   githubv4.String
-			}
-		} `graphql:"members(first: $first, after: $after, query: $query)"`
-	} `graphql:"enterprise(slug: $slug)"`
-	RateLimit graphQLRateLimit
-}
-
-// isMember reports whether login belongs to the enterprise. Grants() can only see
+// IsMember reports whether login belongs to the enterprise. Grants() can only see
 // invitations addressed to members.
-func (c *githubEnterpriseAdministratorClient) isMember(
+func (c *EnterpriseAdminClient) IsMember(
 	ctx context.Context,
 	enterprise string,
 	login string,
@@ -346,7 +246,9 @@ func (c *githubEnterpriseAdministratorClient) isMember(
 		if err != nil {
 			return false, annos, fmt.Errorf("baton-github: error looking up member %s of enterprise %s: %w", login, enterprise, err)
 		}
-		annos = freshestRateLimit(annos, query.RateLimit.annotations())
+		if pageAnnos := query.RateLimit.annotations(); len(pageAnnos) > 0 {
+			annos = pageAnnos
+		}
 
 		for _, node := range query.Enterprise.Members.Nodes {
 			found := string(node.EnterpriseUserAccount.Login)
@@ -369,40 +271,13 @@ func (c *githubEnterpriseAdministratorClient) isMember(
 		login, enterprise, enterpriseMaxPages)
 }
 
-// enterpriseMembersQuery reads one page of the enterprise's members. members is
-// a union of EnterpriseUserAccount (EMU) and User, so both shapes are selected.
-type enterpriseMembersQuery struct {
-	Enterprise struct {
-		Members struct {
-			Nodes []struct {
-				EnterpriseUserAccount struct {
-					Login githubv4.String
-					User  struct {
-						DatabaseID githubv4.Int
-						Login      githubv4.String
-					}
-				} `graphql:"... on EnterpriseUserAccount"`
-				User struct {
-					DatabaseID githubv4.Int
-					Login      githubv4.String
-				} `graphql:"... on User"`
-			}
-			PageInfo struct {
-				HasNextPage githubv4.Boolean
-				EndCursor   githubv4.String
-			}
-		} `graphql:"members(first: $first, after: $after)"`
-	} `graphql:"enterprise(slug: $slug)"`
-	RateLimit graphQLRateLimit
-}
-
-// members returns one page of the enterprise's members and the next cursor,
+// Members returns one page of the enterprise's Members and the next cursor,
 // skipping nodes without a database ID.
-func (c *githubEnterpriseAdministratorClient) members(
+func (c *EnterpriseAdminClient) Members(
 	ctx context.Context,
 	enterprise string,
 	after *githubv4.String,
-) ([]enterpriseUser, string, annotations.Annotations, error) {
+) ([]EnterpriseUser, string, annotations.Annotations, error) {
 	var query enterpriseMembersQuery
 	err := c.enterpriseClient.Query(ctx, &query, map[string]any{
 		enterpriseSlugVariable:  githubv4.String(enterprise),
@@ -413,23 +288,23 @@ func (c *githubEnterpriseAdministratorClient) members(
 		return nil, "", nil, fmt.Errorf("baton-github: error listing members of enterprise %s: %w", enterprise, err)
 	}
 
-	members := make([]enterpriseUser, 0, len(query.Enterprise.Members.Nodes))
+	members := make([]EnterpriseUser, 0, len(query.Enterprise.Members.Nodes))
 	for _, node := range query.Enterprise.Members.Nodes {
-		member := enterpriseUser{
-			databaseID: int64(node.EnterpriseUserAccount.User.DatabaseID),
-			login:      string(node.EnterpriseUserAccount.Login),
+		member := EnterpriseUser{
+			DatabaseID: int64(node.EnterpriseUserAccount.User.DatabaseID),
+			Login:      string(node.EnterpriseUserAccount.Login),
 		}
-		if member.databaseID == 0 {
-			member.databaseID = int64(node.User.DatabaseID)
+		if member.DatabaseID == 0 {
+			member.DatabaseID = int64(node.User.DatabaseID)
 		}
-		if member.login == "" {
-			member.login = string(node.User.Login)
+		if member.Login == "" {
+			member.Login = string(node.User.Login)
 		}
-		if member.databaseID == 0 || member.login == "" {
+		if member.DatabaseID == 0 || member.Login == "" {
 			ctxzap.Extract(ctx).Debug("baton-github: skipping an enterprise member with no database ID or login",
 				zap.String("enterprise", enterprise),
-				zap.Int64("database_id", member.databaseID),
-				zap.String("login", member.login),
+				zap.Int64("database_id", member.DatabaseID),
+				zap.String("login", member.Login),
 			)
 			continue
 		}
@@ -444,13 +319,13 @@ func (c *githubEnterpriseAdministratorClient) members(
 	return members, nextCursor, query.RateLimit.annotations(), nil
 }
 
-// pendingOwnerInvitations returns the pending Owner invitation of each login that
+// PendingOwnerInvitations returns the pending Owner invitation of each login that
 // has one, in one aliased request. Invitations can't be listed with an
 // installation token, so they're looked up per login.
 //
 // Logins are passed as variables; only generated aliases reach the query text.
 // NOT_FOUND entries (no invitation) are dropped before classifying the rest.
-func (c *githubEnterpriseAdministratorClient) pendingOwnerInvitations(
+func (c *EnterpriseAdminClient) PendingOwnerInvitations(
 	ctx context.Context,
 	enterprise string,
 	logins []string,
@@ -534,7 +409,7 @@ func (c *githubEnterpriseAdministratorClient) pendingOwnerInvitations(
 
 // doGraphQL runs a query built at runtime, which the typed client can't express,
 // and returns the raw data fields and the errors array.
-func (c *githubEnterpriseAdministratorClient) doGraphQL(
+func (c *EnterpriseAdminClient) doGraphQL(
 	ctx context.Context,
 	query string,
 	variables map[string]any,
@@ -563,7 +438,7 @@ func (c *githubEnterpriseAdministratorClient) doGraphQL(
 
 // pendingOwnerInvitation returns the pending Owner invitation ID for a login, or
 // "" if none. GitHub reports no invitation as NOT_FOUND.
-func (c *githubEnterpriseAdministratorClient) pendingOwnerInvitation(
+func (c *EnterpriseAdminClient) pendingOwnerInvitation(
 	ctx context.Context,
 	enterprise string,
 	login string,
@@ -593,18 +468,18 @@ func (c *githubEnterpriseAdministratorClient) pendingOwnerInvitation(
 //
 // Owners are paged and matched by login rather than using the owners query
 // argument, which is a search that can lag right after a mutation.
-func (c *githubEnterpriseAdministratorClient) OwnerState(
+func (c *EnterpriseAdminClient) OwnerState(
 	ctx context.Context,
 	enterprise string,
 	login string,
-) (enterpriseOwnerState, annotations.Annotations, error) {
-	state := enterpriseOwnerState{enterpriseID: c.enterpriseNodeID}
+) (EnterpriseOwnerState, annotations.Annotations, error) {
+	state := EnterpriseOwnerState{EnterpriseID: c.enterpriseNodeID}
 
 	var annos annotations.Annotations
 	var after *githubv4.String
 	walked := false
 	for page := 0; page < enterpriseMaxPages; page++ {
-		owners, nextCursor, pageAnnos, err := c.owners(ctx, after)
+		owners, nextCursor, pageAnnos, err := c.Owners(ctx, after)
 		if err != nil {
 			return state, annos, err
 		}
@@ -612,12 +487,12 @@ func (c *githubEnterpriseAdministratorClient) OwnerState(
 			annos = pageAnnos
 		}
 		for _, owner := range owners {
-			if strings.EqualFold(owner.login, login) {
-				state.isOwner = true
+			if strings.EqualFold(owner.Login, login) {
+				state.IsOwner = true
 				break
 			}
 		}
-		if state.isOwner || nextCursor == "" {
+		if state.IsOwner || nextCursor == "" {
 			walked = true
 			break
 		}
@@ -634,14 +509,14 @@ func (c *githubEnterpriseAdministratorClient) OwnerState(
 	if err != nil {
 		return state, annos, err
 	}
-	state.pendingInvitationID = invitationID
+	state.PendingInvitationID = invitationID
 
 	return state, annos, nil
 }
 
 // UpdateRole changes the role of someone who already administers the
 // enterprise. It cannot promote a plain member.
-func (c *githubEnterpriseAdministratorClient) UpdateRole(
+func (c *EnterpriseAdminClient) UpdateRole(
 	ctx context.Context,
 	enterpriseID string,
 	login string,
@@ -666,7 +541,7 @@ func (c *githubEnterpriseAdministratorClient) UpdateRole(
 }
 
 // InviteOwner sends the Owner invitation a member has to accept.
-func (c *githubEnterpriseAdministratorClient) InviteOwner(ctx context.Context, enterpriseID string, login string) error {
+func (c *EnterpriseAdminClient) InviteOwner(ctx context.Context, enterpriseID string, login string) error {
 	var mutation struct {
 		InviteEnterpriseAdmin struct {
 			ClientMutationID githubv4.String
@@ -685,7 +560,7 @@ func (c *githubEnterpriseAdministratorClient) InviteOwner(ctx context.Context, e
 	return nil
 }
 
-func (c *githubEnterpriseAdministratorClient) CancelInvitation(ctx context.Context, invitationID string) error {
+func (c *EnterpriseAdminClient) CancelInvitation(ctx context.Context, invitationID string) error {
 	var mutation struct {
 		CancelEnterpriseAdminInvitation struct {
 			ClientMutationID githubv4.String

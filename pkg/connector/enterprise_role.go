@@ -39,7 +39,7 @@ const (
 )
 
 // enterpriseClientProvider builds the per-enterprise administration clients.
-type enterpriseClientProvider func(ctx context.Context) (map[string]*githubEnterpriseAdministratorClient, error)
+type enterpriseClientProvider func(ctx context.Context) (map[string]*customclient.EnterpriseAdminClient, error)
 
 type enterpriseRoleResourceType struct {
 	resourceType   *v2.ResourceType
@@ -52,7 +52,7 @@ type enterpriseRoleResourceType struct {
 	// newEnterpriseClients is nil under PAT auth.
 	newEnterpriseClients enterpriseClientProvider
 	// enterpriseClients is keyed by enterprise slug and memoized on success only.
-	enterpriseClients map[string]*githubEnterpriseAdministratorClient
+	enterpriseClients map[string]*customclient.EnterpriseAdminClient
 }
 
 func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -64,7 +64,7 @@ func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.Resourc
 // operator fixes the installation.
 func (o *enterpriseRoleResourceType) clients(
 	ctx context.Context,
-) (map[string]*githubEnterpriseAdministratorClient, error) {
+) (map[string]*customclient.EnterpriseAdminClient, error) {
 	if o.newEnterpriseClients == nil {
 		return nil, nil
 	}
@@ -308,7 +308,7 @@ func EnterpriseRoleBuilder(
 // appList emits only the built-in Owner role.
 func appList(
 	enterprises []string,
-	enterpriseClients map[string]*githubEnterpriseAdministratorClient,
+	enterpriseClients map[string]*customclient.EnterpriseAdminClient,
 ) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
 	var ret []*v2.Resource
 	for _, enterprise := range enterprises {
@@ -337,7 +337,7 @@ func appList(
 // one page token, because invitations are resolved from the enterprise members.
 func (o *enterpriseRoleResourceType) appGrants(
 	ctx context.Context,
-	enterpriseClients map[string]*githubEnterpriseAdministratorClient,
+	enterpriseClients map[string]*customclient.EnterpriseAdminClient,
 	resource *v2.Resource,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
@@ -410,6 +410,18 @@ func isEnterpriseSetupError(err error) bool {
 	return errors.As(err, &setupErr)
 }
 
+// asEnterpriseSetupError marks a FailedPrecondition from the administration
+// client as a configuration problem. The client also answers Internal when it
+// gives up walking pages, which is not one -- that says nothing about how the
+// deployment is configured, so it keeps failing the sync.
+func asEnterpriseSetupError(err error) error {
+	if status.Code(err) != codes.FailedPrecondition {
+		return err
+	}
+
+	return enterpriseSetupError{err}
+}
+
 func warnEnterpriseRolesSkipped(ctx context.Context, err error) {
 	ctxzap.Extract(ctx).Warn("baton-github: skipping enterprise roles, the GitHub App is not set up to read them",
 		zap.Error(err))
@@ -432,11 +444,11 @@ func failClosedOnUnreadableEnterprise(err error, enterprise string) error {
 // ownerGrants emits one page of the users who hold the role today.
 func (o *enterpriseRoleResourceType) ownerGrants(
 	ctx context.Context,
-	client *githubEnterpriseAdministratorClient,
+	client *customclient.EnterpriseAdminClient,
 	resource *v2.Resource,
 	after *githubv4.String,
 ) ([]*v2.Grant, string, annotations.Annotations, error) {
-	owners, nextCursor, annos, err := client.owners(ctx, after)
+	owners, nextCursor, annos, err := client.Owners(ctx, after)
 	if err != nil {
 		return nil, "", annos, err
 	}
@@ -458,12 +470,12 @@ func (o *enterpriseRoleResourceType) ownerGrants(
 // installation token. Invitations to non-members are not visible.
 func (o *enterpriseRoleResourceType) pendingInvitationGrants(
 	ctx context.Context,
-	client *githubEnterpriseAdministratorClient,
+	client *customclient.EnterpriseAdminClient,
 	resource *v2.Resource,
 	enterprise string,
 	after *githubv4.String,
 ) ([]*v2.Grant, string, annotations.Annotations, error) {
-	members, nextCursor, annos, err := client.members(ctx, enterprise, after)
+	members, nextCursor, annos, err := client.Members(ctx, enterprise, after)
 	if err != nil {
 		return nil, "", annos, err
 	}
@@ -473,10 +485,10 @@ func (o *enterpriseRoleResourceType) pendingInvitationGrants(
 
 	logins := make([]string, 0, len(members))
 	for _, member := range members {
-		logins = append(logins, member.login)
+		logins = append(logins, member.Login)
 	}
 
-	invitations, invitationAnnos, err := client.pendingOwnerInvitations(ctx, enterprise, logins)
+	invitations, invitationAnnos, err := client.PendingOwnerInvitations(ctx, enterprise, logins)
 	annos = freshestRateLimit(annos, invitationAnnos)
 	if err != nil {
 		return nil, "", annos, err
@@ -484,7 +496,7 @@ func (o *enterpriseRoleResourceType) pendingInvitationGrants(
 
 	ret := make([]*v2.Grant, 0, len(invitations))
 	for _, member := range members {
-		if _, invited := invitations[member.login]; !invited {
+		if _, invited := invitations[member.Login]; !invited {
 			continue
 		}
 		principalId, err := enterpriseOwnerPrincipalID(member)
@@ -522,13 +534,13 @@ func (o *enterpriseRoleProvisioner) Grant(
 	if err != nil {
 		return nil, annos, err
 	}
-	if state.holdsRole() {
+	if state.HoldsRole() {
 		annos.Append(&v2.GrantAlreadyExists{})
 		return result, annos, nil
 	}
 
 	// Grants() can only see invitations to enterprise members.
-	isMember, memberAnnos, err := client.isMember(ctx, enterprise, login)
+	isMember, memberAnnos, err := client.IsMember(ctx, enterprise, login)
 	annos = freshestRateLimit(annos, memberAnnos)
 	if err != nil {
 		return nil, annos, err
@@ -540,7 +552,7 @@ func (o *enterpriseRoleProvisioner) Grant(
 			login, enterprise)
 	}
 
-	if inviteErr := client.InviteOwner(ctx, state.enterpriseID, login); inviteErr != nil {
+	if inviteErr := client.InviteOwner(ctx, state.EnterpriseID, login); inviteErr != nil {
 		if status.Code(inviteErr) != codes.FailedPrecondition {
 			return nil, annos, inviteErr
 		}
@@ -561,7 +573,7 @@ func (o *enterpriseRoleProvisioner) Grant(
 	if err != nil {
 		return nil, annos, err
 	}
-	if !state.holdsRole() {
+	if !state.HoldsRole() {
 		return nil, annos, status.Errorf(codes.Unavailable,
 			"baton-github: enterprise owner grant for %s is not visible in GitHub", login)
 	}
@@ -591,20 +603,20 @@ func (o *enterpriseRoleProvisioner) Revoke(
 	if err != nil {
 		return annos, err
 	}
-	if !state.holdsRole() {
+	if !state.HoldsRole() {
 		annos.Append(&v2.GrantAlreadyRevoked{})
 		return annos, nil
 	}
 
-	if state.isOwner {
+	if state.IsOwner {
 		if err := client.UpdateRole(
-			ctx, state.enterpriseID, login, enterpriseAdministratorRoleUnaffiliated,
+			ctx, state.EnterpriseID, login, enterpriseAdministratorRoleUnaffiliated,
 		); err != nil && status.Code(err) != codes.NotFound {
 			return annos, err
 		}
 	}
-	if state.pendingInvitationID != "" {
-		if err := client.CancelInvitation(ctx, state.pendingInvitationID); err != nil && status.Code(err) != codes.NotFound {
+	if state.PendingInvitationID != "" {
+		if err := client.CancelInvitation(ctx, state.PendingInvitationID); err != nil && status.Code(err) != codes.NotFound {
 			return annos, err
 		}
 	}
@@ -614,7 +626,7 @@ func (o *enterpriseRoleProvisioner) Revoke(
 	if err != nil {
 		return annos, err
 	}
-	if state.holdsRole() {
+	if state.HoldsRole() {
 		return annos, status.Errorf(codes.Unavailable,
 			"baton-github: enterprise owner revoke for %s is not visible in GitHub", login)
 	}
@@ -626,7 +638,7 @@ func (o *enterpriseRoleProvisioner) provisioningTarget(
 	ctx context.Context,
 	principal *v2.Resource,
 	ent *v2.Entitlement,
-) (string, *githubEnterpriseAdministratorClient, error) {
+) (string, *customclient.EnterpriseAdminClient, error) {
 	if principal.GetId().GetResourceType() != resourceTypeUser.Id {
 		return "", nil, status.Error(codes.InvalidArgument,
 			"baton-github: enterprise role can only be granted to a user")
@@ -664,13 +676,13 @@ func (o *enterpriseRoleResourceType) userLogin(ctx context.Context, userID strin
 	return user.GetLogin(), nil
 }
 
-func enterpriseOwnerPrincipalID(owner enterpriseUser) (*v2.ResourceId, error) {
-	if owner.databaseID <= 0 {
-		return nil, fmt.Errorf("baton-github: enterprise owner %q has no database ID", owner.login)
+func enterpriseOwnerPrincipalID(owner customclient.EnterpriseUser) (*v2.ResourceId, error) {
+	if owner.DatabaseID <= 0 {
+		return nil, fmt.Errorf("baton-github: enterprise owner %q has no database ID", owner.Login)
 	}
-	principalId, err := resourceSdk.NewResourceID(resourceTypeUser, owner.databaseID)
+	principalId, err := resourceSdk.NewResourceID(resourceTypeUser, owner.DatabaseID)
 	if err != nil {
-		return nil, fmt.Errorf("baton-github: error creating resource ID for user %s: %w", owner.login, err)
+		return nil, fmt.Errorf("baton-github: error creating resource ID for user %s: %w", owner.Login, err)
 	}
 	return principalId, nil
 }

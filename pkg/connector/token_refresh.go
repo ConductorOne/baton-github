@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/conductorone/baton-github/pkg/customclient"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -154,10 +155,10 @@ func newGitHubAppClients(instanceURL string, httpClient *http.Client) (*github.C
 
 	gqlHTTPClient := &http.Client{
 		Timeout:   httpClient.Timeout,
-		Transport: &statusClassifyingTransport{base: httpClient.Transport},
+		Transport: customclient.NewStatusClassifyingTransport(httpClient.Transport),
 	}
 
-	endpoint, err := enterpriseGraphQLEndpoint(instanceURL)
+	endpoint, err := customclient.EnterpriseGraphQLEndpoint(instanceURL)
 	if err != nil {
 		return nil, nil, err
 	}

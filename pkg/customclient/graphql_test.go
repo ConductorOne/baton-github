@@ -1,4 +1,4 @@
-package connector
+package customclient
 
 import (
 	"context"

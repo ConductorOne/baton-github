@@ -1,4 +1,4 @@
-package connector
+package customclient
 
 import (
 	"bytes"
@@ -24,10 +24,16 @@ import (
 // the sync on a single transient blip — even when the underlying status
 // (429, 5xx, 401, 403, 404, ...) carries enough information for the SDK
 // retry layer to do the right thing. The REST path doesn't need this because
-// go-github exposes structured response/error types that wrapGitHubError
-// already classifies at the call site.
+// go-github exposes structured response/error types that the connector
+// package's wrapGitHubError already classifies at the call site.
 type statusClassifyingTransport struct {
 	base http.RoundTripper
+}
+
+// NewStatusClassifyingTransport wraps base so non-2xx GraphQL responses carry a
+// gRPC code instead of the library's opaque error.
+func NewStatusClassifyingTransport(base http.RoundTripper) http.RoundTripper {
+	return &statusClassifyingTransport{base: base}
 }
 
 func (t *statusClassifyingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -94,7 +100,8 @@ func graphQLErrorType(graphQLErr graphQLError) string {
 
 // enterpriseGraphQLTransport turns errors GitHub returns inside an HTTP 200
 // GraphQL body into gRPC codes. It is not used by the shared GraphQL client,
-// because userResourceType.checkOrgSAML matches the text of that client's errors.
+// because the connector package's userResourceType.checkOrgSAML matches the
+// text of that client's errors.
 type enterpriseGraphQLTransport struct {
 	base http.RoundTripper
 }

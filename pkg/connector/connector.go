@@ -30,7 +30,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const githubDotCom = "https://github.com"
+const githubDotCom = customclient.GitHubDotCom
 
 // JWT token expires in 10 minutes, so we set it to 9 minutes to leave some buffer.
 const jwtExpiryTime = 9 * time.Minute
@@ -466,7 +466,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	// installation. The memoized clients refresh their token with connectorCtx,
 	// not the ctx of the RPC that first built them, which is cancelled when it returns.
 	connectorCtx := ctx
-	newEnterpriseRoleClientsFn := func(ctx context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+	newEnterpriseRoleClientsFn := func(ctx context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 		return newEnterpriseRoleClients(
 			ctx, connectorCtx, ghc.InstanceUrl, appClient, jwtts, enterprises, appHTTPClient, ghc.Org)
 	}
@@ -507,7 +507,7 @@ func newEnterpriseRoleClients(
 	enterprises []string,
 	orgHTTPClient *http.Client,
 	org string,
-) (map[string]*githubEnterpriseAdministratorClient, error) {
+) (map[string]*customclient.EnterpriseAdminClient, error) {
 	enterprises = distinctEnterprises(enterprises)
 	if len(enterprises) == 0 {
 		return nil, nil
@@ -543,7 +543,7 @@ func newEnterpriseRoleClients(
 		return nil, fmt.Errorf("baton-github: error building the enterprise installation client")
 	}
 
-	clients := make(map[string]*githubEnterpriseAdministratorClient, len(enterprises))
+	clients := make(map[string]*customclient.EnterpriseAdminClient, len(enterprises))
 	for _, enterprise := range enterprises {
 		installation, _, err := installationClient.GetEnterpriseInstallation(ctx, enterprise)
 		if err != nil {
@@ -579,14 +579,14 @@ func newEnterpriseRoleClients(
 			return nil, err
 		}
 
-		client, err := newEnterpriseAdministratorClient(instanceURL, httpClient, orgHTTPClient, org)
+		client, err := customclient.NewEnterpriseAdminClient(instanceURL, httpClient, orgHTTPClient, org)
 		if err != nil {
 			return nil, err
 		}
-		if err := client.verifyOrganization(ctx, enterprise); err != nil {
-			return nil, err
+		if err := client.VerifyOrganization(ctx, enterprise); err != nil {
+			return nil, asEnterpriseSetupError(err)
 		}
-		if err := client.resolveEnterpriseNodeID(ctx, enterprise); err != nil {
+		if err := client.ResolveEnterpriseNodeID(ctx, enterprise); err != nil {
 			return nil, err
 		}
 		clients[enterprise] = client
@@ -630,7 +630,7 @@ func distinctEnterprises(enterprises []string) []string {
 }
 
 func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.TokenSource) (*githubv4.Client, error) {
-	endpoint, err := enterpriseGraphQLEndpoint(instanceURL)
+	endpoint, err := customclient.EnterpriseGraphQLEndpoint(instanceURL)
 	if err != nil {
 		return nil, err
 	}
@@ -639,7 +639,7 @@ func newGitHubGraphqlClient(ctx context.Context, instanceURL string, ts oauth2.T
 	if err != nil {
 		return nil, err
 	}
-	httpClient.Transport = &statusClassifyingTransport{base: httpClient.Transport}
+	httpClient.Transport = customclient.NewStatusClassifyingTransport(httpClient.Transport)
 
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	tc := oauth2.NewClient(ctx, ts)

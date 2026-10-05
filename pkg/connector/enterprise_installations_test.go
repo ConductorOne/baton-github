@@ -165,7 +165,7 @@ func TestResourceSyncersRegisterTheEnterpriseRoleWithProvisioning(t *testing.T) 
 		provider enterpriseClientProvider
 	}{
 		{"token", nil},
-		{"app", func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+		{"app", func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 			return nil, nil
 		}},
 	} {
@@ -234,7 +234,7 @@ func TestConnectorFoldsRepeatedEnterprisesBeforeBuildingSyncers(t *testing.T) {
 
 	resources, _, err := appList(
 		enterprises,
-		map[string]*githubEnterpriseAdministratorClient{"example-enterprise": nil},
+		map[string]*customclient.EnterpriseAdminClient{"example-enterprise": nil},
 	)
 	require.NoError(t, err)
 	require.Len(t, resources, 1)
