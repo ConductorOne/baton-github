@@ -264,3 +264,52 @@ func TestNewEnterpriseRoleClientsRejectsSeveralEnterprises(t *testing.T) {
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.Contains(t, err.Error(), "one enterprise at a time")
 }
+
+// GitHub Enterprise Server has no enterprise administrator API, so naming an
+// enterprise there can only fail. Failing on the host rather than on the 404
+// that follows matters because that 404 reads as "install the app on the
+// enterprise account", which is not something a Server operator can do.
+func TestEnterpriseCloudHostsAreTheOnlyOnesServingTheOwnerRole(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		instanceURL string
+		cloud       bool
+	}{
+		{"", true},
+		{"https://github.com", true},
+		{"https://github.com/", true},
+		{"https://acme.ghe.com", true},
+		{"https://ghe.com", true},
+		{"https://github.acme.com", false},
+		{"https://ghe.acme.com", false},
+		{"https://acme.ghe.com.evil.test", false},
+	} {
+		t.Run(tc.instanceURL, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.cloud, isEnterpriseCloud(tc.instanceURL))
+		})
+	}
+}
+
+// The check runs before any request, so a Server instance is told the
+// capability does not exist there instead of being sent to install something.
+func TestNewEnterpriseRoleClientsRejectsANonCloudInstance(t *testing.T) {
+	t.Parallel()
+
+	// Two enterprises as well, so the instance is named before the count:
+	// a Server operator asked to trim the list would still have nothing to
+	// trim it to.
+	_, err := newEnterpriseRoleClients(
+		context.Background(), context.Background(),
+		"https://github.acme.com",
+		github.NewClient(nil), nil,
+		[]string{testEnterprise, "another-enterprise"}, nil, "example-org",
+	)
+
+	require.Error(t, err)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Contains(t, err.Error(), "GitHub Enterprise Cloud capability")
+	require.NotContains(t, err.Error(), "install it on the enterprise account")
+	require.NotContains(t, err.Error(), "one enterprise at a time")
+}

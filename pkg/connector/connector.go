@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -540,6 +541,18 @@ func newEnterpriseRoleClients(
 	if len(enterprises) == 0 {
 		return nil, nil
 	}
+	// GitHub Enterprise Server has no enterprise administrator API: the
+	// invitation mutations and the enterprise installation endpoint are both
+	// absent from its REST and GraphQL references. Checking the host first
+	// keeps the operator from being told to install the app on an enterprise
+	// account their instance does not have, which is what the 404 below would
+	// otherwise read as.
+	if !isEnterpriseCloud(instanceURL) {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"baton-github: the built-in Owner role is a GitHub Enterprise Cloud capability and %s does not serve it; "+
+				"remove --enterprises on this instance", instanceURL)
+	}
+
 	// The owners are read through the single configured organization, and an
 	// organization belongs to exactly one enterprise, so app auth cannot serve
 	// a list and picking one of them would be a guess. The PAT path does
@@ -610,6 +623,25 @@ func newEnterpriseRoleClients(
 	}
 
 	return clients, nil
+}
+
+// isEnterpriseCloud reports whether the instance serves the enterprise
+// administrator API. Enterprise Cloud is reached at github.com, or at a
+// data-residency host under ghe.com, which GitHub owns -- anything else is a
+// customer-hosted Enterprise Server instance.
+func isEnterpriseCloud(instanceURL string) bool {
+	trimmed := strings.TrimSuffix(instanceURL, "/")
+	if trimmed == "" || trimmed == githubDotCom {
+		return true
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+
+	return host == "github.com" || host == "ghe.com" || strings.HasSuffix(host, ".ghe.com")
 }
 
 // distinctEnterprises folds the slugs, which GitHub matches case-insensitively,
