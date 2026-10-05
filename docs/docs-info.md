@@ -236,7 +236,7 @@ Consequences worth knowing:
 - Grant returns the grant when it creates an invitation. `Grants()` emits pending invitations alongside accepted Owners, so C1 keeps a record of the request from the moment it is made
 - Revoke clears both states rather than treating them as alternatives: it demotes an active Owner to `UNAFFILIATED`, which keeps them as a member of the enterprise rather than evicting them, and cancels an unaccepted invitation. A `NOT_FOUND` on either is success, because it means the state being asked for is already in place
 - Reading owners uses the **organization** installation token and every mutation uses the **enterprise** installation token; the enterprise token is rejected on organization fields. Startup verifies that the configured organization belongs to the configured enterprise; when it does not, the sync completes with no enterprise roles and logs a warning
-- Only one enterprise can be served under App authentication, because the owners are read through the single configured organization and an organization belongs to exactly one enterprise. A configuration naming several is rejected while the clients are built, with an explanatory error rather than a later failure on a check the operator cannot satisfy. The PAT path does accept a list
+- Only one enterprise can be served under App authentication, because the owners are read through the single configured organization and an organization belongs to exactly one enterprise. No separate check enforces that: the clients are built one per configured slug and each verifies that the organization belongs to its enterprise, so naming several means at most one can pass and the error names the slug that does not. The PAT path does accept a list
 
 ### The invitation model is GitHub Enterprise Cloud only, which matters for baton-github-enterprise
 
@@ -258,7 +258,7 @@ An app deployment that already passes `--enterprises` used to report no enterpri
 
 ### A setup problem skips the role; anything else fails the sync
 
-When the enterprise administration client cannot be built because of how the deployment is set up (the app is not installed on the enterprise account, several enterprises are configured, or the organization does not belong to the configured one), the sync completes with no enterprise roles and logs a warning naming the fix. That is what these deployments did before the enterprise administrator API was used, and failing the sync now would break customers who do not care about enterprise roles. Grant and Revoke still return the error, since there is nothing to fall back to.
+When the enterprise administration client cannot be built because of how the deployment is set up (the app is not installed on the enterprise account, or the organization does not belong to the configured enterprise -- which is also what naming several enterprises reduces to), the sync completes with no enterprise roles and logs a warning naming the fix. That is what these deployments did before the enterprise administrator API was used, and failing the sync now would break customers who do not care about enterprise roles. Grant and Revoke still return the error, since there is nothing to fall back to.
 
 Any other build failure (a rate limit, a 5xx, a cancelled context) fails the whole sync. C1 deletes every resource of a type that a completed sync did not report, so finishing the sync while reading no owners for a transient reason would delete the Owner role and every grant on it.
 

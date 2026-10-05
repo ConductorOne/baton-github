@@ -220,15 +220,14 @@ func TestNewEnterpriseRoleClientsFoldsRepeatedEnterprises(t *testing.T) {
 	// guard, which is what proves the fold happened.
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.Contains(t, err.Error(), "not installed on enterprise")
-	require.NotContains(t, err.Error(), "one enterprise at a time")
 }
 
 func TestConnectorFoldsRepeatedEnterprisesBeforeBuildingSyncers(t *testing.T) {
 	t.Parallel()
 
-	// App authentication serves one enterprise, so the same slug named twice
-	// must not read as two and be rejected for a count the operator never
-	// chose. GitHub matches slugs case-insensitively, so the fold does too.
+	// The clients are keyed by the slug as configured, so the same enterprise
+	// named twice would build two entries and emit the Owner role twice.
+	// GitHub matches slugs case-insensitively, so the fold does too.
 	enterprises := distinctEnterprises([]string{"example-enterprise", "Example-Enterprise"})
 	require.Equal(t, []string{"example-enterprise"}, enterprises)
 
@@ -238,33 +237,6 @@ func TestConnectorFoldsRepeatedEnterprisesBeforeBuildingSyncers(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, resources, 1)
-}
-
-// The owners are read through one organization, which belongs to one
-// enterprise, so app auth cannot serve a list and picking one would be a
-// guess. This fails for the same reason as a missing installation: a sync that
-// completes without owners costs the operator every owner grant.
-func TestNewEnterpriseRoleClientsRejectsSeveralEnterprises(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	client := newGitHubAPITestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("no request expected, got %s", r.URL.Path)
-	}))
-
-	_, err := newEnterpriseRoleClients(
-		ctx,
-		ctx,
-		"https://github.com",
-		client,
-		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "unused"}),
-		[]string{"one-enterprise", "another-enterprise"},
-		nil,
-		"example-org",
-	)
-	require.Equal(t, codes.FailedPrecondition, status.Code(err))
-	require.Contains(t, err.Error(), "one enterprise at a time")
-	require.True(t, isEnterpriseSetupError(err))
 }
 
 // GitHub Enterprise Server has no enterprise administrator API, so naming an
@@ -313,6 +285,5 @@ func TestNewEnterpriseRoleClientsRejectsANonCloudInstance(t *testing.T) {
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.Contains(t, err.Error(), "GitHub Enterprise Cloud capability")
 	require.NotContains(t, err.Error(), "install it on the enterprise account")
-	require.NotContains(t, err.Error(), "one enterprise at a time")
 	require.False(t, isEnterpriseSetupError(err))
 }

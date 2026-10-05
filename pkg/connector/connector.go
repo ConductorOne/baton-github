@@ -528,15 +528,6 @@ func newEnterpriseRoleClients(
 				"remove --enterprises on this instance", instanceURL)
 	}
 
-	// Owners are read through the configured organization, which belongs to
-	// exactly one enterprise.
-	if len(enterprises) > 1 {
-		return nil, enterpriseSetupError{status.Errorf(codes.FailedPrecondition,
-			"baton-github: GitHub App authentication serves one enterprise at a time, "+
-				"because the owners are read through organization %q, which belongs to a single enterprise; "+
-				"%d were configured", org, len(enterprises))}
-	}
-
 	// NewBaseHttpClient returns nil when its cache setup fails.
 	installationClient := customclient.New(appClient)
 	if installationClient.BaseHttpClient == nil {
@@ -615,6 +606,8 @@ func isEnterpriseCloud(instanceURL string) bool {
 }
 
 // distinctEnterprises dedupes slugs case-insensitively, as GitHub matches them.
+// The clients are keyed by the slug as configured, so a repeat would otherwise
+// build two entries for one enterprise and emit its Owner role twice.
 func distinctEnterprises(enterprises []string) []string {
 	seen := make(map[string]struct{}, len(enterprises))
 	distinct := make([]string, 0, len(enterprises))
