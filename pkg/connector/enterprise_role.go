@@ -410,12 +410,14 @@ func isEnterpriseSetupError(err error) bool {
 	return errors.As(err, &setupErr)
 }
 
-// asEnterpriseSetupError marks a FailedPrecondition from the administration
-// client as a configuration problem. The client also answers Internal when it
-// gives up walking pages, which is not one -- that says nothing about how the
-// deployment is configured, so it keeps failing the sync.
+// asEnterpriseSetupError marks the organization mismatch as a configuration
+// problem. It keys on the sentinel rather than on FailedPrecondition, because
+// the client wraps its query failures with %w and status.Code unwraps through
+// them: a GraphQL UNPROCESSABLE during the walk carries that same code, and
+// skipping the sync on one would delete every Owner grant for a reason that
+// has nothing to do with how the deployment is configured.
 func asEnterpriseSetupError(err error) error {
-	if status.Code(err) != codes.FailedPrecondition {
+	if !errors.Is(err, customclient.ErrOrganizationNotInEnterprise) {
 		return err
 	}
 

@@ -539,9 +539,8 @@ func newEnterpriseRoleClients(
 		installation, _, err := installationClient.GetEnterpriseInstallation(ctx, enterprise)
 		if err != nil {
 			if status.Code(err) == codes.NotFound {
-				return nil, enterpriseSetupError{status.Errorf(codes.FailedPrecondition,
-					"baton-github: GitHub App is not installed on enterprise %q; install it on the enterprise account "+
-						"with the Enterprise people read and write permission", enterprise)}
+				return nil, enterpriseSetupError{status.Error(codes.FailedPrecondition,
+					enterpriseNotInstalledMessage(enterprise, org, len(enterprises)))}
 			}
 			return nil, err
 		}
@@ -584,6 +583,23 @@ func newEnterpriseRoleClients(
 	}
 
 	return clients, nil
+}
+
+// enterpriseNotInstalledMessage names the fix for an enterprise the app cannot
+// reach. Installing the app is the fix for one; with several configured it is
+// not, because the organization the owners are read through belongs to exactly
+// one enterprise, so the operator would install an app on an account that
+// still cannot be served.
+func enterpriseNotInstalledMessage(enterprise, org string, configured int) string {
+	msg := fmt.Sprintf("baton-github: GitHub App is not installed on enterprise %q; install it on the enterprise "+
+		"account with the Enterprise people read and write permission", enterprise)
+	if configured > 1 {
+		msg += fmt.Sprintf("; with %d enterprises configured, installing it may not be enough, because the owners "+
+			"are read through organization %q, which belongs to exactly one -- remove the slugs it does not belong to",
+			configured, org)
+	}
+
+	return msg
 }
 
 // isEnterpriseCloud reports whether the instance serves the enterprise

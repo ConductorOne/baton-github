@@ -3,6 +3,7 @@ package customclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -183,6 +184,13 @@ func (c *EnterpriseAdminClient) ResolveEnterpriseNodeID(ctx context.Context, ent
 // VerifyOrganization checks that the organization owners are read through
 // belongs to this enterprise. organizations(query:) is a substring search, so
 // every page is read before concluding it is not there.
+// ErrOrganizationNotInEnterprise is the one configuration answer
+// VerifyOrganization gives. Callers key on it rather than on the gRPC code,
+// because a query failure inside the walk carries a code too -- a GraphQL
+// UNPROCESSABLE is classified FailedPrecondition, and status.Code unwraps
+// through %w, so the code alone cannot tell the two apart.
+var ErrOrganizationNotInEnterprise = errors.New("organization does not belong to the enterprise")
+
 func (c *EnterpriseAdminClient) VerifyOrganization(ctx context.Context, enterprise string) error {
 	var after *githubv4.String
 	walked := false
@@ -219,9 +227,10 @@ func (c *EnterpriseAdminClient) VerifyOrganization(ctx context.Context, enterpri
 
 	// FailedPrecondition is what the caller keys on to tell this apart from the
 	// Internal above, which is not a configuration problem.
-	return status.Errorf(codes.FailedPrecondition,
-		"baton-github: organization %s does not belong to enterprise %s, so its owners cannot be synced",
-		c.org, enterprise)
+	return uhttp.WrapErrors(codes.FailedPrecondition,
+		fmt.Sprintf("baton-github: organization %s does not belong to enterprise %s, so its owners cannot be synced",
+			c.org, enterprise),
+		ErrOrganizationNotInEnterprise)
 }
 
 // IsMember reports whether login belongs to the enterprise. Grants() can only see
@@ -325,6 +334,15 @@ func (c *EnterpriseAdminClient) Members(
 //
 // Logins are passed as variables; only generated aliases reach the query text.
 // NOT_FOUND entries (no invitation) are dropped before classifying the rest.
+//
+// Dropping them is safe because NOT_FOUND here means absent, not forbidden,
+// and two things establish that rather than assumption. graphQLErrorsCode
+// ranks FORBIDDEN and UNAUTHENTICATED above NOT_FOUND precisely so a
+// credential failure cannot arrive wearing the code a caller reads as
+// absence. And these logins come from the Members query that ran immediately
+// before on this same enterprise token, which would have failed first if the
+// token could not read the enterprise at all. Were that not so, every alias
+// would be dropped and every invitee grant revoked on the next sync.
 func (c *EnterpriseAdminClient) PendingOwnerInvitations(
 	ctx context.Context,
 	enterprise string,

@@ -14,6 +14,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	entitlementSdk "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
 	"github.com/shurcooL/githubv4"
 	"github.com/stretchr/testify/require"
@@ -879,14 +880,23 @@ func TestEnterpriseRoleVerifyOrganization(t *testing.T) {
 func TestOrganizationMismatchIsASetupErrorButGivingUpIsNot(t *testing.T) {
 	t.Parallel()
 
-	mismatch := status.Error(codes.FailedPrecondition,
-		"baton-github: organization x does not belong to enterprise y, so its owners cannot be synced")
+	mismatch := uhttp.WrapErrors(codes.FailedPrecondition,
+		"baton-github: organization x does not belong to enterprise y",
+		customclient.ErrOrganizationNotInEnterprise)
 	require.True(t, isEnterpriseSetupError(asEnterpriseSetupError(mismatch)))
 
 	gaveUp := status.Error(codes.Internal,
 		"baton-github: gave up looking for organization x in enterprise y after 1000 pages")
 	require.False(t, isEnterpriseSetupError(asEnterpriseSetupError(gaveUp)))
 	require.Equal(t, codes.Internal, status.Code(asEnterpriseSetupError(gaveUp)))
+
+	// The walk wraps its query failures with %w, and status.Code unwraps
+	// through them, so the code alone would read a GraphQL UNPROCESSABLE as a
+	// configuration problem and skip the sync.
+	queryFailed := fmt.Errorf("baton-github: error listing organizations of enterprise y: %w",
+		status.Error(codes.FailedPrecondition, "UNPROCESSABLE"))
+	require.Equal(t, codes.FailedPrecondition, status.Code(queryFailed))
+	require.False(t, isEnterpriseSetupError(asEnterpriseSetupError(queryFailed)))
 
 	require.NoError(t, asEnterpriseSetupError(nil))
 }

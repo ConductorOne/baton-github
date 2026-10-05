@@ -134,11 +134,11 @@ func TestInvitationListPagination(t *testing.T) {
 	}
 	failedPage2 := []*github.Invitation{
 		{
-			ID:           github.Ptr(int64(2003)),
-			Email:        github.Ptr("frank-expired@example.com"),
-			Inviter:      &github.User{Login: github.Ptr("admin")},
-			CreatedAt:    &github.Timestamp{Time: pendingCreated2},
-			FailedAt:     &github.Timestamp{Time: expiredFailedAt2},
+			ID:        github.Ptr(int64(2003)),
+			Email:     github.Ptr("frank-expired@example.com"),
+			Inviter:   &github.User{Login: github.Ptr("admin")},
+			CreatedAt: &github.Timestamp{Time: pendingCreated2},
+			FailedAt:  &github.Timestamp{Time: expiredFailedAt2},
 			// Uppercase variant locks in case-insensitive matching.
 			FailedReason: github.Ptr("INVITATION EXPIRED"),
 		},
