@@ -857,16 +857,15 @@ func TestEnterpriseRoleVerifyOrganization(t *testing.T) {
 	require.ErrorContains(t, err, "does not belong to enterprise")
 }
 
-// A missing enterprise installation must reach the syncer as an error. The
-// SDK fails the run on it, which is the point: C1 deletes every resource of a
-// type that a completed sync did not report, so finishing the sync while
-// reading no owners would drop the Owner role and every grant on it.
+// A client build that fails for any reason other than configuration must
+// reach the syncer as an error: GitHub being unreachable is not evidence that
+// the owners are gone, and C1 deletes every resource of a type that a
+// completed sync did not report.
 func TestEnterpriseRoleFailsClosedWithoutEnterpriseClients(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	clientsErr := status.Error(codes.FailedPrecondition,
-		"github-connector: GitHub App is not installed on enterprise")
+	clientsErr := status.Error(codes.Unavailable, "github-connector: rate limited")
 	builds := 0
 	builder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise},
 		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
@@ -893,6 +892,50 @@ func TestEnterpriseRoleFailsClosedWithoutEnterpriseClients(t *testing.T) {
 	// uninstalled app, a revoked permission and a typo alike, so an operator
 	// who fixes it is picked up by the next call rather than by a restart.
 	require.Equal(t, 2, builds)
+}
+
+// An app deployment that is not set up for the enterprise administrator API
+// synced no enterprise roles before that API was used, without failing, so it
+// still does. Provisioning has nothing to fall back to and returns the error,
+// which names the fix.
+func TestEnterpriseRoleSkipsSyncOnASetupError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	clientsErr := enterpriseSetupError{status.Error(codes.FailedPrecondition,
+		"github-connector: GitHub App is not installed on enterprise")}
+	builds := 0
+	builder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise},
+		func(context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
+			builds++
+			return nil, clientsErr
+		},
+	)
+
+	resources, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Empty(t, resources)
+
+	roleResource, err := resourceSdk.NewRoleResource(
+		enterpriseRoleOwner,
+		resourceTypeEnterpriseRole,
+		testEnterprise+":"+enterpriseRoleOwner,
+		[]resourceSdk.RoleTraitOption{},
+	)
+	require.NoError(t, err)
+
+	grants, _, err := builder.Grants(ctx, roleResource, resourceSdk.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Empty(t, grants)
+
+	principal := &v2.Resource{Id: &v2.ResourceId{ResourceType: resourceTypeUser.Id, Resource: "1"}}
+	ent := &v2.Entitlement{Resource: roleResource}
+	_, _, err = builder.Grant(ctx, principal, ent)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Contains(t, err.Error(), "not installed on enterprise")
+
+	// Still not remembered, so installing the app is picked up by the next sync.
+	require.Equal(t, 3, builds)
 }
 
 // No build failure is remembered. GitHub answers 404 for an uninstalled app,

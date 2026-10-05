@@ -156,17 +156,13 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	}
 
 	if len(gh.enterprises) > 0 {
-		resourceSyncers = append(resourceSyncers, EnterpriseRoleProvisioningBuilder(
-			gh.client, gh.appClient, gh.customClient, gh.enterprises,
-			gh.newEnterpriseRoleClients,
-		))
-		// The consumed-licenses API behind this type answers 403 to anything
-		// but a personal access token, so it is registered on the token path
-		// and nowhere else. An app gets the enterprise administrator API
-		// instead, which serves the Owner role it can actually read.
-		if gh.newEnterpriseRoleClients == nil {
-			resourceSyncers = append(resourceSyncers, LicenseBuilder(gh.customClient, gh.enterprises))
-		}
+		resourceSyncers = append(resourceSyncers,
+			EnterpriseRoleProvisioningBuilder(
+				gh.client, gh.appClient, gh.customClient, gh.enterprises,
+				gh.newEnterpriseRoleClients,
+			),
+			LicenseBuilder(gh.customClient, gh.enterprises),
+		)
 	}
 	return resourceSyncers
 }
@@ -466,27 +462,10 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		return nil, err
 	}
 
-	// Enterprise administration needs its own installation token: the org
-	// installation token above carries no enterprise permissions. Reading the
-	// owners needs the org token, so both are handed to the client.
-	//
-	// Built on first use rather than here, so connector construction and
-	// Validate do not depend on the enterprise installation and a later sync
-	// retries the build. It does not narrow the blast radius of a failure:
-	// the error surfaces from List, which fails the whole sync, and that is
-	// deliberate — a sync that completed without owners would read to C1 as a
-	// revoke of every owner assignment.
-	//
-	// The construction context is captured separately: the clients are
-	// memoized for the process lifetime, so the token refresher inside them
-	// must not hold the context of whichever RPC happened to build them.
+	// Built lazily so construction and Validate don't depend on the enterprise
+	// installation. The memoized clients refresh their token with connectorCtx,
+	// not the ctx of the RPC that first built them, which is cancelled when it returns.
 	connectorCtx := ctx
-	// Set on the app path and left nil on the token path, which is what
-	// ResourceSyncers reads to tell the two apart: the enterprise
-	// administrator API is the only one an app can use for these roles, and
-	// the consumed-licenses API behind the token path is the only one a token
-	// can use. The clients are built lazily, so configuring no enterprise
-	// costs nothing.
 	newEnterpriseRoleClientsFn := func(ctx context.Context) (map[string]*githubEnterpriseAdministratorClient, error) {
 		return newEnterpriseRoleClients(
 			ctx, connectorCtx, ghc.InstanceUrl, appClient, jwtts, enterprises, appHTTPClient, ghc.Org)
@@ -510,21 +489,15 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	return gh, nil
 }
 
-// newEnterpriseRoleClients builds one client per configured enterprise, each
-// with that enterprise's own installation token: enterprise and organization
-// installations are separate, and an enterprise mutation rejects the org token.
+// newEnterpriseRoleClients builds one client per configured enterprise using
+// that enterprise's own installation token, since enterprise mutations reject
+// the org token.
 //
-// Fails closed when the app is not installed on an enterprise, or when the
-// organization does not belong to it. Returning no clients instead would let
-// the sync complete while reading no owners, and C1 deletes every resource of
-// a type that a completed sync did not report — the Owner role and every
-// grant on it. Failing is what stops a sync from being completed at all, so
-// an operator who has not installed the app on the enterprise account, or who
-// configured several, hears about it instead of losing the assignments.
+// It fails rather than returning no clients: a sync that completes without
+// owners would make C1 delete the Owner role and every grant on it.
 //
-// ctx scopes the discovery requests to the caller. connectorCtx outlives them
-// and is what the memoized clients keep for refreshing the installation token,
-// which expires after an hour or on the first 401.
+// ctx scopes the discovery requests; connectorCtx is kept by the memoized
+// clients for refreshing the installation token.
 func newEnterpriseRoleClients(
 	ctx context.Context,
 	connectorCtx context.Context,
@@ -535,8 +508,6 @@ func newEnterpriseRoleClients(
 	orgHTTPClient *http.Client,
 	org string,
 ) (map[string]*githubEnterpriseAdministratorClient, error) {
-	// Naming the same enterprise twice, which happens when the flag is set in
-	// both the environment and the command line, is one enterprise.
 	enterprises = distinctEnterprises(enterprises)
 	if len(enterprises) == 0 {
 		return nil, nil
@@ -546,26 +517,27 @@ func newEnterpriseRoleClients(
 	// absent from its REST and GraphQL references. Checking the host first
 	// keeps the operator from being told to install the app on an enterprise
 	// account their instance does not have, which is what the 404 below would
-	// otherwise read as.
+	// otherwise read as. Not an enterpriseSetupError, unlike the two checks
+	// after it: a Server instance was already failing its sync before this API
+	// was used, since the consumed-licenses fallback answers 404 there and
+	// fillCache only swallows a 403, so skipping would hide a configuration
+	// that cannot work rather than preserve an outcome it used to have.
 	if !isEnterpriseCloud(instanceURL) {
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"baton-github: the built-in Owner role is a GitHub Enterprise Cloud capability and %s does not serve it; "+
 				"remove --enterprises on this instance", instanceURL)
 	}
 
-	// The owners are read through the single configured organization, and an
-	// organization belongs to exactly one enterprise, so app auth cannot serve
-	// a list and picking one of them would be a guess. The PAT path does
-	// support a list.
+	// Owners are read through the configured organization, which belongs to
+	// exactly one enterprise.
 	if len(enterprises) > 1 {
-		return nil, status.Errorf(codes.FailedPrecondition,
+		return nil, enterpriseSetupError{status.Errorf(codes.FailedPrecondition,
 			"baton-github: GitHub App authentication serves one enterprise at a time, "+
 				"because the owners are read through organization %q, which belongs to a single enterprise; "+
-				"%d were configured", org, len(enterprises))
+				"%d were configured", org, len(enterprises))}
 	}
 
-	// NewBaseHttpClient reports a failed cache setup by returning nil, which
-	// only panics later inside Do.
+	// NewBaseHttpClient returns nil when its cache setup fails.
 	installationClient := customclient.New(appClient)
 	if installationClient.BaseHttpClient == nil {
 		return nil, fmt.Errorf("baton-github: error building the enterprise installation client")
@@ -575,12 +547,10 @@ func newEnterpriseRoleClients(
 	for _, enterprise := range enterprises {
 		installation, _, err := installationClient.GetEnterpriseInstallation(ctx, enterprise)
 		if err != nil {
-			// A 404 is the app not being installed on the enterprise, which is
-			// the misconfiguration worth naming.
 			if status.Code(err) == codes.NotFound {
-				return nil, status.Errorf(codes.FailedPrecondition,
+				return nil, enterpriseSetupError{status.Errorf(codes.FailedPrecondition,
 					"baton-github: GitHub App is not installed on enterprise %q; install it on the enterprise account "+
-						"with the Enterprise people read and write permission", enterprise)
+						"with the Enterprise people read and write permission", enterprise)}
 			}
 			return nil, err
 		}
@@ -644,8 +614,7 @@ func isEnterpriseCloud(instanceURL string) bool {
 	return host == "github.com" || host == "ghe.com" || strings.HasSuffix(host, ".ghe.com")
 }
 
-// distinctEnterprises folds the slugs, which GitHub matches case-insensitively,
-// so a repeated value does not read as several enterprises.
+// distinctEnterprises dedupes slugs case-insensitively, as GitHub matches them.
 func distinctEnterprises(enterprises []string) []string {
 	seen := make(map[string]struct{}, len(enterprises))
 	distinct := make([]string, 0, len(enterprises))

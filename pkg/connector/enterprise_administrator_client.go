@@ -20,9 +20,7 @@ import (
 )
 
 const (
-	// GraphQL variable names, shared by the query text and the variable map so
-	// the two cannot drift: a typo'd map key reaches the API as a missing
-	// variable rather than failing to compile.
+	// GraphQL variable names, shared by the query text and the variable map.
 	enterpriseSlugVariable  = "slug"
 	enterpriseLoginVariable = "login"
 	enterpriseOrgVariable   = "org"
@@ -39,66 +37,49 @@ const (
 	enterpriseOwnerPageSize        = 100
 	enterpriseOrganizationPageSize = 100
 	enterpriseMemberPageSize       = 100
-	// A login search also matches display names, so it can return many
-	// accounts for one login and the caller pages through them.
+	// A login search also matches display names, so it can return many accounts.
 	enterpriseMemberLookupPageSize = 100
 	// One aliased invitation lookup per member of a page.
 	enterpriseInvitationBatchSize = enterpriseMemberPageSize
-	// Bounds the walks that happen inside one call rather than across page
-	// tokens, so a mispaginating API cannot pin a provisioning task.
+	// Bounds in-call page walks so a mispaginating API cannot hang a provisioning task.
 	enterpriseMaxPages = 1000
 )
 
-// enterpriseOwnerState is what the connector can observe about a user's Owner
-// access: whether they hold the role today, and the invitation that would give
-// it to them once they accept it.
+// enterpriseOwnerState is a user's Owner role and pending Owner invitation, if any.
 type enterpriseOwnerState struct {
 	enterpriseID        string
 	isOwner             bool
 	pendingInvitationID string
 }
 
-// holdsRole reports whether C1 should see a grant. An unaccepted invitation
-// counts: C1 has no pending state, so both map onto the same grant.
+// holdsRole reports whether C1 should see a grant. C1 has no pending state, so an
+// unaccepted invitation counts.
 func (s enterpriseOwnerState) holdsRole() bool {
 	return s.isOwner || s.pendingInvitationID != ""
 }
 
-// githubEnterpriseAdministratorClient reads and writes the built-in Owner role
-// of one enterprise. It needs both of the app's installations, because GitHub
-// splits the data across them:
+// githubEnterpriseAdministratorClient reads and writes the Owner role of one
+// enterprise. It needs both installation tokens:
 //
-//   - Enterprise.ownerInfo, which holds admins and pendingAdminInvitations,
-//     resolves to null for an installation token, so the owners are read from
-//     Organization.enterpriseOwners with the organization token. The
-//     enterprise token gets FORBIDDEN on any organization field.
-//   - The invitation lookup and every mutation are enterprise fields, so they
-//     go through the enterprise token.
+//   - Enterprise.ownerInfo is null for installation tokens, so owners are read
+//     from Organization.enterpriseOwners with the org token.
+//   - The invitation lookup and mutations need the enterprise token.
 //
-// Enterprise.members(role: OWNER) is deliberately not used: that role is
-// EnterpriseUserAccountMembershipRole, whose OWNER means "owner of an
-// organization in the enterprise", not owner of the enterprise account.
+// Enterprise.members(role: OWNER) is not used: it returns owners of organizations
+// in the enterprise, not owners of the enterprise account.
 type githubEnterpriseAdministratorClient struct {
 	enterpriseClient *githubv4.Client
 	orgClient        *githubv4.Client
 	org              string
-	// Immutable for a given slug, so it is resolved once at construction
-	// rather than on each Grant and Revoke.
 	enterpriseNodeID string
-	// batchClient serves the aliased invitation lookup, and omits
-	// enterpriseGraphQLTransport because that batch always reports NOT_FOUND
-	// entries the classifier would read as a failure.
-	endpoint    *url.URL
+	endpoint         *url.URL
+	// batchClient skips enterpriseGraphQLTransport because the aliased invitation
+	// lookup always contains NOT_FOUND entries.
 	batchClient *uhttp.BaseHttpClient
 }
 
-// newEnterpriseAdministratorClient returns the client for one enterprise
-// installation, with a GraphQL client per token because the two installations
-// are separate credentials.
-//
-// The HTTP clients arrive unwrapped because that is what both consumers take:
-// githubv4 builds its own client over one, uhttp wraps one. They already carry
-// the installation token, its 401 refresh, and uhttp's transport underneath.
+// newEnterpriseAdministratorClient returns the client for one enterprise, with a
+// GraphQL client per installation token.
 func newEnterpriseAdministratorClient(
 	instanceURL string,
 	enterpriseHTTPClient *http.Client,
@@ -110,8 +91,7 @@ func newEnterpriseAdministratorClient(
 		return nil, err
 	}
 
-	// NewBaseHttpClient reports a failed cache setup by returning nil, which
-	// only panics later inside Do.
+	// NewBaseHttpClient returns nil when its cache setup fails.
 	batchClient := uhttp.NewBaseHttpClient(enterpriseHTTPClient)
 	if batchClient == nil {
 		return nil, fmt.Errorf("baton-github: error building the enterprise GraphQL batch client")
@@ -126,13 +106,8 @@ func newEnterpriseAdministratorClient(
 	}, nil
 }
 
-// newEnterpriseGraphQLClient returns a GraphQL client that classifies both the
-// HTTP status and the errors[] GitHub returns alongside an HTTP 200. Both
-// layers are needed, because the SDK only backs off on a typed Unavailable and
-// a rate limit arrives as a successful status.
-//
-// The connector's shared GraphQL client keeps only the status classifier:
-// user.go detects enterprise SAML by matching the text of its error.
+// newEnterpriseGraphQLClient returns a GraphQL client that also classifies the
+// errors GitHub returns inside an HTTP 200, such as rate limits.
 func newEnterpriseGraphQLClient(endpoint string, httpClient *http.Client) *githubv4.Client {
 	base := httpClient.Transport
 	if base == nil {
@@ -147,11 +122,8 @@ func newEnterpriseGraphQLClient(endpoint string, httpClient *http.Client) *githu
 	})
 }
 
-// enterpriseGraphQLEndpoint returns the GraphQL URL of the instance, which is
-// api.github.com for GitHub.com and /api/graphql on a self-hosted host.
-//
-// The trailing slash is trimmed before the comparison, so "https://github.com/"
-// resolves to GitHub.com rather than to a /api/graphql path on that host.
+// enterpriseGraphQLEndpoint returns the instance's GraphQL URL: api.github.com
+// for GitHub.com, /api/graphql on a self-hosted host.
 func enterpriseGraphQLEndpoint(instanceURL string) (*url.URL, error) {
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
 	if instanceURL == "" || instanceURL == githubDotCom {
@@ -173,9 +145,8 @@ type graphQLRateLimit struct {
 	ResetAt   githubv4.DateTime
 }
 
-// annotations returns the remaining GraphQL budget, or nil when the response
-// carried no rateLimit block: the zero value would otherwise be reported as an
-// exhausted budget with no reset time.
+// annotations returns the remaining GraphQL budget, or nil when the response had
+// no rateLimit block.
 func (r graphQLRateLimit) annotations() annotations.Annotations {
 	if r.Limit == 0 && r.ResetAt.IsZero() {
 		return nil
@@ -214,15 +185,13 @@ type enterpriseOwnersQuery struct {
 	RateLimit graphQLRateLimit
 }
 
-// enterpriseUser is a user account as the enterprise reports it, whether as an
-// owner or as a plain member.
+// enterpriseUser is a user account as the enterprise reports it.
 type enterpriseUser struct {
 	databaseID int64
 	login      string
 }
 
-// owners returns one page of the users who currently own the enterprise
-// account.
+// owners returns one page of the enterprise account's owners.
 func (c *githubEnterpriseAdministratorClient) owners(
 	ctx context.Context,
 	after *githubv4.String,
@@ -253,12 +222,8 @@ func (c *githubEnterpriseAdministratorClient) owners(
 	return owners, nextCursor, query.RateLimit.annotations(), nil
 }
 
-// resolveEnterpriseNodeID looks up the node ID every enterprise mutation takes
-// and stores it on the client. It is called once at construction: the ID is
-// immutable for a given slug, and resolving it per operation would add two
-// requests to every Grant and Revoke, which each read OwnerState twice.
-//
-// It doubles as the check that the enterprise is visible to this installation.
+// resolveEnterpriseNodeID stores the node ID enterprise mutations take. It also
+// checks that the enterprise is visible to this installation.
 func (c *githubEnterpriseAdministratorClient) resolveEnterpriseNodeID(ctx context.Context, enterprise string) error {
 	var query struct {
 		Enterprise struct {
@@ -295,13 +260,9 @@ type enterpriseOrganizationsQuery struct {
 	} `graphql:"enterprise(slug: $slug)"`
 }
 
-// verifyOrganization checks that the organization the owners are read through
-// belongs to this enterprise; otherwise the connector would report another
-// enterprise's owners as owners of this one.
-//
-// organizations(query:) is a substring search rather than an exact filter, so
-// every page is read before concluding the organization is not there. GitHub
-// offers no direct way to ask an organization which enterprise owns it.
+// verifyOrganization checks that the organization owners are read through
+// belongs to this enterprise. organizations(query:) is a substring search, so
+// every page is read before concluding it is not there.
 func (c *githubEnterpriseAdministratorClient) verifyOrganization(ctx context.Context, enterprise string) error {
 	var after *githubv4.String
 	walked := false
@@ -329,29 +290,20 @@ func (c *githubEnterpriseAdministratorClient) verifyOrganization(ctx context.Con
 		}
 		after = githubv4.NewString(query.Enterprise.Organizations.PageInfo.EndCursor)
 	}
-	// Running out of budget is not the same answer as reading every page and
-	// not finding the organization: reporting the membership error there would
-	// send the operator to fix a membership that is already correct.
+	// Running out of pages is not proof the organization is missing.
 	if !walked {
 		return status.Errorf(codes.Internal,
 			"baton-github: gave up looking for organization %s in enterprise %s after %d pages",
 			c.org, enterprise, enterpriseMaxPages)
 	}
 
-	// FailedPrecondition because C1 treats it as non-retryable: only a
-	// configuration change can make this organization belong to that
-	// enterprise.
-	return status.Errorf(codes.FailedPrecondition,
+	return enterpriseSetupError{status.Errorf(codes.FailedPrecondition,
 		"baton-github: organization %s does not belong to enterprise %s, so its owners cannot be synced",
-		c.org, enterprise)
+		c.org, enterprise)}
 }
 
-// enterpriseMemberLookupQuery asks whether one login is a member of the
-// enterprise. The query argument is a search, not a filter: it matches the
-// display name as well as the login, and the results come back ordered by
-// login. A member whose login is short can therefore sit behind others whose
-// name happens to contain it, so the caller pages until it finds an exact
-// login rather than reading one page.
+// enterpriseMemberLookupQuery searches the enterprise's members by login. The
+// search also matches display names, so the caller pages until an exact login.
 type enterpriseMemberLookupQuery struct {
 	Enterprise struct {
 		Members struct {
@@ -372,9 +324,8 @@ type enterpriseMemberLookupQuery struct {
 	RateLimit graphQLRateLimit
 }
 
-// isMember reports whether login belongs to the enterprise. Grants() can only
-// see an invitation addressed to a member, so an invitation sent to anyone
-// else would be created on GitHub and then be invisible to every later sync.
+// isMember reports whether login belongs to the enterprise. Grants() can only see
+// invitations addressed to members.
 func (c *githubEnterpriseAdministratorClient) isMember(
 	ctx context.Context,
 	enterprise string,
@@ -413,17 +364,13 @@ func (c *githubEnterpriseAdministratorClient) isMember(
 		after = githubv4.NewString(query.Enterprise.Members.PageInfo.EndCursor)
 	}
 
-	// Refusing to guess: concluding "not a member" here would reject a grant
-	// for someone who may well be one.
 	return false, annos, status.Errorf(codes.Unavailable,
 		"baton-github: gave up looking for %s in enterprise %s after %d pages of search results",
 		login, enterprise, enterpriseMaxPages)
 }
 
-// enterpriseMembersQuery reads one page of the enterprise's member accounts.
-// members is a union: an enterprise with Enterprise Managed Users returns
-// EnterpriseUserAccount, a regular enterprise can also return User, so both
-// shapes are selected and each field falls back to the other branch.
+// enterpriseMembersQuery reads one page of the enterprise's members. members is
+// a union of EnterpriseUserAccount (EMU) and User, so both shapes are selected.
 type enterpriseMembersQuery struct {
 	Enterprise struct {
 		Members struct {
@@ -449,9 +396,8 @@ type enterpriseMembersQuery struct {
 	RateLimit graphQLRateLimit
 }
 
-// members returns one page of the enterprise's member accounts and the cursor
-// of the next page, skipping any node without a database ID because guessing
-// one would re-key the identity on the next sync.
+// members returns one page of the enterprise's members and the next cursor,
+// skipping nodes without a database ID.
 func (c *githubEnterpriseAdministratorClient) members(
 	ctx context.Context,
 	enterprise string,
@@ -480,9 +426,6 @@ func (c *githubEnterpriseAdministratorClient) members(
 			member.login = string(node.User.Login)
 		}
 		if member.databaseID == 0 || member.login == "" {
-			// Skipping costs this member their pending invitation lookup, so
-			// their Owner grant would never appear. Say so rather than drop
-			// them silently.
 			ctxzap.Extract(ctx).Debug("baton-github: skipping an enterprise member with no database ID or login",
 				zap.String("enterprise", enterprise),
 				zap.Int64("database_id", member.databaseID),
@@ -501,20 +444,12 @@ func (c *githubEnterpriseAdministratorClient) members(
 	return members, nextCursor, query.RateLimit.annotations(), nil
 }
 
-// pendingOwnerInvitations returns the pending Owner invitation of each given
-// login that has one, keyed by login, resolved in a single request.
+// pendingOwnerInvitations returns the pending Owner invitation of each login that
+// has one, in one aliased request. Invitations can't be listed with an
+// installation token, so they're looked up per login.
 //
-// Invitations are not enumerable for an installation token, because
-// Enterprise.ownerInfo resolves to null, so they can only be asked for one
-// login at a time. Aliasing collapses that into one request, which GitHub
-// charges a single rate-limit point.
-//
-// Logins travel as variables and only generated alias names reach the query
-// text, so a login cannot alter the query. A login with no invitation answers
-// with a NOT_FOUND entry, so those are dropped before the remaining errors are
-// classified: left in, they would claim the code for the whole response, and
-// NOT_FOUND is the one code the SDK downgrades to a warning. The rate limit is
-// returned on the failure paths too, since that is when C1 needs it.
+// Logins are passed as variables; only generated aliases reach the query text.
+// NOT_FOUND entries (no invitation) are dropped before classifying the rest.
 func (c *githubEnterpriseAdministratorClient) pendingOwnerInvitations(
 	ctx context.Context,
 	enterprise string,
@@ -583,9 +518,7 @@ func (c *githubEnterpriseAdministratorClient) pendingOwnerInvitations(
 		var node struct {
 			ID string `json:"id"`
 		}
-		// A decode failure and an absent invitation are different answers.
-		// Treating the first as the second drops a live invitation from the
-		// sync, which C1 reads as a revoke, so only the absence is skipped.
+		// Only skip an absent invitation, not one that failed to decode.
 		if err := json.Unmarshal(raw, &node); err != nil {
 			return nil, annos, fmt.Errorf(
 				"baton-github: error decoding the invitation reported for %s: %w", login, err)
@@ -599,11 +532,8 @@ func (c *githubEnterpriseAdministratorClient) pendingOwnerInvitations(
 	return invitations, annos, nil
 }
 
-// doGraphQL runs a query whose selection set is built at runtime, which the
-// typed client cannot express. It returns the top-level fields undecoded plus
-// the errors array, so the caller decides which fields to read and which
-// errors are expected. A non-2xx arrives already mapped onto a gRPC code by
-// uhttp, so its error is returned unwrapped.
+// doGraphQL runs a query built at runtime, which the typed client can't express,
+// and returns the raw data fields and the errors array.
 func (c *githubEnterpriseAdministratorClient) doGraphQL(
 	ctx context.Context,
 	query string,
@@ -631,9 +561,8 @@ func (c *githubEnterpriseAdministratorClient) doGraphQL(
 	return envelope.Data, envelope.Errors, nil
 }
 
-// pendingOwnerInvitation returns the ID of the pending Owner invitation for a
-// login, or an empty string when there is none. GitHub reports a login without
-// an invitation as NOT_FOUND rather than as a null field.
+// pendingOwnerInvitation returns the pending Owner invitation ID for a login, or
+// "" if none. GitHub reports no invitation as NOT_FOUND.
 func (c *githubEnterpriseAdministratorClient) pendingOwnerInvitation(
 	ctx context.Context,
 	enterprise string,
@@ -659,21 +588,11 @@ func (c *githubEnterpriseAdministratorClient) pendingOwnerInvitation(
 	return string(query.EnterpriseAdministratorInvitation.ID), nil
 }
 
-// OwnerState reports whether a login owns the enterprise account and whether
-// an invitation for it is still pending, together with the remaining budget.
+// OwnerState reports whether a login owns the enterprise and whether an Owner
+// invitation is pending. Both are resolved because Revoke clears each.
 //
-// Both facts are resolved even for an active owner, because Revoke acts on
-// each separately: stopping at the role would let a stale invitation survive
-// the demotion and then fail the verification that follows it.
-//
-// The owners connection does take a query argument, but it searches profile
-// text rather than filtering on the login: it also matches the display name.
-// A search index carries no freshness guarantee, and Grant and Revoke call
-// this again right after their mutation to confirm it landed, so an empty
-// result cannot be trusted to mean "not an owner" — on Revoke that reading
-// would report GrantAlreadyRevoked while the user keeps the role. The pages
-// are walked and matched on the login instead, which in practice is one
-// request: owners are a small set.
+// Owners are paged and matched by login rather than using the owners query
+// argument, which is a search that can lag right after a mutation.
 func (c *githubEnterpriseAdministratorClient) OwnerState(
 	ctx context.Context,
 	enterprise string,
@@ -689,7 +608,6 @@ func (c *githubEnterpriseAdministratorClient) OwnerState(
 		if err != nil {
 			return state, annos, err
 		}
-		// The freshest budget, not one descriptor per page.
 		if len(pageAnnos) > 0 {
 			annos = pageAnnos
 		}
@@ -705,9 +623,7 @@ func (c *githubEnterpriseAdministratorClient) OwnerState(
 		}
 		after = githubv4.NewString(githubv4.String(nextCursor))
 	}
-	// Falling through the bound would report "not an owner" for someone the
-	// walk never finished reading, which Revoke would answer with
-	// GrantAlreadyRevoked while they still hold the role.
+	// An unfinished walk must not read as "not an owner".
 	if !walked {
 		return state, annos, status.Errorf(codes.Internal,
 			"baton-github: gave up reading the owners of enterprise %s after %d pages",
@@ -731,8 +647,7 @@ func (c *githubEnterpriseAdministratorClient) UpdateRole(
 	login string,
 	role githubv4.EnterpriseAdministratorRole,
 ) error {
-	// GraphQL rejects a mutation without a selection set, and rateLimit exists
-	// only on Query, so every mutation selects clientMutationId.
+	// GraphQL requires a selection set and rateLimit exists only on Query.
 	var mutation struct {
 		UpdateEnterpriseAdministratorRole struct {
 			ClientMutationID githubv4.String

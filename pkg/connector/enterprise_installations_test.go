@@ -147,6 +147,7 @@ func TestNewEnterpriseRoleClientsRequiresEnterpriseInstall(t *testing.T) {
 	)
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.Contains(t, err.Error(), `not installed on enterprise "example-enterprise"`)
+	require.True(t, isEnterpriseSetupError(err))
 	require.NotContains(t, err.Error(), "personal access token")
 }
 
@@ -263,6 +264,7 @@ func TestNewEnterpriseRoleClientsRejectsSeveralEnterprises(t *testing.T) {
 	)
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.Contains(t, err.Error(), "one enterprise at a time")
+	require.True(t, isEnterpriseSetupError(err))
 }
 
 // GitHub Enterprise Server has no enterprise administrator API, so naming an
@@ -312,4 +314,5 @@ func TestNewEnterpriseRoleClientsRejectsANonCloudInstance(t *testing.T) {
 	require.Contains(t, err.Error(), "GitHub Enterprise Cloud capability")
 	require.NotContains(t, err.Error(), "install it on the enterprise account")
 	require.NotContains(t, err.Error(), "one enterprise at a time")
+	require.False(t, isEnterpriseSetupError(err))
 }

@@ -12,12 +12,10 @@ import (
 	"github.com/google/go-github/v69/github"
 )
 
-// githubMaxPageSize is the largest per_page the GitHub REST API accepts; the
-// default is 30.
+// githubMaxPageSize is the largest per_page the GitHub REST API accepts.
 const githubMaxPageSize = 100
 
-// Endpoint paths, one element per path segment, because endpoint() escapes
-// each element it is given.
+// Endpoint paths, one element per path segment.
 func enterpriseInstallationPath(enterprise string) []string {
 	return []string{"enterprises", enterprise, "installation"}
 }
@@ -30,10 +28,7 @@ func consumedLicensesPathParts(enterprise string) []string {
 // example: https://docs.github.com/en/enterprise-cloud@latest/rest/enterprise-admin/license?apiVersion=2022-11-28#list-enterprise-consumed-licenses
 type Client struct {
 	*uhttp.BaseHttpClient
-	// baseURL is the go-github client's own base. Keeping it is what makes
-	// these endpoints follow --instance-url: on GitHub Enterprise Server
-	// WithEnterpriseURLs sets it to https://host/api/v3/, while a literal
-	// api.github.com would query GitHub.com instead of the instance.
+	// baseURL is the go-github client's base, so endpoints follow --instance-url.
 	baseURL *url.URL
 }
 
@@ -44,17 +39,8 @@ func New(client *github.Client) *Client {
 	}
 }
 
-// endpoint resolves path segments against the base URL. Each element is one
-// segment and is escaped, because url.JoinPath treats its arguments as
-// already-escaped path: an unescaped value containing a slash would silently
-// add segments.
-//
-// Escaping does not stop "." or ".." from being resolved away, which is fine
-// here — every segment is either a constant or an operator-supplied config
-// value, not caller input.
-//
-// github.NewClient always sets a base URL, so that error only fires on a
-// hand-built Client.
+// endpoint resolves path segments against the base URL, escaping each one
+// because url.JoinPath treats its arguments as already escaped.
 func (c *Client) endpoint(segments ...string) (string, error) {
 	if c.baseURL == nil {
 		return "", fmt.Errorf("github client has no base URL")
@@ -69,10 +55,7 @@ func (c *Client) endpoint(segments ...string) (string, error) {
 }
 
 // GetEnterpriseInstallation returns this app's installation on one enterprise.
-//
-// Authenticates with the app's JWT, not with an installation token, and is
-// decoded through this package's model because go-github's installation
-// account is a *User, which carries no enterprise slug.
+// It needs the app JWT client, not an installation token.
 // https://docs.github.com/en/rest/apps/apps#get-an-enterprise-installation-for-the-authenticated-app
 func (c *Client) GetEnterpriseInstallation(ctx context.Context, enterprise string) (*AppInstallation, *v2.RateLimitDescription, error) {
 	endpoint, err := c.endpoint(enterpriseInstallationPath(enterprise)...)

@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -48,13 +49,9 @@ type enterpriseRoleResourceType struct {
 	enterprises    []string
 	roleUsersCache map[string][]string
 	mu             *sync.Mutex
-	// newEnterpriseClients builds the per-enterprise administration clients.
-	// It is nil under PAT auth.
+	// newEnterpriseClients is nil under PAT auth.
 	newEnterpriseClients enterpriseClientProvider
-	// enterpriseClients is keyed by enterprise slug and memoized after the
-	// first successful build. A build error is returned rather than stored,
-	// so the sync fails instead of completing without owners and the next
-	// call tries again.
+	// enterpriseClients is keyed by enterprise slug and memoized on success only.
 	enterpriseClients map[string]*githubEnterpriseAdministratorClient
 }
 
@@ -62,16 +59,9 @@ func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.Resourc
 	return o.resourceType
 }
 
-// clients returns the per-enterprise administration clients, building them on
-// first use and memoizing them once they are built.
-//
-// Only success is remembered. A failure is retried on the next call, which
-// costs one discovery attempt on a path that is already failing the sync, and
-// buys two things: a startup blip does not disable this resource type for the
-// lifetime of the process, and an operator who installs the app or restores
-// the permission is picked up by the next sync instead of needing a restart.
-// GitHub answers 404 for an uninstalled app, a revoked permission and a typo
-// alike, so no error here can be trusted to be permanent.
+// clients builds the per-enterprise administration clients on first use and
+// memoizes them. Failures are not memoized, so a later sync retries after the
+// operator fixes the installation.
 func (o *enterpriseRoleResourceType) clients(
 	ctx context.Context,
 ) (map[string]*githubEnterpriseAdministratorClient, error) {
@@ -95,10 +85,7 @@ func (o *enterpriseRoleResourceType) clients(
 	return o.enterpriseClients, nil
 }
 
-// noClientReason explains why no administration client exists, in the terms of
-// the fix the operator has to make. Under app auth every reason already
-// surfaced as a build error, so what is left is the credential and an
-// enterprise this connector was not configured for.
+// noClientReason explains why no administration client exists.
 func (o *enterpriseRoleResourceType) noClientReason() string {
 	if o.newEnterpriseClients == nil {
 		return "a personal access token can sync enterprise roles but cannot provision them, " +
@@ -173,11 +160,14 @@ func (o *enterpriseRoleResourceType) List(
 ) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
 	enterpriseClients, err := o.clients(ctx)
 	if err != nil {
+		if isEnterpriseSetupError(err) {
+			warnEnterpriseRolesSkipped(ctx, err)
+			return nil, &resourceSdk.SyncOpResults{}, nil
+		}
 		return nil, nil, failClosedOnUnreadableEnterprise(err, strings.Join(o.enterprises, ", "))
 	}
 
-	// The consumed-licenses API that backs the cache is PAT-only, so a GitHub
-	// App can only see the built-in Owner role it is able to read and mutate.
+	// Under app auth only the Owner role is readable; consumed-licenses is PAT-only.
 	if len(enterpriseClients) > 0 {
 		return appList(o.enterprises, enterpriseClients)
 	}
@@ -236,6 +226,10 @@ func (o *enterpriseRoleResourceType) Grants(
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
 	enterpriseClients, err := o.clients(ctx)
 	if err != nil {
+		if isEnterpriseSetupError(err) {
+			warnEnterpriseRolesSkipped(ctx, err)
+			return nil, &resourceSdk.SyncOpResults{}, nil
+		}
 		return nil, nil, failClosedOnUnreadableEnterprise(err, strings.Join(o.enterprises, ", "))
 	}
 	if len(enterpriseClients) > 0 {
@@ -269,26 +263,15 @@ func (o *enterpriseRoleResourceType) Grants(
 	return ret, &resourceSdk.SyncOpResults{}, nil
 }
 
-// Asserted here because the SDK reads the capability off these types: if the
-// provisioner ever stops satisfying the interface the build breaks, rather
-// than the capability quietly disappearing.
 var _ connectorbuilder.ResourceProvisionerV2 = (*enterpriseRoleProvisioner)(nil)
 
-// enterpriseRoleProvisioner adds Grant and Revoke to the read-only syncer.
-//
-// It is a separate type because the SDK derives CAPABILITY_PROVISION from the
-// methods a syncer implements, with no way to vary it at runtime. It is
-// registered on either credential: a token cannot reach the enterprise
-// administrator API, so a request made with one fails naming the credential it
-// needs, which is more useful than hiding a role an app in the same tenant can
-// grant.
+// enterpriseRoleProvisioner adds Grant and Revoke to the read-only syncer. Under
+// PAT auth both fail, naming the credential they need.
 type enterpriseRoleProvisioner struct {
 	*enterpriseRoleResourceType
 }
 
 // EnterpriseRoleProvisioningBuilder returns the syncer with Grant and Revoke.
-// A nil provider is the token path, where the mutations report that they need
-// GitHub App authentication rather than being absent.
 func EnterpriseRoleProvisioningBuilder(
 	client *github.Client,
 	appClient *github.Client,
@@ -303,8 +286,6 @@ func EnterpriseRoleProvisioningBuilder(
 }
 
 // EnterpriseRoleBuilder returns the read-only enterprise role syncer.
-// newEnterpriseClients is nil under PAT authentication, where only the read
-// path is available.
 func EnterpriseRoleBuilder(
 	client *github.Client,
 	appClient *github.Client,
@@ -324,8 +305,7 @@ func EnterpriseRoleBuilder(
 	}
 }
 
-// appList emits only the built-in Owner role. The consumed-licenses API that
-// discovers the other roles is PAT-only.
+// appList emits only the built-in Owner role.
 func appList(
 	enterprises []string,
 	enterpriseClients map[string]*githubEnterpriseAdministratorClient,
@@ -352,18 +332,9 @@ func appList(
 	return ret, &resourceSdk.SyncOpResults{}, nil
 }
 
-// appGrants emits the users who hold the Owner role today and the ones invited
-// but not yet accepted, against the same entitlement. C1 has no pending grant
-// state, so the two are indistinguishable there; the connector still tells them
-// apart, because revoking an owner and cancelling an invitation are different
-// mutations.
-//
-// Nothing tracks an expiry: an invitation nobody accepts stops resolving on
-// GitHub's side, so it stops being emitted and C1 drops the grant that sync.
-//
-// Owners and invitations are two phases of one page token, because invitations
-// are not enumerable and have to be resolved from the enterprise members. An
-// empty cursor drops the current phase, emptying the token once both are done.
+// appGrants emits current owners and pending invitees on the same entitlement,
+// since C1 has no pending grant state. Owners and invitations are two phases of
+// one page token, because invitations are resolved from the enterprise members.
 func (o *enterpriseRoleResourceType) appGrants(
 	ctx context.Context,
 	enterpriseClients map[string]*githubEnterpriseAdministratorClient,
@@ -425,14 +396,28 @@ func (o *enterpriseRoleResourceType) appGrants(
 	return ret, &resourceSdk.SyncOpResults{Annotations: annos, NextPageToken: pageToken}, nil
 }
 
-// failClosedOnUnreadableEnterprise keeps NotFound from leaving the sync path.
-// It is the one code the SDK downgrades to a warning: SyncGrantsOp skips the
-// action and the sync still completes, and C1 deletes the grants a completed
-// sync did not report. An organization GitHub stops resolving -- renamed,
-// uninstalled, mistyped -- would therefore revoke every Owner silently, which
-// is the failure the rest of this resource type is built to avoid. Revoke
-// still reads NotFound as "already gone", so this belongs here rather than in
-// the client both paths share.
+// enterpriseSetupError marks a client build that failed on how the app or
+// --enterprises is configured, as opposed to GitHub being unreachable. Before
+// the enterprise administrator API was used, such a deployment synced no
+// enterprise roles without failing, so sync keeps doing that; Grant and Revoke
+// still return the error, which names the fix.
+type enterpriseSetupError struct{ error }
+
+func (e enterpriseSetupError) Unwrap() error { return e.error }
+
+func isEnterpriseSetupError(err error) bool {
+	var setupErr enterpriseSetupError
+	return errors.As(err, &setupErr)
+}
+
+func warnEnterpriseRolesSkipped(ctx context.Context, err error) {
+	ctxzap.Extract(ctx).Warn("baton-github: skipping enterprise roles, the GitHub App is not set up to read them",
+		zap.Error(err))
+}
+
+// failClosedOnUnreadableEnterprise turns NotFound into FailedPrecondition. The SDK
+// downgrades NotFound to a warning and completes the sync, which would make C1
+// delete every Owner grant.
 func failClosedOnUnreadableEnterprise(err error, enterprise string) error {
 	if status.Code(err) != codes.NotFound {
 		return err
@@ -468,15 +453,9 @@ func (o *enterpriseRoleResourceType) ownerGrants(
 	return ret, nextCursor, annos, nil
 }
 
-// pendingInvitationGrants emits one page worth of users who have been invited
-// to the role and have not accepted, in member order so a page emits the same
-// grants in the same sequence on every sync.
-//
-// GitHub exposes no connection of pending administrator invitations to an
-// installation token, so they cannot be listed: they are resolved by asking
-// about known logins. The enterprise members are that candidate set, which
-// means an invitation sent to someone who is not a member of the enterprise is
-// invisible to the sync.
+// pendingInvitationGrants emits one page of pending Owner invitees, resolved by
+// looking up the enterprise members, since invitations can't be listed with an
+// installation token. Invitations to non-members are not visible.
 func (o *enterpriseRoleResourceType) pendingInvitationGrants(
 	ctx context.Context,
 	client *githubEnterpriseAdministratorClient,
@@ -518,17 +497,10 @@ func (o *enterpriseRoleResourceType) pendingInvitationGrants(
 	return ret, nextCursor, annos, nil
 }
 
-// Grant gives a user the built-in Owner role and returns the resulting grant.
-//
-// A member can only become an owner by accepting an invitation. GitHub rejects
-// that invitation for existing administrators, but an installation token
-// cannot read their current role. Promoting one in place would therefore make
-// Revoke destructive: it could only demote them to UNAFFILIATED rather than
-// restore the role they held before the grant.
-//
-// An unaccepted invitation counts as held and returns a grant, the same way
-// Grants() emits it: returning nothing would make C1 drop an overlay that the
-// next sync puts straight back.
+// Grant gives a user the built-in Owner role by inviting them. Existing
+// administrators are refused rather than promoted in place: their current role
+// can't be read, so Revoke could not restore it. A pending invitation counts as
+// granted, matching Grants().
 func (o *enterpriseRoleProvisioner) Grant(
 	ctx context.Context,
 	principal *v2.Resource,
@@ -555,12 +527,7 @@ func (o *enterpriseRoleProvisioner) Grant(
 		return result, annos, nil
 	}
 
-	// GitHub accepts an owner invitation for any user, but Grants() resolves
-	// invitations by asking about the enterprise members, so one addressed to
-	// anyone else would be created and then be invisible to every later sync:
-	// C1 would drop the grant while the invitation stayed live on GitHub.
-	// Outside collaborators reach C1 as principals through repository access,
-	// so this is reachable rather than theoretical.
+	// Grants() can only see invitations to enterprise members.
 	isMember, memberAnnos, err := client.isMember(ctx, enterprise, login)
 	annos = freshestRateLimit(annos, memberAnnos)
 	if err != nil {
@@ -581,9 +548,8 @@ func (o *enterpriseRoleProvisioner) Grant(
 			zap.String("login", login),
 			zap.Error(inviteErr),
 		)
-		// The rejection is not always "already an administrator" — a seat
-		// limit or an SSO restriction lands here too — so the message states
-		// the policy and lets GitHub give the reason.
+		// The rejection can also be a seat limit or SSO restriction, so let GitHub's
+		// error give the reason.
 		return nil, annos, fmt.Errorf(
 			"baton-github: cannot grant enterprise Owner to %s, and promoting in place is not attempted "+
 				"because a prior administrator role cannot be read back and revoke would discard it: %w",
@@ -603,13 +569,9 @@ func (o *enterpriseRoleProvisioner) Grant(
 	return result, annos, nil
 }
 
-// Revoke takes the built-in Owner role away from a user.
-//
-// Holding the role and carrying an invitation are not alternatives, so both
-// are cleared: either one left behind would fail the verification that
-// follows. Demotion uses UNAFFILIATED, which keeps the user as a member of the
-// enterprise instead of evicting them. A NOT_FOUND from either mutation is
-// success, because it means the state being asked for is already in place.
+// Revoke removes the Owner role and cancels any pending invitation. Demotion uses
+// UNAFFILIATED, which keeps the user's enterprise membership. NOT_FOUND from
+// either mutation means it's already done.
 func (o *enterpriseRoleProvisioner) Revoke(
 	ctx context.Context,
 	grantObj *v2.Grant,
@@ -674,10 +636,7 @@ func (o *enterpriseRoleProvisioner) provisioningTarget(
 		return "", nil, status.Error(codes.InvalidArgument,
 			"baton-github: only the built-in enterprise Owner role can be provisioned")
 	}
-	// The construction error comes first: without it the operator is told the
-	// app is not installed even when the real cause was a transient failure
-	// or a mismatched organization, and FailedPrecondition reads to C1 as
-	// non-retryable.
+	// The build error comes first: the generic reason below cannot name a cause.
 	enterpriseClients, err := o.clients(ctx)
 	if err != nil {
 		return "", nil, err
@@ -716,10 +675,8 @@ func enterpriseOwnerPrincipalID(owner enterpriseUser) (*v2.ResourceId, error) {
 	return principalId, nil
 }
 
-// provisionableEnterpriseOwner returns the enterprise of a resource ID when it
-// names the one role this connector can read and write through the GitHub App.
-// Sync and provisioning share it so they cannot disagree on which roles are in
-// the catalog.
+// provisionableEnterpriseOwner returns the enterprise of a resource ID that names
+// the Owner role. Shared by sync and provisioning.
 func provisionableEnterpriseOwner(resourceID string) (string, bool) {
 	enterprise, role, ok := parseEnterpriseRoleID(resourceID)
 	if !ok || !strings.EqualFold(role, enterpriseRoleOwner) {

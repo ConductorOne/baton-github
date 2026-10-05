@@ -2,8 +2,6 @@ package mocks
 
 import "github.com/migueleliasweb/go-github-mock/src/mock"
 
-// methodGet is extracted so goconst stops flagging the repeated literal across
-// the endpoint patterns below.
 const methodGet = "GET"
 
 var GetUserById = mock.EndpointPattern{
