@@ -181,9 +181,6 @@ func (c *EnterpriseAdminClient) ResolveEnterpriseNodeID(ctx context.Context, ent
 	return nil
 }
 
-// VerifyOrganization checks that the organization owners are read through
-// belongs to this enterprise. organizations(query:) is a substring search, so
-// every page is read before concluding it is not there.
 // ErrOrganizationNotInEnterprise is the one configuration answer
 // VerifyOrganization gives. Callers key on it rather than on the gRPC code,
 // because a query failure inside the walk carries a code too -- a GraphQL
@@ -191,6 +188,9 @@ func (c *EnterpriseAdminClient) ResolveEnterpriseNodeID(ctx context.Context, ent
 // through %w, so the code alone cannot tell the two apart.
 var ErrOrganizationNotInEnterprise = errors.New("organization does not belong to the enterprise")
 
+// VerifyOrganization checks that the organization owners are read through
+// belongs to this enterprise. organizations(query:) is a substring search, so
+// every page is read before concluding it is not there.
 func (c *EnterpriseAdminClient) VerifyOrganization(ctx context.Context, enterprise string) error {
 	var after *githubv4.String
 	walked := false
@@ -225,8 +225,8 @@ func (c *EnterpriseAdminClient) VerifyOrganization(ctx context.Context, enterpri
 			c.org, enterprise, enterpriseMaxPages)
 	}
 
-	// FailedPrecondition is what the caller keys on to tell this apart from the
-	// Internal above, which is not a configuration problem.
+	// The sentinel is what tells this apart from the Internal above; the code
+	// is carried for C1, which reads FailedPrecondition as non-retryable.
 	return uhttp.WrapErrors(codes.FailedPrecondition,
 		fmt.Sprintf("baton-github: organization %s does not belong to enterprise %s, so its owners cannot be synced",
 			c.org, enterprise),
