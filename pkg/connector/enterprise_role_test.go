@@ -981,10 +981,8 @@ func TestEnterpriseRoleSkipsSyncOnASetupError(t *testing.T) {
 	require.Equal(t, 3, builds)
 }
 
-// A partial build is not remembered. Memoizing it would keep the skipped
-// enterprise skipped until the process restarts, including after the app is
-// installed on it. A later call that builds every configured enterprise is
-// what gets stored.
+// Clients that built are kept. Grants pages do not retry a skipped slug.
+// The next List does, and that is what stores an enterprise that builds later.
 func TestEnterpriseRoleRetriesAnEnterpriseSkippedWhileClientsWereBuilt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1021,6 +1019,40 @@ func TestEnterpriseRoleRetriesAnEnterpriseSkippedWhileClientsWereBuilt(t *testin
 	_, _, err = builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
 	require.NoError(t, err)
 	require.Equal(t, 2, builds)
+}
+
+// A retry that is still a setup error must not discard the clients that
+// already built. Returning that error would make List skip the whole type.
+func TestEnterpriseRoleKeepsBuiltClientsWhenARetryIsStillASetupError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	var asked [][]string
+	builds := 0
+	builder := EnterpriseRoleBuilder(nil, nil, []string{"example-enterprise", "typo-enterprise"},
+		func(_ context.Context, enterprises []string) (map[string]*customclient.EnterpriseAdminClient, error) {
+			builds++
+			asked = append(asked, append([]string(nil), enterprises...))
+			if builds == 1 {
+				return map[string]*customclient.EnterpriseAdminClient{
+					"example-enterprise": {},
+				}, nil
+			}
+			return nil, enterpriseSetupError{status.Error(codes.FailedPrecondition, "not installed on the enterprise")}
+		},
+	)
+
+	resources, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Len(t, resources, 1)
+
+	resources, _, err = builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Len(t, resources, 1)
+	require.Equal(t, [][]string{
+		{"example-enterprise", "typo-enterprise"},
+		{"typo-enterprise"},
+	}, asked)
 }
 
 // No build failure is remembered. GitHub answers 404 for an uninstalled app,
