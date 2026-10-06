@@ -429,7 +429,7 @@ func newTestEnterpriseRoleBuilder(
 		github.NewClient(mgh.Server()),
 		nil,
 		[]string{testEnterprise},
-		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+		func(context.Context, []string) (map[string]*customclient.EnterpriseAdminClient, error) {
 			return map[string]*customclient.EnterpriseAdminClient{testEnterprise: enterpriseClient}, nil
 		},
 	)
@@ -863,7 +863,7 @@ func TestEnterpriseRoleVerifyOrganization(t *testing.T) {
 
 	stub := &enterpriseStub{}
 	builder, _, _ := newTestEnterpriseRoleBuilder(t, stub)
-	enterpriseClients, err := builder.clients(ctx)
+	enterpriseClients, err := builder.clients(ctx, true)
 	require.NoError(t, err)
 	require.NoError(t, enterpriseClients[testEnterprise].VerifyOrganization(ctx, testEnterprise))
 	require.Equal(t, 1, stub.organizationChecks)
@@ -911,7 +911,7 @@ func TestEnterpriseRoleFailsClosedWithoutEnterpriseClients(t *testing.T) {
 	clientsErr := status.Error(codes.Unavailable, "github-connector: rate limited")
 	builds := 0
 	builder := EnterpriseRoleBuilder(nil, nil, []string{testEnterprise},
-		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+		func(context.Context, []string) (map[string]*customclient.EnterpriseAdminClient, error) {
 			builds++
 			return nil, clientsErr
 		},
@@ -949,7 +949,7 @@ func TestEnterpriseRoleSkipsSyncOnASetupError(t *testing.T) {
 		"github-connector: GitHub App is not installed on enterprise")}
 	builds := 0
 	builder := EnterpriseRoleProvisioningBuilder(nil, nil, []string{testEnterprise},
-		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+		func(context.Context, []string) (map[string]*customclient.EnterpriseAdminClient, error) {
 			builds++
 			return nil, clientsErr
 		},
@@ -991,7 +991,7 @@ func TestEnterpriseRoleRetriesAnEnterpriseSkippedWhileClientsWereBuilt(t *testin
 
 	builds := 0
 	builder := EnterpriseRoleBuilder(nil, nil, []string{"example-enterprise", "typo-enterprise"},
-		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+		func(context.Context, []string) (map[string]*customclient.EnterpriseAdminClient, error) {
 			builds++
 			clients := map[string]*customclient.EnterpriseAdminClient{
 				"example-enterprise": {},
@@ -1006,6 +1006,11 @@ func TestEnterpriseRoleRetriesAnEnterpriseSkippedWhileClientsWereBuilt(t *testin
 	resources, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
 	require.NoError(t, err)
 	require.Len(t, resources, 1)
+	require.Equal(t, 1, builds)
+
+	// Grants pages reuse the clients that built and do not retry the skipped slug.
+	_, err = builder.clients(ctx, false)
+	require.NoError(t, err)
 	require.Equal(t, 1, builds)
 
 	resources, _, err = builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
@@ -1046,7 +1051,7 @@ func TestEnterpriseRoleRetriesAClientBuildFailure(t *testing.T) {
 
 			builds := 0
 			builder := EnterpriseRoleBuilder(nil, nil, []string{testEnterprise},
-				func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+				func(context.Context, []string) (map[string]*customclient.EnterpriseAdminClient, error) {
 					builds++
 					if builds == 1 {
 						return nil, tc.err
@@ -1107,7 +1112,7 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 	t.Run("names an enterprise the app is not set up to read", func(t *testing.T) {
 		t.Parallel()
 		appBuilder := EnterpriseRoleProvisioningBuilder(nil, nil, []string{testEnterprise},
-			func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+			func(context.Context, []string) (map[string]*customclient.EnterpriseAdminClient, error) {
 				return map[string]*customclient.EnterpriseAdminClient{}, nil
 			},
 		)
@@ -1119,7 +1124,7 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 	t.Run("names an enterprise that is not configured", func(t *testing.T) {
 		t.Parallel()
 		appBuilder := EnterpriseRoleProvisioningBuilder(nil, nil, []string{"other-enterprise"},
-			func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+			func(context.Context, []string) (map[string]*customclient.EnterpriseAdminClient, error) {
 				return map[string]*customclient.EnterpriseAdminClient{
 					"other-enterprise": {},
 				}, nil
@@ -1229,7 +1234,7 @@ func TestEnterpriseRoleGrantsDoNotLetANotFoundSilenceTheSync(t *testing.T) {
 	require.NoError(t, err)
 
 	builder := EnterpriseRoleProvisioningBuilder(nil, nil, []string{testEnterprise},
-		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+		func(context.Context, []string) (map[string]*customclient.EnterpriseAdminClient, error) {
 			return map[string]*customclient.EnterpriseAdminClient{testEnterprise: client}, nil
 		})
 
@@ -1338,7 +1343,7 @@ func TestEnterpriseRoleFailsClosedWhenTheClientBuildCannotSeeTheEnterprise(t *te
 	}))
 	t.Cleanup(srv.Close)
 
-	build := func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+	build := func(context.Context, []string) (map[string]*customclient.EnterpriseAdminClient, error) {
 		client, err := customclient.NewEnterpriseAdminClient(srv.URL, srv.Client(), srv.Client(), testOrg)
 		require.NoError(t, err)
 		return nil, client.ResolveEnterpriseNodeID(context.Background(), testEnterprise)

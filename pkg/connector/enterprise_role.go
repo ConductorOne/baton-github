@@ -38,8 +38,8 @@ const (
 	enterpriseAdministratorRoleUnaffiliated githubv4.EnterpriseAdministratorRole = "UNAFFILIATED"
 )
 
-// enterpriseClientProvider builds the per-enterprise administration clients.
-type enterpriseClientProvider func(ctx context.Context) (map[string]*customclient.EnterpriseAdminClient, error)
+// enterpriseClientProvider builds administration clients for the given enterprises.
+type enterpriseClientProvider func(ctx context.Context, enterprises []string) (map[string]*customclient.EnterpriseAdminClient, error)
 
 type enterpriseRoleResourceType struct {
 	resourceType   *v2.ResourceType
@@ -50,20 +50,24 @@ type enterpriseRoleResourceType struct {
 	mu             *sync.Mutex
 	// newEnterpriseClients is nil under PAT auth.
 	newEnterpriseClients enterpriseClientProvider
-	// enterpriseClients is keyed by enterprise slug and memoized on success only.
+	// enterpriseClients holds the enterprises whose clients built.
 	enterpriseClients map[string]*customclient.EnterpriseAdminClient
+	// skippedEnterprises were setup errors. List and provisioning retry them;
+	// Grants pages do not, so a typo slug is not looked up on every page.
+	skippedEnterprises map[string]struct{}
 }
 
 func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return o.resourceType
 }
 
-// clients builds the per-enterprise administration clients on first use.
-// A complete build is memoized. A partial one is not: an enterprise skipped
-// for a setup error is retried on the next call, so installing the app is
-// picked up without restarting the process. A hard failure is never memoized.
+// clients returns the administration clients. Enterprises that built are kept.
+// A setup error is remembered so Grants pages do not look it up again; List
+// and provisioning pass retrySkipped and try it on the next sync. A hard
+// failure is not remembered.
 func (o *enterpriseRoleResourceType) clients(
 	ctx context.Context,
+	retrySkipped bool,
 ) (map[string]*customclient.EnterpriseAdminClient, error) {
 	if o.newEnterpriseClients == nil {
 		return nil, nil
@@ -72,23 +76,81 @@ func (o *enterpriseRoleResourceType) clients(
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	if o.enterpriseClients != nil {
-		return o.enterpriseClients, nil
+	missing := o.enterprisesToBuild(retrySkipped)
+	if len(missing) == 0 {
+		return cloneEnterpriseClients(o.enterpriseClients), nil
 	}
 
-	clients, err := o.newEnterpriseClients(ctx)
+	built, err := o.newEnterpriseClients(ctx, missing)
 	if err != nil {
+		// One skipped enterprise must not discard the clients that already built.
+		if isEnterpriseSetupError(err) && len(o.enterpriseClients) > 0 {
+			o.rememberSkipped(missing)
+			return cloneEnterpriseClients(o.enterpriseClients), nil
+		}
 		return nil, err
 	}
-	// A skipped enterprise is absent from the map. Storing that map would keep
-	// it skipped for the life of the process, including after the operator
-	// installs the app.
-	if len(clients) < len(distinctEnterprises(o.enterprises)) {
-		return clients, nil
-	}
-	o.enterpriseClients = clients
 
-	return o.enterpriseClients, nil
+	if o.enterpriseClients == nil {
+		o.enterpriseClients = map[string]*customclient.EnterpriseAdminClient{}
+	}
+	if o.skippedEnterprises == nil {
+		o.skippedEnterprises = map[string]struct{}{}
+	}
+	for _, enterprise := range missing {
+		client, ok := built[enterprise]
+		if !ok {
+			o.skippedEnterprises[enterprise] = struct{}{}
+			continue
+		}
+		o.enterpriseClients[enterprise] = client
+		delete(o.skippedEnterprises, enterprise)
+	}
+
+	return cloneEnterpriseClients(o.enterpriseClients), nil
+}
+
+// enterprisesToBuild is every configured enterprise on the first call.
+// After that it is the ones that have no client, and the skipped ones only
+// when the caller asked to retry them.
+func (o *enterpriseRoleResourceType) enterprisesToBuild(retrySkipped bool) []string {
+	if o.enterpriseClients == nil && o.skippedEnterprises == nil {
+		return distinctEnterprises(o.enterprises)
+	}
+
+	var missing []string
+	for _, enterprise := range distinctEnterprises(o.enterprises) {
+		if _, ok := o.enterpriseClients[enterprise]; ok {
+			continue
+		}
+		if _, skipped := o.skippedEnterprises[enterprise]; skipped && !retrySkipped {
+			continue
+		}
+		missing = append(missing, enterprise)
+	}
+	return missing
+}
+
+func (o *enterpriseRoleResourceType) rememberSkipped(enterprises []string) {
+	if o.skippedEnterprises == nil {
+		o.skippedEnterprises = map[string]struct{}{}
+	}
+	for _, enterprise := range enterprises {
+		o.skippedEnterprises[enterprise] = struct{}{}
+	}
+}
+
+func cloneEnterpriseClients(
+	clients map[string]*customclient.EnterpriseAdminClient,
+) map[string]*customclient.EnterpriseAdminClient {
+	if clients == nil {
+		return nil
+	}
+	cloned := make(map[string]*customclient.EnterpriseAdminClient, len(clients))
+	for enterprise, client := range clients {
+		cloned[enterprise] = client
+	}
+	return cloned
 }
 
 // noClientReason explains why no administration client exists for enterprise.
@@ -160,7 +222,7 @@ func (o *enterpriseRoleResourceType) List(
 	parentID *v2.ResourceId,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Resource, *resourceSdk.SyncOpResults, error) {
-	enterpriseClients, err := o.clients(ctx)
+	enterpriseClients, err := o.clients(ctx, true)
 	if err != nil {
 		if isEnterpriseSetupError(err) {
 			warnEnterpriseRolesSkipped(ctx, err)
@@ -226,7 +288,7 @@ func (o *enterpriseRoleResourceType) Grants(
 	resource *v2.Resource,
 	opts resourceSdk.SyncOpAttrs,
 ) ([]*v2.Grant, *resourceSdk.SyncOpResults, error) {
-	enterpriseClients, err := o.clients(ctx)
+	enterpriseClients, err := o.clients(ctx, false)
 	if err != nil {
 		if isEnterpriseSetupError(err) {
 			warnEnterpriseRolesSkipped(ctx, err)
@@ -650,7 +712,7 @@ func (o *enterpriseRoleProvisioner) provisioningTarget(
 			"baton-github: only the built-in enterprise Owner role can be provisioned")
 	}
 	// The build error comes first: the generic reason below cannot name a cause.
-	enterpriseClients, err := o.clients(ctx)
+	enterpriseClients, err := o.clients(ctx, true)
 	if err != nil {
 		return "", nil, err
 	}

@@ -167,7 +167,7 @@ func TestResourceSyncersRegisterTheEnterpriseRoleWithProvisioning(t *testing.T) 
 		provider enterpriseClientProvider
 	}{
 		{"token", nil},
-		{"app", func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+		{"app", func(context.Context, []string) (map[string]*customclient.EnterpriseAdminClient, error) {
 			return nil, nil
 		}},
 	} {

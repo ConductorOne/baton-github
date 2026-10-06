@@ -466,7 +466,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 	// installation. The memoized clients refresh their token with connectorCtx,
 	// not the ctx of the RPC that first built them, which is cancelled when it returns.
 	connectorCtx := ctx
-	newEnterpriseRoleClientsFn := func(ctx context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+	newEnterpriseRoleClientsFn := func(ctx context.Context, enterprises []string) (map[string]*customclient.EnterpriseAdminClient, error) {
 		return newEnterpriseRoleClients(
 			ctx, connectorCtx, ghc.InstanceUrl, appClient, jwtts, enterprises, appHTTPClient, ghc.Org)
 	}
