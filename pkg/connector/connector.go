@@ -493,11 +493,11 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 // that enterprise's own installation token, since enterprise mutations reject
 // the org token.
 //
-// It returns an error rather than an empty map, and the caller decides what
-// that means: enterprise_role skips the type for the configuration errors and
-// fails the sync for everything else, because a sync that completes without
-// owners for a transient reason makes C1 delete the Owner role and every
-// grant on it. See enterpriseSetupError.
+// It returns the clients that built. A setup error skips that enterprise; the
+// caller skips the whole type only when none built, and fails the sync for
+// any other error, because a sync that completes without owners for a
+// transient reason makes C1 delete the Owner role and every grant on it.
+// See enterpriseSetupError.
 //
 // ctx scopes the discovery requests; connectorCtx is kept by the memoized
 // clients for refreshing the installation token.
@@ -523,8 +523,9 @@ func newEnterpriseRoleClients(
 	// otherwise read as. Not an enterpriseSetupError, unlike the two checks
 	// after it: a Server instance was already failing its sync before this API
 	// was used, since the consumed-licenses fallback answers 404 there and
-	// fillCache only swallows a 403, so skipping would hide a configuration
-	// that cannot work rather than preserve an outcome it used to have.
+	// fillCache returns every consumed-licenses error, so skipping would hide
+	// a configuration that cannot work rather than preserve an outcome it
+	// used to have.
 	if !isEnterpriseCloud(instanceURL) {
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"baton-github: the built-in Owner role is a GitHub Enterprise Cloud capability and %s does not serve it; "+
@@ -537,19 +538,27 @@ func newEnterpriseRoleClients(
 		return nil, fmt.Errorf("baton-github: error building the enterprise installation client")
 	}
 
-	clients := make(map[string]*customclient.EnterpriseAdminClient, len(enterprises))
-	// A configuration error is per enterprise: an organization belongs to
-	// exactly one, so naming a second means at most one of them can ever be
-	// served. Skipping only the ones that fail keeps the owners of the
-	// enterprise that is configured correctly, instead of discarding its
-	// client and completing a sync with nothing -- which C1 reads as every
-	// Owner grant being revoked. The first such error is kept to return when
-	// no enterprise could be built at all.
-	var setupErr error
-	for _, enterprise := range enterprises {
-		client, err := newEnterpriseRoleClient(
+	return collectEnterpriseRoleClients(ctx, enterprises, func(enterprise string) (*customclient.EnterpriseAdminClient, error) {
+		return newEnterpriseRoleClient(
 			ctx, connectorCtx, instanceURL, appClient, installationClient,
 			jwtTokenSource, orgHTTPClient, enterprise, org, len(enterprises))
+	})
+}
+
+// collectEnterpriseRoleClients keeps every enterprise whose client built.
+// A setup error skips that one enterprise. Anything else fails the build:
+// the owners are unknown rather than absent, and a sync that completed
+// without them would make C1 delete the grants. When none build, the first
+// setup error is returned so the caller can skip the type.
+func collectEnterpriseRoleClients(
+	ctx context.Context,
+	enterprises []string,
+	build func(enterprise string) (*customclient.EnterpriseAdminClient, error),
+) (map[string]*customclient.EnterpriseAdminClient, error) {
+	clients := make(map[string]*customclient.EnterpriseAdminClient, len(enterprises))
+	var setupErr error
+	for _, enterprise := range enterprises {
+		client, err := build(enterprise)
 		switch {
 		case err == nil:
 			clients[enterprise] = client
@@ -561,8 +570,6 @@ func newEnterpriseRoleClients(
 				zap.String("enterprise", enterprise),
 				zap.Error(err))
 		default:
-			// Anything else leaves the owners unknown rather than absent, so
-			// it fails the build and with it the sync.
 			return nil, err
 		}
 	}

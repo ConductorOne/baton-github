@@ -981,6 +981,43 @@ func TestEnterpriseRoleSkipsSyncOnASetupError(t *testing.T) {
 	require.Equal(t, 3, builds)
 }
 
+// A partial build is not remembered. Memoizing it would keep the skipped
+// enterprise skipped until the process restarts, including after the app is
+// installed on it. A later call that builds every configured enterprise is
+// what gets stored.
+func TestEnterpriseRoleRetriesAnEnterpriseSkippedWhileClientsWereBuilt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	builds := 0
+	builder := EnterpriseRoleBuilder(nil, nil, []string{"example-enterprise", "typo-enterprise"},
+		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+			builds++
+			clients := map[string]*customclient.EnterpriseAdminClient{
+				"example-enterprise": {},
+			}
+			if builds > 1 {
+				clients["typo-enterprise"] = &customclient.EnterpriseAdminClient{}
+			}
+			return clients, nil
+		},
+	)
+
+	resources, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Len(t, resources, 1)
+	require.Equal(t, 1, builds)
+
+	resources, _, err = builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Len(t, resources, 2)
+	require.Equal(t, 2, builds)
+
+	_, _, err = builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Equal(t, 2, builds)
+}
+
 // No build failure is remembered. GitHub answers 404 for an uninstalled app,
 // a revoked permission and a typo alike, and errors from go-github or a
 // cancelled context arrive wrapped with %w carrying no gRPC status at all, so
@@ -1065,14 +1102,27 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 		require.Contains(t, err.Error(), "needs GitHub App authentication")
 	})
 
-	// Under app auth every other reason already failed the client build, so
-	// what reaches here is an entitlement naming an enterprise this connector
-	// was never configured for.
-	t.Run("names an enterprise that is not configured", func(t *testing.T) {
+	// The enterprise is configured, but its client was not built. Saying it is
+	// not configured sends the operator to edit a slug that is already there.
+	t.Run("names an enterprise the app is not set up to read", func(t *testing.T) {
 		t.Parallel()
 		appBuilder := EnterpriseRoleProvisioningBuilder(nil, nil, []string{testEnterprise},
 			func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 				return map[string]*customclient.EnterpriseAdminClient{}, nil
+			},
+		)
+		_, _, err := appBuilder.Grant(ctx, principal, ent)
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Contains(t, err.Error(), "not set up to read it")
+	})
+
+	t.Run("names an enterprise that is not configured", func(t *testing.T) {
+		t.Parallel()
+		appBuilder := EnterpriseRoleProvisioningBuilder(nil, nil, []string{"other-enterprise"},
+			func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
+				return map[string]*customclient.EnterpriseAdminClient{
+					"other-enterprise": {},
+				}, nil
 			},
 		)
 		_, _, err := appBuilder.Grant(ctx, principal, ent)

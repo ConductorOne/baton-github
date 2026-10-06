@@ -58,9 +58,10 @@ func (o *enterpriseRoleResourceType) ResourceType(_ context.Context) *v2.Resourc
 	return o.resourceType
 }
 
-// clients builds the per-enterprise administration clients on first use and
-// memoizes them. Failures are not memoized, so a later sync retries after the
-// operator fixes the installation.
+// clients builds the per-enterprise administration clients on first use.
+// A complete build is memoized. A partial one is not: an enterprise skipped
+// for a setup error is retried on the next call, so installing the app is
+// picked up without restarting the process. A hard failure is never memoized.
 func (o *enterpriseRoleResourceType) clients(
 	ctx context.Context,
 ) (map[string]*customclient.EnterpriseAdminClient, error) {
@@ -79,16 +80,27 @@ func (o *enterpriseRoleResourceType) clients(
 	if err != nil {
 		return nil, err
 	}
+	// A skipped enterprise is absent from the map. Storing that map would keep
+	// it skipped for the life of the process, including after the operator
+	// installs the app.
+	if len(clients) < len(distinctEnterprises(o.enterprises)) {
+		return clients, nil
+	}
 	o.enterpriseClients = clients
 
 	return o.enterpriseClients, nil
 }
 
-// noClientReason explains why no administration client exists.
-func (o *enterpriseRoleResourceType) noClientReason() string {
+// noClientReason explains why no administration client exists for enterprise.
+func (o *enterpriseRoleResourceType) noClientReason(enterprise string) string {
 	if o.newEnterpriseClients == nil {
 		return "a personal access token can sync enterprise roles but cannot provision them, " +
 			"which needs GitHub App authentication"
+	}
+	for _, configured := range o.enterprises {
+		if strings.EqualFold(configured, enterprise) {
+			return "the GitHub App is not set up to read it"
+		}
 	}
 	return "it is not one of the configured enterprises"
 }
@@ -645,7 +657,7 @@ func (o *enterpriseRoleProvisioner) provisioningTarget(
 	client, ok := enterpriseClients[enterprise]
 	if !ok {
 		return "", nil, status.Errorf(codes.FailedPrecondition,
-			"baton-github: cannot provision enterprise %s: %s", enterprise, o.noClientReason())
+			"baton-github: cannot provision enterprise %s: %s", enterprise, o.noClientReason(enterprise))
 	}
 	return enterprise, client, nil
 }

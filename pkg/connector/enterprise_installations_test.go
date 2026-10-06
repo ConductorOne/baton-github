@@ -245,15 +245,12 @@ func TestConnectorFoldsRepeatedEnterprisesBeforeBuildingSyncers(t *testing.T) {
 // owners. The clients are built per enterprise, so a configuration error skips
 // only its own: discarding the whole map would complete a sync with no Owner
 // role, which C1 reads as every grant on it being revoked.
-func TestNewEnterpriseRoleClientsKeepTheEnterprisesThatBuilt(t *testing.T) {
+func TestNewEnterpriseRoleClientsReturnsTheSetupErrorWhenNoneBuild(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	client := newGitHubAPITestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		// Only the bad slug is unreachable; the good one never gets past the
-		// installation lookup in this fixture either, which is what makes the
-		// assertion below about the error rather than about a built client.
 		w.WriteHeader(http.StatusNotFound)
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"message": "Not Found"}))
 	}))
@@ -264,12 +261,45 @@ func TestNewEnterpriseRoleClientsKeepTheEnterprisesThatBuilt(t *testing.T) {
 		[]string{"example-enterprise", "typo-enterprise"}, nil, "example-org",
 	)
 
-	// Every slug failed, so the first configuration error is what surfaces --
-	// and it stays a setup error, so the sync skips the type rather than
-	// failing on a configuration the operator can fix.
+	// Every slug failed, so the first configuration error is what surfaces,
+	// and it stays a setup error, so the sync skips the type.
 	require.Error(t, err)
 	require.True(t, isEnterpriseSetupError(err))
 	require.Contains(t, err.Error(), `not installed on enterprise "example-enterprise"`)
+}
+
+// A setup error on one slug must not discard the client that built. Returning
+// on the first error would drop the good enterprise and complete a sync with
+// no owners.
+func TestNewEnterpriseRoleClientsKeepTheEnterprisesThatBuilt(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	good := &customclient.EnterpriseAdminClient{}
+	clients, err := collectEnterpriseRoleClients(ctx, []string{"typo-enterprise", "example-enterprise"},
+		func(enterprise string) (*customclient.EnterpriseAdminClient, error) {
+			if enterprise == "typo-enterprise" {
+				return nil, enterpriseSetupError{status.Error(codes.FailedPrecondition,
+					enterpriseNotInstalledMessage(enterprise, "example-org", 2))}
+			}
+			return good, nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, map[string]*customclient.EnterpriseAdminClient{"example-enterprise": good}, clients)
+
+	// A rate limit after one client built still fails the build. Keeping the
+	// partial map would report the other enterprise's owners as gone.
+	_, err = collectEnterpriseRoleClients(ctx, []string{"example-enterprise", "typo-enterprise"},
+		func(enterprise string) (*customclient.EnterpriseAdminClient, error) {
+			if enterprise == "example-enterprise" {
+				return good, nil
+			}
+			return nil, status.Error(codes.Unavailable, "rate limited")
+		},
+	)
+	require.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 // GitHub Enterprise Server has no enterprise administrator API, so naming an
