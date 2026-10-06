@@ -8,9 +8,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"time"
 
+	"github.com/conductorone/baton-sdk/internal/atomicfile"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	reader_v2 "github.com/conductorone/baton-sdk/pb/c1/reader/v2"
 	"github.com/conductorone/baton-sdk/pkg/connectorstore"
@@ -255,11 +257,29 @@ func WithFailFastInvariants() Option {
 	}
 }
 
+// syncIDPattern bounds a CompactableSync.SyncID to the shape the SDK itself
+// mints (KSUIDs; see dotc1z sync-run id minting). SyncIDs participate in
+// working-artifact filename construction (compacted-%s.c1z), so a
+// separator-bearing id would escape the compactor's private temp dir via
+// path.Join's Clean(). On resume paths the id can originate from a
+// connector-supplied artifact's sync_runs table, so it is untrusted input.
+var syncIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+
 func NewCompactor(ctx context.Context, outputDir string, compactableSyncs []*CompactableSync, opts ...Option) (*Compactor, func() error, error) {
 	if len(compactableSyncs) < 2 {
 		return nil, nil, ErrNotEnoughFilesToCompact
 	}
-
+	for _, e := range compactableSyncs {
+		if e == nil {
+			return nil, nil, fmt.Errorf("synccompactor: nil compactable sync entry")
+		}
+		// An empty SyncID is a valid sentinel meaning "resolve the latest
+		// sync"; every non-empty id must be a plain token so it cannot
+		// carry path separators into working-artifact filename construction.
+		if e.SyncID != "" && !syncIDPattern.MatchString(e.SyncID) {
+			return nil, nil, fmt.Errorf("synccompactor: invalid sync id %q: must match %v", e.SyncID, syncIDPattern)
+		}
+	}
 	c := &Compactor{
 		entries:       compactableSyncs,
 		destDir:       outputDir,
@@ -558,35 +578,19 @@ func cpFile(ctx context.Context, sourcePath string, destPath string) error {
 	}
 	defer source.Close()
 
-	destination, err := os.Create(destPath) // #nosec G703 -- the caller intentionally selects the compacted artifact destination.
+	destination, err := atomicfile.Create(destPath)
 	if err != nil {
 		return fmt.Errorf("failed to create destination file: %w", err)
 	}
-	destinationClosed := false
-	defer func() {
-		if !destinationClosed {
-			_ = destination.Close()
-		}
-	}()
+	defer destination.Cleanup()
 
 	_, err = io.Copy(destination, source)
 	if err != nil {
 		return fmt.Errorf("failed to copy file: %w", err)
 	}
-
-	// Sync + Close + err-check so write-back failures (out-of-disk,
-	// IO error, quota exhaustion) surface here rather than being
-	// silently discarded by the deferred Close after the function
-	// has reported success. Required because the compacted file is
-	// the canonical artifact downstream consumers read.
-	if err := destination.Sync(); err != nil {
-		return fmt.Errorf("failed to sync destination file: %w", err)
+	if err := destination.CloseAtomicallyReplace(); err != nil {
+		return fmt.Errorf("failed to write destination file: %w", err)
 	}
-	if err := destination.Close(); err != nil {
-		return fmt.Errorf("failed to close destination file: %w", err)
-	}
-	destinationClosed = true
-
 	return nil
 }
 

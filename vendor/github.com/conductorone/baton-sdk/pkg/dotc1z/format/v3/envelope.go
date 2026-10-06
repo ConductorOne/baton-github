@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/cespare/xxhash/v2"
@@ -41,6 +42,15 @@ var ErrEnvelopeTruncated = errors.New("c1z v3: envelope truncated")
 // usage and protects against a malicious file claiming a billion-byte
 // manifest length.
 const maxManifestBytes = 16 << 20
+
+// maxManifestSyncRunsBytes bounds the encoded sync_runs projection that a
+// header read decodes. Decoding allocates a message per run and a map entry
+// per stats key, so without a bound a manifest under maxManifestBytes could
+// cost a header read many times its size in heap. A projection over the bound
+// is dropped rather than rejected: it is advisory, its readers fall back to
+// the payload when it is absent, and a file that retained more syncs than
+// fit must still open.
+const maxManifestSyncRunsBytes = 1 << 20
 
 // Tar entries larger than this are streamed straight to disk on the
 // reader goroutine instead of being buffered in memory for the writer
@@ -580,11 +590,11 @@ func readEnvelope(r io.Reader, headerOnly bool, pool *DecoderPool) (*Envelope, e
 // pebble_id_index_format (42), and grant_digest_root (43). The
 // descriptor closure (field 10) — by far
 // the largest field — is skipped, which is what makes header reads
-// cheap enough for engine dispatch on every open. Sync run summaries
-// are small and few (bounded by the sync retention limit), so decoding
-// them here costs a handful of allocations.
+// cheap enough for engine dispatch on every open. The sync_runs projection
+// is decoded only while it fits maxManifestSyncRunsBytes.
 func unmarshalManifestHeader(b []byte) (*c1zv3.C1ZManifestV3, error) {
 	out := &c1zv3.C1ZManifestV3{}
+	syncRunsBytes := 0
 	for len(b) > 0 {
 		num, typ, n := protowire.ConsumeTag(b)
 		if n < 0 {
@@ -636,12 +646,17 @@ func unmarshalManifestHeader(b []byte) (*c1zv3.C1ZManifestV3, error) {
 			if n < 0 {
 				return nil, protowire.ParseError(n)
 			}
+			b = b[n:]
+			syncRunsBytes += len(v)
+			if syncRunsBytes > maxManifestSyncRunsBytes {
+				out.SetSyncRuns(nil)
+				continue
+			}
 			summary := &c1zv3.SyncRunSummary{}
 			if err := proto.Unmarshal(v, summary); err != nil {
 				return nil, fmt.Errorf("%w: sync_runs entry: %w", ErrManifestInvalid, err)
 			}
 			out.SetSyncRuns(append(out.GetSyncRuns(), summary))
-			b = b[n:]
 		case 41:
 			if typ != protowire.VarintType {
 				return nil, fmt.Errorf("c1z v3: manifest fold_dead_bytes has wire type %v", typ)
@@ -807,6 +822,68 @@ func writeTar(w io.Writer, dir string) error {
 	return nil
 }
 
+// maxExtractedDirs bounds the directories one payload extraction creates. A
+// Pebble checkpoint is a flat directory, so an honest payload creates few or
+// none. Entry names choose the rest, and a name of one-byte components
+// creates a directory per component, so the decoded-byte budget, which
+// charges a header the same whatever its name implies, does not bound them.
+const maxExtractedDirs = 1024
+
+// extractDirs creates the directories of one payload extraction under root
+// and refuses, before creating anything, once they would exceed
+// maxExtractedDirs.
+type extractDirs struct {
+	root    string
+	created map[string]struct{}
+}
+
+func newExtractDirs(root string) *extractDirs {
+	return &extractDirs{root: root, created: map[string]struct{}{}}
+}
+
+// mkdirAll is os.MkdirAll for rel, a local path under root. created holds
+// every ancestor of each directory it holds, so the walk up from rel stops
+// at the first created one, or once the cap is reached.
+func (d *extractDirs) mkdirAll(rel string, mode os.FileMode) error {
+	rel = filepath.Clean(rel)
+	var missing []string
+	for dir := rel; dir != "."; {
+		if _, ok := d.created[dir]; ok {
+			break
+		}
+		if len(d.created)+len(missing) == maxExtractedDirs {
+			return fmt.Errorf("c1z v3: payload creates more than %d directories: %w", maxExtractedDirs, ErrMaxSizeExceeded)
+		}
+		missing = append(missing, dir)
+		i := strings.LastIndexByte(dir, filepath.Separator)
+		if i < 0 {
+			break
+		}
+		dir = dir[:i]
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Join(d.root, rel), mode); err != nil {
+		return err
+	}
+	for _, dir := range missing {
+		d.created[dir] = struct{}{}
+	}
+	return nil
+}
+
+// tarEntryIsSparse reports whether hdr is a GNU sparse entry. archive/tar
+// keeps the GNU.sparse.* PAX records on the header it returns.
+func tarEntryIsSparse(hdr *tar.Header) bool {
+	for k := range hdr.PAXRecords {
+		if strings.HasPrefix(k, "GNU.sparse.") {
+			return true
+		}
+	}
+	return false
+}
+
 // ExtractZstdTar reads a zstd-tar payload stream from r and unpacks
 // it into destDir. destDir must exist. Used by the engine to
 // rematerialize a Pebble directory at open time.
@@ -832,13 +909,15 @@ func writeTar(w io.Writer, dir string) error {
 // Aggregate extraction is bounded too: when r is an Envelope's
 // PayloadReader, the decoded-byte budget (file contents AND tar
 // headers, so entry count as well) fails the extraction with
-// ErrMaxSizeExceeded once exceeded.
+// ErrMaxSizeExceeded once exceeded. Directories are capped separately
+// (extractDirs).
 //
 // Directory creation stays on the main goroutine because tar entries
 // are emitted in walk order — a TypeDir must finish before a TypeReg
 // child can be written.
 func ExtractZstdTar(r io.Reader, destDir string) error {
 	const extractWorkerCount = 4
+	dirs := newExtractDirs(destDir)
 
 	type writeJob struct {
 		target string
@@ -902,7 +981,7 @@ entryLoop:
 				readErr = err
 				break entryLoop
 			}
-			if err := os.MkdirAll(target, mode); err != nil {
+			if err := dirs.mkdirAll(filepath.FromSlash(hdr.Name), mode); err != nil {
 				readErr = err
 				break entryLoop
 			}
@@ -916,7 +995,14 @@ entryLoop:
 				readErr = fmt.Errorf("c1z v3: tar entry %q has negative size %d", hdr.Name, hdr.Size)
 				break entryLoop
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			// archive/tar synthesizes a sparse entry's holes itself, so
+			// those bytes never pass through the budgeted reader: a few KB
+			// of tar could write gigabytes. tar.Writer never writes them.
+			if tarEntryIsSparse(hdr) {
+				readErr = fmt.Errorf("c1z v3: tar entry %q is sparse: %w", hdr.Name, ErrMaxSizeExceeded)
+				break entryLoop
+			}
+			if err := dirs.mkdirAll(filepath.Dir(filepath.FromSlash(hdr.Name)), 0o755); err != nil {
 				readErr = err
 				break entryLoop
 			}
