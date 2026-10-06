@@ -44,7 +44,6 @@ type enterpriseClientProvider func(ctx context.Context) (map[string]*customclien
 type enterpriseRoleResourceType struct {
 	resourceType   *v2.ResourceType
 	client         *github.Client
-	appClient      *github.Client
 	customClient   *customclient.Client
 	enterprises    []string
 	roleUsersCache map[string][]string
@@ -117,7 +116,6 @@ func (o *enterpriseRoleResourceType) getRoleUsersCache(ctx context.Context) (map
 }
 
 func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
-	l := ctxzap.Extract(ctx)
 	for _, enterprise := range o.enterprises {
 		// GitHub's consumed-licenses API is 1-indexed; page 0 is undocumented
 		// and may return the same results as page 1, causing duplicates.
@@ -126,14 +124,6 @@ func (o *enterpriseRoleResourceType) fillCache(ctx context.Context) error {
 		for continuePagination {
 			consumedLicenses, _, err := o.customClient.ListEnterpriseConsumedLicenses(ctx, enterprise, page)
 			if err != nil {
-				if page == 1 && o.appClient != nil && isPermissionDenied(err) {
-					l.Debug("baton-github: enterprise features (--enterprises) require a Personal Access Token. "+
-						"GitHub App authentication cannot access the consumed-licenses API. "+
-						"Either switch to PAT auth or remove the --enterprises flag.",
-						zap.String("enterprise", enterprise),
-						zap.Error(err))
-					return nil
-				}
 				return fmt.Errorf("baton-github: error listing enterprise consumed licenses for %s: %w", enterprise, err)
 			}
 
@@ -274,21 +264,19 @@ type enterpriseRoleProvisioner struct {
 // EnterpriseRoleProvisioningBuilder returns the syncer with Grant and Revoke.
 func EnterpriseRoleProvisioningBuilder(
 	client *github.Client,
-	appClient *github.Client,
 	customClient *customclient.Client,
 	enterprises []string,
 	newEnterpriseClients enterpriseClientProvider,
 ) *enterpriseRoleProvisioner {
 	return &enterpriseRoleProvisioner{
 		enterpriseRoleResourceType: EnterpriseRoleBuilder(
-			client, appClient, customClient, enterprises, newEnterpriseClients),
+			client, customClient, enterprises, newEnterpriseClients),
 	}
 }
 
 // EnterpriseRoleBuilder returns the read-only enterprise role syncer.
 func EnterpriseRoleBuilder(
 	client *github.Client,
-	appClient *github.Client,
 	customClient *customclient.Client,
 	enterprises []string,
 	newEnterpriseClients enterpriseClientProvider,
@@ -296,7 +284,6 @@ func EnterpriseRoleBuilder(
 	return &enterpriseRoleResourceType{
 		resourceType:         resourceTypeEnterpriseRole,
 		client:               client,
-		appClient:            appClient,
 		customClient:         customClient,
 		enterprises:          enterprises,
 		roleUsersCache:       make(map[string][]string),

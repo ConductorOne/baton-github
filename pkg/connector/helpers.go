@@ -337,17 +337,6 @@ func freshestRateLimit(current, latest annotations.Annotations) annotations.Anno
 	return current
 }
 
-// isPermissionDenied is isPermissionError for gRPC status errors, which the
-// GraphQL clients return instead of a *github.Response.
-func isPermissionDenied(err error) bool {
-	var grpcErr interface{ GRPCStatus() *status.Status }
-	if errors.As(err, &grpcErr) {
-		return grpcErr.GRPCStatus().Code() == codes.PermissionDenied
-	}
-
-	return false
-}
-
 func isPermissionError(resp *github.Response) bool {
 	if resp == nil {
 		return false

@@ -273,9 +273,9 @@ func TestTokenRefreshTransport_EndToEndViaGitHubClient(t *testing.T) {
 	rts := newRefreshableTokenSource(validToken("initial"), src)
 
 	var (
-		callCount  atomic.Int32
-		seenTokens sync.Map
-		serverMu   sync.Mutex
+		callCount   atomic.Int32
+		seenTokens  sync.Map
+		serverMu    sync.Mutex
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		serverMu.Lock()

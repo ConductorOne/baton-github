@@ -96,12 +96,14 @@ func TestGetEnterpriseInstallationUsesTheInstanceBaseURL(t *testing.T) {
 }
 
 // A nil client provider is the token path, where enterprise roles come from
-// the consumed-licenses API. That API answers 403 to anything but a personal
-// access token, and the fallback swallows it rather than failing, so the list
-// is empty. This is the shape the token path has always had; it is pinned
-// because the app path now depends on the provider being the only thing that
-// distinguishes them.
-func TestEnterpriseRoleListIsInertOnTheTokenPath(t *testing.T) {
+// the consumed-licenses API. A credential that cannot read it fails the sync
+// rather than reporting an empty list, which is the shape that path has always
+// had: a token without read:enterprise is a configuration the operator has to
+// hear about, and reporting nothing would read to C1 as every role being gone.
+//
+// The provider being nil is the only thing that distinguishes the two paths,
+// so this is pinned alongside the app-path tests.
+func TestEnterpriseRoleListFailsOnTheTokenPathWithoutEnterpriseScope(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -111,12 +113,12 @@ func TestEnterpriseRoleListIsInertOnTheTokenPath(t *testing.T) {
 	}))
 
 	// nil provider is what newWithGithubPAT leaves behind.
-	builder := EnterpriseRoleBuilder(apiClient, apiClient, customclient.New(apiClient),
+	builder := EnterpriseRoleBuilder(apiClient, customclient.New(apiClient),
 		[]string{"example-enterprise"}, nil)
 
-	resources, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
-	require.NoError(t, err)
-	require.Empty(t, resources)
+	_, _, err := builder.List(ctx, nil, resourceSdk.SyncOpAttrs{})
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 // GitHub answers 404 when the app is not installed on the enterprise. Failing
@@ -192,9 +194,9 @@ func TestResourceSyncersRegisterTheEnterpriseRoleWithProvisioning(t *testing.T) 
 }
 
 // Setting the flag in both the environment and the command line lands the
-// same enterprise twice, which is still one enterprise. Counting raw entries
-// would reject a configuration the operator wrote correctly, with a message
-// naming a number they never chose.
+// same enterprise twice. The clients are keyed by the slug as configured, so
+// without the fold that would build two entries for one enterprise and emit
+// its Owner role twice.
 func TestNewEnterpriseRoleClientsFoldsRepeatedEnterprises(t *testing.T) {
 	t.Parallel()
 
@@ -237,6 +239,37 @@ func TestConnectorFoldsRepeatedEnterprisesBeforeBuildingSyncers(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, resources, 1)
+}
+
+// A slug the app cannot reach must not cost the enterprise that works its
+// owners. The clients are built per enterprise, so a configuration error skips
+// only its own: discarding the whole map would complete a sync with no Owner
+// role, which C1 reads as every grant on it being revoked.
+func TestNewEnterpriseRoleClientsKeepTheEnterprisesThatBuilt(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	client := newGitHubAPITestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Only the bad slug is unreachable; the good one never gets past the
+		// installation lookup in this fixture either, which is what makes the
+		// assertion below about the error rather than about a built client.
+		w.WriteHeader(http.StatusNotFound)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"message": "Not Found"}))
+	}))
+
+	_, err := newEnterpriseRoleClients(
+		ctx, ctx, "https://github.com", client,
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "unused"}),
+		[]string{"example-enterprise", "typo-enterprise"}, nil, "example-org",
+	)
+
+	// Every slug failed, so the first configuration error is what surfaces --
+	// and it stays a setup error, so the sync skips the type rather than
+	// failing on a configuration the operator can fix.
+	require.Error(t, err)
+	require.True(t, isEnterpriseSetupError(err))
+	require.Contains(t, err.Error(), `not installed on enterprise "example-enterprise"`)
 }
 
 // GitHub Enterprise Server has no enterprise administrator API, so naming an

@@ -428,7 +428,6 @@ func newTestEnterpriseRoleBuilder(
 	builder := EnterpriseRoleProvisioningBuilder(
 		github.NewClient(mgh.Server()),
 		nil,
-		nil,
 		[]string{testEnterprise},
 		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 			return map[string]*customclient.EnterpriseAdminClient{testEnterprise: enterpriseClient}, nil
@@ -911,7 +910,7 @@ func TestEnterpriseRoleFailsClosedWithoutEnterpriseClients(t *testing.T) {
 
 	clientsErr := status.Error(codes.Unavailable, "github-connector: rate limited")
 	builds := 0
-	builder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise},
+	builder := EnterpriseRoleBuilder(nil, nil, []string{testEnterprise},
 		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 			builds++
 			return nil, clientsErr
@@ -949,7 +948,7 @@ func TestEnterpriseRoleSkipsSyncOnASetupError(t *testing.T) {
 	clientsErr := enterpriseSetupError{status.Error(codes.FailedPrecondition,
 		"github-connector: GitHub App is not installed on enterprise")}
 	builds := 0
-	builder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise},
+	builder := EnterpriseRoleProvisioningBuilder(nil, nil, []string{testEnterprise},
 		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 			builds++
 			return nil, clientsErr
@@ -1009,7 +1008,7 @@ func TestEnterpriseRoleRetriesAClientBuildFailure(t *testing.T) {
 			t.Parallel()
 
 			builds := 0
-			builder := EnterpriseRoleBuilder(nil, nil, nil, []string{testEnterprise},
+			builder := EnterpriseRoleBuilder(nil, nil, []string{testEnterprise},
 				func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 					builds++
 					if builds == 1 {
@@ -1060,7 +1059,7 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 	// after a fix that cannot apply.
 	t.Run("names the credential when the token cannot provision", func(t *testing.T) {
 		t.Parallel()
-		patBuilder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise}, nil)
+		patBuilder := EnterpriseRoleProvisioningBuilder(nil, nil, []string{testEnterprise}, nil)
 		_, _, err := patBuilder.Grant(ctx, principal, ent)
 		require.Equal(t, codes.FailedPrecondition, status.Code(err))
 		require.Contains(t, err.Error(), "needs GitHub App authentication")
@@ -1071,7 +1070,7 @@ func TestEnterpriseRoleProvisioningTargetGuards(t *testing.T) {
 	// was never configured for.
 	t.Run("names an enterprise that is not configured", func(t *testing.T) {
 		t.Parallel()
-		appBuilder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise},
+		appBuilder := EnterpriseRoleProvisioningBuilder(nil, nil, []string{testEnterprise},
 			func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 				return map[string]*customclient.EnterpriseAdminClient{}, nil
 			},
@@ -1179,7 +1178,7 @@ func TestEnterpriseRoleGrantsDoNotLetANotFoundSilenceTheSync(t *testing.T) {
 	client, err := customclient.NewEnterpriseAdminClient(srv.URL, srv.Client(), srv.Client(), testOrg)
 	require.NoError(t, err)
 
-	builder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise},
+	builder := EnterpriseRoleProvisioningBuilder(nil, nil, []string{testEnterprise},
 		func(context.Context) (map[string]*customclient.EnterpriseAdminClient, error) {
 			return map[string]*customclient.EnterpriseAdminClient{testEnterprise: client}, nil
 		})
@@ -1316,7 +1315,7 @@ func TestEnterpriseRoleFailsClosedWhenTheClientBuildCannotSeeTheEnterprise(t *te
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			builder := EnterpriseRoleProvisioningBuilder(nil, nil, nil, []string{testEnterprise}, build)
+			builder := EnterpriseRoleProvisioningBuilder(nil, nil, []string{testEnterprise}, build)
 			err := tc.call(builder)
 
 			require.Error(t, err)

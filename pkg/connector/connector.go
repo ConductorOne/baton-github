@@ -158,7 +158,7 @@ func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.Resour
 	if len(gh.enterprises) > 0 {
 		resourceSyncers = append(resourceSyncers,
 			EnterpriseRoleProvisioningBuilder(
-				gh.client, gh.appClient, gh.customClient, gh.enterprises,
+				gh.client, gh.customClient, gh.enterprises,
 				gh.newEnterpriseRoleClients,
 			),
 			LicenseBuilder(gh.customClient, gh.enterprises),
@@ -493,8 +493,11 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 // that enterprise's own installation token, since enterprise mutations reject
 // the org token.
 //
-// It fails rather than returning no clients: a sync that completes without
-// owners would make C1 delete the Owner role and every grant on it.
+// It returns an error rather than an empty map, and the caller decides what
+// that means: enterprise_role skips the type for the configuration errors and
+// fails the sync for everything else, because a sync that completes without
+// owners for a transient reason makes C1 delete the Owner role and every
+// grant on it. See enterpriseSetupError.
 //
 // ctx scopes the discovery requests; connectorCtx is kept by the memoized
 // clients for refreshing the installation token.
@@ -535,54 +538,100 @@ func newEnterpriseRoleClients(
 	}
 
 	clients := make(map[string]*customclient.EnterpriseAdminClient, len(enterprises))
+	// A configuration error is per enterprise: an organization belongs to
+	// exactly one, so naming a second means at most one of them can ever be
+	// served. Skipping only the ones that fail keeps the owners of the
+	// enterprise that is configured correctly, instead of discarding its
+	// client and completing a sync with nothing -- which C1 reads as every
+	// Owner grant being revoked. The first such error is kept to return when
+	// no enterprise could be built at all.
+	var setupErr error
 	for _, enterprise := range enterprises {
-		installation, _, err := installationClient.GetEnterpriseInstallation(ctx, enterprise)
-		if err != nil {
-			if status.Code(err) == codes.NotFound {
-				return nil, enterpriseSetupError{status.Error(codes.FailedPrecondition,
-					enterpriseNotInstalledMessage(enterprise, org, len(enterprises)))}
+		client, err := newEnterpriseRoleClient(
+			ctx, connectorCtx, instanceURL, appClient, installationClient,
+			jwtTokenSource, orgHTTPClient, enterprise, org, len(enterprises))
+		switch {
+		case err == nil:
+			clients[enterprise] = client
+		case isEnterpriseSetupError(err):
+			if setupErr == nil {
+				setupErr = err
 			}
+			ctxzap.Extract(ctx).Warn("baton-github: skipping an enterprise the GitHub App is not set up to read",
+				zap.String("enterprise", enterprise),
+				zap.Error(err))
+		default:
+			// Anything else leaves the owners unknown rather than absent, so
+			// it fails the build and with it the sync.
 			return nil, err
 		}
-		installationID := installation.ID
-
-		token, err := getInstallationToken(ctx, appClient, installationID)
-		if err != nil {
-			return nil, err
-		}
-
-		ts := newRefreshableTokenSource(
-			&oauth2.Token{
-				AccessToken: token.GetToken(),
-				Expiry:      token.GetExpiresAt().Time,
-			},
-			&appTokenRefresher{
-				ctx:            connectorCtx,
-				instanceURL:    instanceURL,
-				installationID: installationID,
-				jwtTokenSource: jwtTokenSource,
-			},
-		)
-
-		httpClient, err := newGitHubAppHTTPClient(connectorCtx, ts)
-		if err != nil {
-			return nil, err
-		}
-
-		client, err := customclient.NewEnterpriseAdminClient(instanceURL, httpClient, orgHTTPClient, org)
-		if err != nil {
-			return nil, err
-		}
-		if err := client.VerifyOrganization(ctx, enterprise); err != nil {
-			return nil, asEnterpriseSetupError(err)
-		}
-		if err := client.ResolveEnterpriseNodeID(ctx, enterprise); err != nil {
-			return nil, err
-		}
-		clients[enterprise] = client
+	}
+	if len(clients) == 0 {
+		return nil, setupErr
 	}
 
 	return clients, nil
+}
+
+// newEnterpriseRoleClient builds the administration client of one enterprise
+// with that enterprise's own installation token.
+func newEnterpriseRoleClient(
+	ctx context.Context,
+	connectorCtx context.Context,
+	instanceURL string,
+	appClient *github.Client,
+	installationClient *customclient.Client,
+	jwtTokenSource oauth2.TokenSource,
+	orgHTTPClient *http.Client,
+	enterprise string,
+	org string,
+	configured int,
+) (*customclient.EnterpriseAdminClient, error) {
+	installation, _, err := installationClient.GetEnterpriseInstallation(ctx, enterprise)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return nil, enterpriseSetupError{status.Error(codes.FailedPrecondition,
+				enterpriseNotInstalledMessage(enterprise, org, configured))}
+		}
+		return nil, err
+	}
+	installationID := installation.ID
+
+	token, err := getInstallationToken(ctx, appClient, installationID)
+	if err != nil {
+		return nil, err
+	}
+
+	ts := newRefreshableTokenSource(
+		&oauth2.Token{
+			AccessToken: token.GetToken(),
+			Expiry:      token.GetExpiresAt().Time,
+		},
+		&appTokenRefresher{
+			ctx:            connectorCtx,
+			instanceURL:    instanceURL,
+			installationID: installationID,
+			jwtTokenSource: jwtTokenSource,
+		},
+	)
+
+	httpClient, err := newGitHubAppHTTPClient(connectorCtx, ts)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := customclient.NewEnterpriseAdminClient(instanceURL, httpClient, orgHTTPClient, org)
+	if err != nil {
+		return nil, err
+	}
+	if err := client.VerifyOrganization(ctx, enterprise); err != nil {
+		return nil, asEnterpriseSetupError(err)
+	}
+	if err := client.ResolveEnterpriseNodeID(ctx, enterprise); err != nil {
+		return nil, err
+	}
+
+	return client, nil
 }
 
 // enterpriseNotInstalledMessage names the fix for an enterprise the app cannot

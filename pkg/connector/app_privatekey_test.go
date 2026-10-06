@@ -53,8 +53,8 @@ func TestLoadPrivateKeyFromString(t *testing.T) {
 	realNewlines := string(pemBytes)
 
 	shapes := map[string]string{
-		"real newlines": realNewlines,
-		"real CRLF":     strings.ReplaceAll(realNewlines, "\n", "\r\n"),
+		"real newlines":                              realNewlines,
+		"real CRLF":                                   strings.ReplaceAll(realNewlines, "\n", "\r\n"),
 		"backslash-n escaped, as the docs instruct":   strings.ReplaceAll(realNewlines, "\n", `\n`),
 		"backslash-n escaped, trailing space":         strings.ReplaceAll(realNewlines, "\n", `\n`) + " ",
 		"backslash-r-backslash-n escaped (CRLF file)": strings.ReplaceAll(realNewlines, "\n", `\r\n`),
