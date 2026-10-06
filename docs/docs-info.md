@@ -1,0 +1,377 @@
+# GitHub Connector Setup Guide
+
+---
+
+## Requirements
+
+- A **GitHub** organization, and for enterprise features a **GitHub Enterprise Cloud** account
+- Either a **personal access token (classic)** or a **GitHub App** owned by the organization or the enterprise
+- For the built-in Enterprise Owner role: a GitHub App installed on **both** the enterprise account and the organization
+
+---
+
+## Connector capabilities
+
+1. **What resources does the connector sync?**
+   This connector syncs:
+   - Organizations (the orgs the credential can administer, or the ones named in `--orgs` / `--org`)
+   - Users (organization members, with SAML identity emails when SAML is configured)
+   - Invitations (users invited to an organization who have not accepted, and invitations that expired)
+   - Teams (including nested teams, with their parent team as the parent resource)
+   - Repositories (optionally excluding archived ones)
+   - Organization roles (GitHub's built-in and custom organization roles)
+   - Enterprise roles (only when `--enterprises` is set; under App authentication this is the built-in Owner role)
+   - Licenses (enterprise seat consumption, only when `--enterprises` is set)
+   - GitHub Apps installed on the organization
+   - API keys (fine-grained personal access tokens with access to the org, only when `--sync-secrets` is set)
+
+2. **Can the connector provision any resources? If so, which ones?**
+   The connector can provision:
+   - Organization membership and admin role via Grant and Revoke. Granting to a user who is not yet a member sends an org invitation
+   - Team membership (`member`, `maintainer`) via Grant and Revoke
+   - Repository access (`pull`, `triage`, `push`, `maintain`, `admin`) via Grant and Revoke, for users and for teams
+   - Organization role assignment via Grant and Revoke
+   - The built-in Enterprise **Owner** role via Grant and Revoke, GitHub App authentication only
+   - Accounts, via the invitation resource type: `CreateAccount` sends an org invitation, and `Delete` cancels it
+   - User removal from the organization via `Delete` on the user resource type
+
+3. **Does the connector emit any event feeds?**
+   Yes, when `--sync-last-activity` is set. `github_usage_event_feed` streams member activity from each organization's audit log as usage events, which is what drives last-login and activity reporting. The flag also registers a synthetic app resource that exists only to carry those events.
+
+4. **Does the connector support grant expansion?**
+   Yes, in three places:
+   - Repository permissions implied by the organization's `default_repository_permission` are emitted against the organization and expanded through the org's `member` and `admin` entitlements, so every member's baseline repository access surfaces without enumerating collaborators
+   - An organization role assigned to a team is expanded through that team's `member` and `maintainer` entitlements
+   - An enterprise license held by a role is expanded through that role's `assigned` entitlement
+
+   All three are `Shallow`, so the SDK does not recurse further. `--direct-collaborators-only` leans on this expansion instead of fetching per-team repository detail, which cuts API calls on large organizations.
+
+---
+
+## Connector credentials
+
+1. **What credentials or information are needed to set up the connector?**
+   This connector accepts one of two authentication methods.
+
+   **Personal access token (classic)**
+
+   **Args**:
+   `--token` — the GitHub personal access token
+   `--instance-url` — the GitHub instance URL, defaults to `https://github.com`
+   `--orgs` — optional, limits syncing to specific organizations
+
+   **GitHub App**
+
+   **Args**:
+   `--app-id` — the GitHub App ID
+   `--app-privatekey-path` — path to the App's private key `.pem`
+   `--org` — required, the single organization the App is installed on
+   `--instance-url` — the GitHub instance URL, defaults to `https://github.com`
+
+   Common to both:
+   `--enterprises` — enterprises to sync enterprise roles and licenses for
+   `--sync-secrets` — sync fine-grained personal access tokens as API keys
+   `--sync-last-activity` — emit the audit-log usage event feed. Hidden from `--help` and from the GUI config here, because it only applies to GitHub Enterprise audit-log access; `baton-github-enterprise` sets it directly instead of going through this CLI layer
+   `--omit-archived-repositories` — skip archived repositories
+   `--direct-collaborators-only` — reduce API calls on large organizations
+
+2. **For each item in the list above:**
+   - **How does a user create or look up that credential or info?**
+
+     **Personal access token (classic):**
+     1. In GitHub, click your profile photo, then **Settings**
+     2. Go to **Developer settings** > **Personal access tokens** > **Tokens (classic)**
+     3. Click **Generate new token** > **Generate new token (classic)**
+     4. Name the token, optionally set an expiration, and select the scopes below
+     5. Click **Generate token** and copy it — it is shown only once
+
+     **GitHub App:**
+     1. For enterprise features, create the App under the enterprise account: **Settings** > **GitHub Apps** > **New GitHub App**. Otherwise create it under the organization
+     2. Give it a globally unique name, and use a placeholder URL for Homepage and Callback
+     3. Uncheck **Active** under Webhook
+     4. Select the permissions below
+     5. Under **Where can this app be installed?** choose **Only on this account**
+     6. Create the App, copy the **App ID**, then generate and save a **private key**
+     7. Install the App. For enterprise features install it twice: once on the **enterprise account**, once on the **organization** the connector syncs
+
+   - **Does the credential need any specific scopes or permissions?**
+
+     **Personal access token (classic)** scopes:
+     - `repo` — all
+     - `admin:org` — all for organization-level provisioning, otherwise `read:org`
+     - `user` — all
+     - `admin:enterprise` — `read:enterprise`, for enterprise roles and licenses
+
+     If the organization uses SAML single sign-on, the token must also be authorized for that organization.
+
+     **GitHub App** permissions:
+     - Repository: **Administration** read and write (implies **Metadata** read)
+     - Organization: **Administration** read-only (detects SAML/SSO configuration), **Members** read and write, **Custom organization roles** read and write
+     - Enterprise: **Enterprise people** read and write, required to sync and provision the built-in Owner role
+
+   - **Is the list of scopes or permissions different to sync (read) versus provision (read-write)?**
+     Yes. Read-only syncing needs `read:org` rather than `admin:org` on a PAT, and read-only equivalents of the App's organization permissions. Provisioning the built-in Enterprise Owner role requires **Enterprise people: read and write**; read-only is not enough because the connector issues invitations and role mutations.
+
+   - **What level of access or permissions does the user need in order to create the credentials?**
+     A personal access token must be created by a user with **Enterprise Owner** access when enterprise features are used, and organization admin access otherwise. Creating an enterprise-owned GitHub App requires someone who can manage GitHub Apps for the enterprise; installing it on an organization requires **Org Owner** on that organization.
+
+---
+
+## Resource Details
+
+### Organizations
+
+- **Resource type ID**: `org`
+- **Description**: The GitHub organizations the credential can administer, or the ones named in `--orgs` / `--org`
+- **Traits**: None
+- **Entitlements**: `member` (assignment) and `admin` (permission)
+- **Grants**: One grant per organization member for their role. Members are read from the members list; the connector distinguishes admins from plain members
+- **Children**: Users, Invitations, Teams, Repositories, Organization roles, GitHub Apps, API keys
+- **Provisioning**: Grant adds the member or promotes them to admin. A user who is not yet a member is sent an organization invitation instead, so the membership only exists once they accept. Revoke removes the organization membership
+
+### Users
+
+- **Resource type ID**: `user`
+- **Description**: Members of the synced organizations
+- **Traits**: User trait with login, email and profile
+- **Parent**: Organization
+- **Entitlements**: None
+- **Grants**: None. Access is emitted by the organization, team, repository and role builders
+- **Provisioning**: `Delete` removes the user from the organization
+- **Note**: When the organization has SAML single sign-on, emails are read from the SAML identity rather than the public profile. Enterprise-level SAML is read from the enterprise consumed-licenses API, which is PAT-only; when that is unavailable the connector falls back to the REST email
+
+### Invitations
+
+- **Resource type ID**: `invitation`
+- **Description**: Users invited to an organization who have not accepted, and invitations GitHub expired
+- **Traits**: User trait with `RESOURCE_STATUS_PENDING`, plus `invitation_status` and `invitation_expires_at` profile fields
+- **Parent**: Organization
+- **Entitlements**: None
+- **Grants**: None
+- **Provisioning**: `CreateAccount` sends an organization invitation; `Delete` cancels it
+- **Note**: Organization invitations expire seven days after creation. Because a pending invitation disappears once accepted, this resource type opts out of sync anomaly detection
+
+### Teams
+
+- **Resource type ID**: `team`
+- **Description**: GitHub teams, including nested teams
+- **Traits**: Group trait
+- **Parent**: Organization, or the parent team for a nested team
+- **Entitlements**: `member`, `maintainer` (permission)
+- **Grants**: One grant per team member for their role
+- **Provisioning**: Grant and Revoke add or remove team membership
+
+### Repositories
+
+- **Resource type ID**: `repository`
+- **Description**: Repositories of the synced organizations
+- **Traits**: None
+- **Parent**: Organization
+- **Entitlements**: `pull`, `triage`, `push`, `maintain`, `admin` (permission), grantable to users and teams, and declared as an exclusion group because a principal holds one level at a time
+- **Grants**: One grant per collaborator for their permission level, and one per team with repository access. The organization's `default_repository_permission` is expanded into the cumulative levels it implies and emitted against the organization, annotated as expandable through the org's `member` and `admin` entitlements
+- **Provisioning**: Grant and Revoke add or remove a collaborator, or a team's repository access
+- **Note**: `--omit-archived-repositories` skips archived repositories. `--direct-collaborators-only` relies on grant expansion for team access instead of fetching per-team detail
+
+### Organization roles
+
+- **Resource type ID**: `org_role`
+- **Description**: GitHub's built-in and custom organization roles
+- **Traits**: Role trait
+- **Parent**: Organization
+- **Entitlements**: `assigned` (assignment)
+- **Grants**: One grant per user and per team assigned to the role. A team's grant is expandable through that team's `member` and `maintainer` entitlements
+- **Provisioning**: Grant and Revoke assign or unassign the role
+
+### Enterprise roles
+
+- **Resource type ID**: `enterprise_role`
+- **Description**: Roles of an enterprise account, only synced when `--enterprises` is set. A personal access token reads every role from the consumed-licenses API; a GitHub App reads the built-in Owner role through the enterprise administrator API, which is the only one it can use
+- **Traits**: Role trait
+- **Entitlements**: `assigned` (assignment)
+- **Grants**: Under PAT authentication, one grant per user holding each role, read from the enterprise consumed-licenses API. Under GitHub App authentication, only the built-in **Owner** role is visible, and its grants are the users who hold it plus the users who have been invited and have not accepted. The two are emitted against the same entitlement and C1 cannot tell them apart
+- **Provisioning**: Only the built-in **Owner** role, and it only succeeds under GitHub App authentication. The capability is advertised on both credentials; a request made with a personal access token fails with a message naming the credential it needs. See [Enterprise Owner provisioning](#enterprise-owner-provisioning)
+- **Limitation**: A GitHub App cannot read `Enterprise.ownerInfo`, so under App authentication the connector sees only the Owner role, not billing managers or custom enterprise roles
+
+### Licenses
+
+- **Resource type ID**: `license`
+- **Description**: Enterprise seat consumption. Only synced when `--enterprises` is set
+- **Traits**: License profile trait
+- **Entitlements**: `assigned` (assignment)
+- **Grants**: One grant for the enterprise member role holding the license, expandable through that role's `assigned` entitlement
+- **Limitation**: Requires a personal access token. GitHub does not offer the enterprise administration permission to GitHub Apps, so this resource type cannot sync with an App installation token and must stay disabled on the app path. It carries `OptInRequired`, so it is left out of the default selection. Nothing is lost there: the same `--enterprises` configuration gives an app the built-in Owner role through the enterprise administrator API instead
+
+### GitHub Apps
+
+- **Resource type ID**: `app`
+- **Description**: GitHub Apps installed on the organization
+- **Traits**: App trait, annotated as a non-human identity of type app registration
+- **Parent**: Organization
+- **Entitlements**: None
+- **Grants**: None
+
+### API keys
+
+- **Resource type ID**: `api-key`
+- **Description**: Fine-grained personal access tokens with access to the organization. Only synced when `--sync-secrets` is set
+- **Traits**: Secret trait
+- **Parent**: Organization
+- **Entitlements**: None
+- **Grants**: None
+
+---
+
+## Enterprise Owner provisioning
+
+Only the built-in **Owner** role of an enterprise is provisionable, and only under GitHub App authentication. The design is shaped by three GitHub constraints:
+
+**`Enterprise.ownerInfo` is invisible to an App.** It holds `admins` and `pendingAdminInvitations`, and it resolves to `null` for an installation token regardless of which permissions the App declares.
+
+**`Enterprise.members(role: OWNER)` is the wrong list.** That argument is an `EnterpriseUserAccountMembershipRole`, whose `OWNER` means "owner of an *organization* in the enterprise" — a different enum from the `EnterpriseAdministratorRole` the mutations take. Owners are read from `Organization.enterpriseOwners` instead, which returns every owner of the organization's enterprise account annotated with their role in that organization. The query must not pass `organizationRole`, because that would drop owners who are not owners of the organization.
+
+**There is no single operation that safely assigns Owner in every case.** A member becomes an Owner by accepting an invitation, but GitHub rejects that invitation when the user already has an enterprise administrator role such as Billing Manager. A GitHub App cannot read that prior role. The connector therefore returns `FailedPrecondition` instead of promoting the administrator in place: otherwise Revoke could only demote them to `UNAFFILIATED`, permanently discarding the role they held before the grant.
+
+Consequences worth knowing:
+
+- Grant returns the grant when it creates an invitation. `Grants()` emits pending invitations alongside accepted Owners, so C1 keeps a record of the request from the moment it is made
+- Revoke clears both states rather than treating them as alternatives: it demotes an active Owner to `UNAFFILIATED`, which keeps them as a member of the enterprise rather than evicting them, and cancels an unaccepted invitation. A `NOT_FOUND` on either is success, because it means the state being asked for is already in place
+- Reading owners uses the **organization** installation token and every mutation uses the **enterprise** installation token; the enterprise token is rejected on organization fields. Startup verifies that the configured organization belongs to the configured enterprise; when it does not, the sync completes with no enterprise roles and logs a warning
+- Only one enterprise can be served under App authentication, because the owners are read through the single configured organization and an organization belongs to exactly one enterprise. No separate check enforces that: the clients are built one per configured slug and each verifies that the organization belongs to its enterprise, so naming several means at most one can pass and the error names the slug that does not. The PAT path does accept a list
+
+### The invitation model is GitHub Enterprise Cloud only, which matters for baton-github-enterprise
+
+This connector serves `github.com`, where enterprise accounts are GitHub Enterprise Cloud, so the invitation-based mutations above are the right ones. The wrapper `baton-github-enterprise` embeds this package and points it at a custom domain, and a custom domain is either Enterprise Cloud with data residency (`*.ghe.com`, same schema, everything here applies) **or** GitHub Enterprise Server, which models enterprise administrators differently.
+
+Checked against the GHES GraphQL reference for 3.14 and 3.15. `Organization.enterpriseOwners` and the `EnterpriseAdministratorRole` enum both exist there, so reading owners would work. The write path does not: GHES has `addEnterpriseAdmin` and `removeEnterpriseAdmin` and has no `inviteEnterpriseAdmin`, `updateEnterpriseAdministratorRole` or `cancelEnterpriseAdminInvitation`, and no `enterpriseAdministratorInvitation` query. That is a model difference rather than a version gap: a GHES user already exists on the instance, so an administrator is added directly instead of being emailed an invitation.
+
+A GHES deployment under app authentication with `--enterprises` set was already failing before this change, and not for the reason first written here. It is not `license`: that type carries `&v2.OptInRequired{}` and is left out of the default selection on a hosted tenant, so it never ran. It is `enterprise_role` itself. Its token-path fallback calls the consumed-licenses API, which is absent from the GHES REST reference, so the call answers `404` — and `fillCache` only swallows a `403` from an app (`enterprise_role.go:142`), so a `404` propagates and fails the sync.
+
+What the change would have done is replace that failure with a worse one. The enterprise installation endpoint is absent from GHES too, so the client build would answer `404`, which this package maps to "install the app on the enterprise account" — an instruction a Server operator cannot follow, on an instance that has no enterprise administrator API to install against. So the host is classified before any request is made: `github.com` and anything under `ghe.com`, which GitHub owns, are Enterprise Cloud, and everything else is a customer-hosted Server instance that is told the capability does not exist there. Implementing the `addEnterpriseAdmin` / `removeEnterpriseAdmin` path GHES does offer is a separate piece of work, and it belongs behind that same classification.
+
+The `license` resource type has the same shape of problem, one step further along: `GET /enterprises/{enterprise}/consumed-licenses` is absent from the GHES REST reference for 3.14 and 3.15 entirely, so on a GHES instance it answers `404` rather than the `403` a GitHub App gets on `github.com`. That type is therefore unusable there for **either** credential, not only for an App. The `--enterprises` path runs against three targets — `github.com`, `*.ghe.com` data residency, and GHES — and the first two serve it while the third does not, which is why the host is classified rather than the credential. The token path still reaches `license` on a Server instance and gets its `404`; telling that operator the type does not exist there is the remaining gap, and it belongs in the `baton-github-enterprise` PR, which is where the instance kind is chosen.
+
+### There is no separate switch for this capability
+
+`--enterprises` already says the deployment has an enterprise, and the credential already says which API can serve it, so `ResourceSyncers` keys on the two values it has rather than on a third the operator would have to discover. The enterprise role is registered with Grant and Revoke either way; a token cannot reach the enterprise administrator API, so a request made against it fails saying so rather than the role being hidden from C1. Licenses are registered on either credential too; their API answers 403 to anything but a token, which is why the type is opt-in.
+
+An app deployment that already passes `--enterprises` used to report no enterprise roles, because the consumed-licenses API it fell back to is token-only. It now reads the Owner role through the enterprise administrator API when the app is set up for it. When it is not, the sync keeps its old outcome rather than starting to fail, so upgrading does not turn a green sync red for a customer who never relied on enterprise roles.
+
+### A setup problem skips the role; anything else fails the sync
+
+When the enterprise administration client cannot be built because of how the deployment is set up (the app is not installed on the enterprise account, or the organization does not belong to the configured enterprise -- which is also what naming several enterprises reduces to), the sync completes with no enterprise roles and logs a warning naming the fix. That is what these deployments did before the enterprise administrator API was used, and failing the sync now would break customers who do not care about enterprise roles. Grant and Revoke still return the error, since there is nothing to fall back to.
+
+Any other build failure (a rate limit, a 5xx, a cancelled context) fails the whole sync. C1 deletes every resource of a type that a completed sync did not report, so finishing the sync while reading no owners for a transient reason would delete the Owner role and every grant on it.
+
+The trade-off: GitHub answers `404` for an uninstalled app, a revoked permission and a slug typo alike. A deployment that synced owners and then loses its enterprise installation gets one sync with no enterprise roles, and C1 drops the Owner role and its grants until the installation is restored. GitHub Enterprise Server is not skipped; it was already failing the sync on the consumed-licenses fallback, and it now fails with an error that says the capability is Cloud-only.
+
+### The published capability set describes an account without an enterprise
+
+`baton_capabilities.json` is generated by running the `capabilities` command with no credentials and no flags, through `DefaultCapabilitiesBuilder`. That builder lists what a GitHub account without an enterprise can sync, including the types `--sync-secrets` and `--sync-last-activity` enable, and leaves out `enterprise_role` and `license`. A running connector configured with `--enterprises` still reports both types live.
+
+The consequence is in how C1 selects types. When a connector is created, C1 stamps its resource type selection from the **catalog release's** capabilities (in the `ductone/c1` monorepo, `pkg/controller/app/controller/connector.go` reduces them with `DefaultSyncResourceTypeIDs`), and at sync time it intersects that saved selection with the declared capabilities (`EffectiveSyncResourceTypeFilter`, `pkg/connector/resource_types.go`). On a hosted tenant with selective sync enabled, the enterprise types are therefore not in the default selection, and an admin enables them for a deployment that uses `--enterprises`. Tenants without selective sync are unaffected.
+
+Enabling by hand is possible, which is the part worth stating rather than assuming: the update RPC the customer goes through (`ductone/c1` `pkg/api/app/rpc_app_connector.go`) assigns the requested resource type IDs and validates only that no *deprecated* type is newly enabled — it does not require the type to appear in the catalog release — and `EffectiveSyncResourceTypeFilter` intersects the saved selection against the **live** connector's capabilities, which do carry `enterprise_role` once `--enterprises` is set. So the type is off by default, not unreachable. The cost is that the capability does nothing until someone performs that step, and it is silent: nothing in a green sync says a type was never selected. The customer-facing instruction belongs with the connector the enterprise customer actually installs, which is `baton-github-enterprise` for a data-residency host, so it ships in that repo's docs rather than on the `github.com` tile.
+
+Regenerate `baton_capabilities.json` and `config_schema.json` by hand after any change to the resource types or the config fields: `./baton-github capabilities` and `./baton-github config`, run without credentials. This repo has no workflow that does it. `baton-admin`'s `connectors.yaml` sets `ci_workflows.capabilities: false` for `baton-github`, so it does not push the managed `generate-baton-metadata.yaml`, and the repo's own `capabilities_and_config.yaml` was removed. Enabling that flag in `baton-admin` restores automatic regeneration.
+
+### Pending invitations look the same as real access
+
+C1 has no pending state for a grant, so an invitation nobody has accepted and an accepted Owner are emitted as the same grant on the same entitlement, and nothing distinguishes them. That is a deliberate trade: emitting nothing until the invitee accepts would leave the request invisible for up to seven days and leave reviewers no record that it was made.
+
+- An access review or an offboarding sweep counts an invitee as holding Owner. They do not hold it — GitHub assigns the role only on acceptance
+- Nothing tracks an expiry. GitHub stops resolving an invitation once it is accepted, cancelled, or expired, so it simply stops being emitted and C1 drops the grant on that sync. `EnterpriseAdministratorInvitation` exposes no `expiresAt`, so there is nothing to compute from either
+- **Time-bound access is measured from the invitation, not from acceptance.** C1 starts the clock when Grant reports success, which is when the invitation is sent. Someone who accepts three hours into a four-hour window holds the role for one hour, and the record still reads four. If the window closes first, Revoke cancels the unaccepted invitation — the right action, since the request expired, but C1 logs a completed Owner grant for someone who never held the role. Prefer windows comfortably longer than the invitee takes to accept
+
+### The list of pending invitations cannot be complete
+
+`Enterprise.ownerInfo.pendingAdminInvitations` is the only connection of invitations GitHub offers, and it resolves to `null` for an installation token. The root `enterpriseAdministratorInvitation` field answers for one login at a time, so the sync resolves invitations by asking about the enterprise members, batching up to 100 logins into one aliased request — GitHub charges that whole request a single rate-limit point.
+
+An invitation sent to someone who is not a member of the enterprise is therefore invisible to the sync, and that is not hypothetical: an owner invitation can be addressed to any GitHub user. It is not enough that C1 has already synced the principal either — outside collaborators reach C1 through repository access without being enterprise members, so a grant to one of them would create an invitation on GitHub that no later sync could read, and C1 would drop the grant while it stayed live. Grant therefore checks membership first and rejects a non-member with `InvalidArgument` rather than creating state it cannot read back. The check is one filtered `Enterprise.members` lookup, and it compares the returned logins because that argument is a search rather than an exact match.
+
+The cost of resolving invitations scales with the enterprise, not with the organization: every sync walks the whole enterprise membership, one page of 100 per request, and asks one aliased batch per page. An enterprise of N members therefore adds roughly N/50 GraphQL requests per sync — about 1,000 for 50,000 members. Memory is unaffected, since the walk streams through the page token, and none of it happens unless the capability is enabled.
+
+### Owner grants can reference a user the sync did not emit
+
+The `user` resource type is populated from the members of the **configured organization**, while `Organization.enterpriseOwners` returns owners of the whole **enterprise account** and the invitation candidates come from `Enterprise.members`, which spans every organization in it. An owner who belongs to a different organization in the same enterprise therefore produces a grant whose principal this sync never created. Widening the user sync is out of scope here — it would change the connector's user population for every deployment — so the grant is emitted and this limitation is recorded instead.
+
+---
+
+## Authentication
+
+The connector supports two methods, selected by which credentials are supplied.
+
+1. **Personal access token (classic)**: a single bearer token used for REST and GraphQL.
+
+2. **GitHub App**: the App's private key signs a JWT, which is exchanged for installation access tokens. Tokens are refreshed automatically when they expire. A connector using enterprise features holds two installation tokens at once, one for the organization and one for the enterprise account, because GitHub splits the data between them.
+
+GraphQL is used for SAML identity lookups, the audit log, and all enterprise owner reads and mutations. Everything else is REST.
+
+---
+
+## API Endpoints Used
+
+**REST** (via `go-github`):
+
+- `GET /user`, `GET /users/{username}`, `GET /user/{id}` — resolve users
+- `GET /organizations`, `GET /orgs/{org}`, `GET /organizations/{id}` — list and resolve organizations
+- `GET /orgs/{org}/members` — organization members
+- `GET /orgs/{org}/memberships/{username}` — a member's role
+- `PUT /orgs/{org}/memberships/{username}` — promote to admin (Grant)
+- `DELETE /orgs/{org}/memberships/{username}` — remove membership (Revoke, user Delete)
+- `POST /orgs/{org}/invitations` — invite a user (Grant, CreateAccount)
+- `GET /orgs/{org}/invitations`, `GET /orgs/{org}/failed_invitations` — pending and expired invitations
+- `DELETE /orgs/{org}/invitations/{invitation_id}` — cancel an invitation (invitation Delete)
+- `GET /orgs/{org}/teams`, `GET /teams/{team_id}` — teams
+- `GET /teams/{team_id}/members` — team members
+- `PUT /teams/{team_id}/memberships/{username}`, `DELETE /teams/{team_id}/memberships/{username}` — team membership (Grant, Revoke)
+- `GET /orgs/{org}/repos`, `GET /repositories/{id}` — repositories
+- `GET /repos/{owner}/{repo}/collaborators`, `GET /repos/{owner}/{repo}/collaborators/{username}/permission` — repository access
+- `PUT /repos/{owner}/{repo}/collaborators/{username}`, `DELETE /repos/{owner}/{repo}/collaborators/{username}` — repository access (Grant, Revoke)
+- `GET /repos/{owner}/{repo}/teams` — teams with repository access
+- `PUT /orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}`, `DELETE /orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}` — team repository access (Grant, Revoke)
+- `GET /orgs/{org}/organization-roles` — organization roles
+- `GET /orgs/{org}/organization-roles/{role_id}/users`, `.../teams` — role assignments
+- `GET /orgs/{org}/installations` — installed GitHub Apps, requires `organization_administration=read`
+- `GET /orgs/{org}/personal-access-tokens` — fine-grained PATs, only with `--sync-secrets`
+- `GET /orgs/{org}/audit-log` — organization audit log
+- `GET /enterprises/{enterprise}/installation` — this App's installation on one enterprise, authenticated with the App JWT
+- `GET /enterprises/{enterprise}/consumed-licenses` — enterprise license consumption and enterprise SAML identities. **PAT only**
+
+**GraphQL**:
+
+- `organization(login:) { samlIdentityProvider { externalIdentities } }` — SAML identity emails
+- `organization(login:) { enterpriseOwners }` — the enterprise account's owners, read with the organization token
+- `enterprise(slug:) { id }`, `enterprise(slug:) { organizations }` — enterprise node ID, and the organization-belongs-to-enterprise check
+- `enterpriseAdministratorInvitation(enterpriseSlug:, userLogin:, role:)` — a pending Owner invitation, for one login; the sync aliases up to 100 of these into a single request
+- `enterprise(slug:).members` — the candidate logins the pending-invitation lookup asks about
+- `inviteEnterpriseAdmin`, `updateEnterpriseAdministratorRole`, `cancelEnterpriseAdminInvitation` — Owner Grant and Revoke
+
+---
+
+## Pagination
+
+- REST endpoints use GitHub's `page` and `per_page` parameters, 100 per page, driven one page per SDK call
+- `GET /enterprises/{enterprise}/consumed-licenses` is 1-indexed; page 0 is undocumented and can repeat page 1, producing duplicates
+- GraphQL connections use cursor pagination, 100 per page, with the `endCursor` passed through as the SDK page token
+- The audit log event feed keeps its own cursor, which carries both the current organization index and GitHub's `after` token, so the feed resumes mid-organization
+
+---
+
+## Rate Limits
+
+- REST: 5,000 requests per hour for a PAT. A GitHub App installation gets a larger budget that scales with the account; installations on this connector's test enterprise reported 15,000
+- GraphQL: a separate points-based budget, reported per query in the `rateLimit` field; App installations reported 10,000
+- The connector returns GitHub's rate limit headers to the SDK as rate limit annotations, so it backs off rather than failing the sync. The enterprise owner queries additionally report the GraphQL `rateLimit` field, and are the ones that classify the errors GitHub returns inside an HTTP 200 body, so a rate limit there surfaces as retryable rather than as an opaque failure
+
+---
+
+## API Documentation
+
+**Official GitHub API references:**
+
+- **REST**: https://docs.github.com/en/rest
+- **GraphQL**: https://docs.github.com/en/graphql
+- **Enterprise administration (GraphQL)**: https://docs.github.com/en/graphql/reference/enterprise-admin
+- **Permissions required for GitHub Apps**: https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps
+- **Inviting people to manage your enterprise**: https://docs.github.com/en/enterprise-cloud@latest/admin/managing-accounts-and-repositories/managing-users-in-your-enterprise/inviting-people-to-manage-your-enterprise
+- **Enterprise licensing (REST)**: https://docs.github.com/en/enterprise-cloud@latest/rest/enterprise-admin/license

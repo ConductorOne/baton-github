@@ -168,6 +168,24 @@
     },
     {
       "resourceType": {
+        "id": "usage-app",
+        "displayName": "GitHub Activity",
+        "traits": [
+          "TRAIT_APP"
+        ],
+        "annotations": [
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipGrants"
+          }
+        ]
+      },
+      "capabilities": [
+        "CAPABILITY_SYNC"
+      ],
+      "permissions": {}
+    },
+    {
+      "resourceType": {
         "id": "user",
         "displayName": "User",
         "traits": [
@@ -191,7 +209,8 @@
     "CAPABILITY_PROVISION",
     "CAPABILITY_SYNC",
     "CAPABILITY_ACCOUNT_PROVISIONING",
-    "CAPABILITY_RESOURCE_DELETE"
+    "CAPABILITY_RESOURCE_DELETE",
+    "CAPABILITY_EVENT_FEED_V2"
   ],
   "credentialDetails": {
     "capabilityAccountProvisioning": {

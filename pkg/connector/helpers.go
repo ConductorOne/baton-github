@@ -324,6 +324,19 @@ func isAuthError(resp *github.Response) bool {
 	return resp.StatusCode == http.StatusUnauthorized
 }
 
+// freshestRateLimit replaces the rate limit in current with latest's, if any.
+// Appending would not work: Annotations.Pick returns the first match.
+func freshestRateLimit(current, latest annotations.Annotations) annotations.Annotations {
+	var rateLimit v2.RateLimitDescription
+	found, err := latest.Pick(&rateLimit)
+	if err != nil || !found {
+		return current
+	}
+	current.Update(&rateLimit)
+
+	return current
+}
+
 func isPermissionError(resp *github.Response) bool {
 	if resp == nil {
 		return false

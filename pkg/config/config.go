@@ -26,7 +26,10 @@ var (
 	EnterprisesField = field.StringSliceField(
 		"enterprises",
 		field.WithDisplayName("Enterprises"),
-		field.WithDescription("Sync enterprise roles, must be an admin of the enterprise."),
+		field.WithDescription("Sync enterprise roles, must be an admin of the enterprise. "+
+			"A personal access token syncs every role. A GitHub App syncs and provisions the built-in Owner "+
+			"role instead, and needs to be installed on the enterprise account as well as on the organization, "+
+			"with the \"Enterprise people: read and write\" permission."),
 	)
 	instanceUrlField = field.StringField(
 		"instance-url",
