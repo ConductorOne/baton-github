@@ -133,16 +133,32 @@ func handleResponse(resp *http.Response) error {
     case http.StatusNotFound:
         return nil  // Often not an error - resource doesn't exist
     case http.StatusUnauthorized:
-        return fmt.Errorf("baton-myservice: unauthorized (check credentials)")
+        return uhttp.WrapErrors(codes.Unauthenticated, "baton-myservice: unauthorized",
+            fmt.Errorf("check credentials (status %d)", resp.StatusCode))
     case http.StatusForbidden:
-        return fmt.Errorf("baton-myservice: forbidden (check permissions)")
+        return uhttp.WrapErrors(codes.PermissionDenied, "baton-myservice: forbidden",
+            fmt.Errorf("check permissions (status %d)", resp.StatusCode))
     case http.StatusTooManyRequests:
-        return fmt.Errorf("baton-myservice: rate limited")  // SDK retries
+        // A bare fmt.Errorf carries no gRPC code, so status.Code() reads Unknown and
+        // no retryer will ever pick it up. Wrap rate limits and 5xx as Unavailable —
+        // what uhttp produces for them — see the wrapping table in
+        // patterns-error-handling.md, which ships to every connector kind.
+        // WrapErrorsWithRateLimitInfo keeps the response's rate-limit headers on the
+        // error, so a retryer can size its backoff from them instead of guessing.
+        return uhttp.WrapErrorsWithRateLimitInfo(codes.Unavailable, resp,
+            fmt.Errorf("baton-myservice: rate limited (status %d)", resp.StatusCode))
+    case http.StatusNotImplemented:
+        // The one 5xx that is not transient: the vendor does not implement this
+        // endpoint, so retrying never helps. uhttp maps it to Unimplemented too.
+        return uhttp.WrapErrors(codes.Unimplemented, "baton-myservice: not implemented",
+            fmt.Errorf("status %d", resp.StatusCode))
     default:
         if resp.StatusCode >= 500 {
-            return fmt.Errorf("baton-myservice: server error %d", resp.StatusCode)
+            return uhttp.WrapErrors(codes.Unavailable, "baton-myservice: server error",
+                fmt.Errorf("status %d", resp.StatusCode))
         }
-        return fmt.Errorf("baton-myservice: unexpected status %d", resp.StatusCode)
+        return uhttp.WrapErrors(uhttp.GrpcCodeFromHTTPStatus(resp.StatusCode),
+            "baton-myservice: unexpected status", fmt.Errorf("status %d", resp.StatusCode))
     }
 }
 ```

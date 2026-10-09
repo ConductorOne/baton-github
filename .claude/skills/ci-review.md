@@ -38,7 +38,9 @@ of SDK behavior the connector does not control, not a rule to copy.
 - L1b: A 4xx the connector handles gracefully and the customer can neither act on nor
   care about → `Debug`, not `Warn`. Typical shapes: a 403 on an optional per-resource
   detail endpoint the connector falls back from, a 404 for a record deleted mid-sync, a
-  429 the SDK retries for you. Not-actionable **and** per-resource is the expensive
+  429 on a single call — one throttled request is nothing the customer can act on, whether
+  or not anything retries it. (Sustained throttling *is* actionable and goes to L1c.)
+  Not-actionable **and** per-resource is the expensive
   combination, and it is the one that belongs at Debug.
 
   Choosing `Debug` here is a decision about noise, never about whether to return the
@@ -64,15 +66,15 @@ of SDK behavior the connector does not control, not a rule to copy.
 - L3: Nil/zero/missing-but-expected values and gracefully-handled unknown enum variants
   → `Debug`, not Warn (e.g. "access key last-used date is nil").
 - L4: Skip-and-continue (per-item graceful degradation) is NOT error swallowing — do not
-  flag `log + continue` on a single skipped item under H4. Two limits on that suppression:
-  it covers `continue` inside a loop only, never `log + return nil` from the method itself
-  (that is the destructive shape section S forbids, and this carve-out never licenses it);
-  and it covers only a `NotFound` on the item being fetched. A `continue` past a 401, a 403
-  or an exhausted 429 is not suppressed — that error might be about every item, and the
-  empty page it produces is S1 arriving by a slower route. See S5. It says nothing about *which* level
-  to log at: take that from L1/L1b/L1c, which for most per-item degradation means `Debug`,
-  not `Warn`. Two separate questions — "is dropping this item a bug?" and "does anyone
-  need to see the line?" — and L4 only answers the first.
+  flag `log + continue` on a single skipped item under H4. Two limits on that suppression: it
+  covers `continue` inside a loop only, never `log + return nil` from the method itself (that is
+  the destructive shape section S forbids, and this carve-out never licenses it); and it covers
+  only a `NotFound` on the item being fetched. A `continue` past a 401, a 403 or an exhausted
+  429 is not suppressed — that error might be about every item, and the empty page it produces
+  is S1 arriving by a slower route. See S5. It says nothing about *which* level to log at: take
+  that from L1/L1b/L1c, which for most per-item degradation means `Debug`, not `Warn`. Two
+  separate questions — "is dropping this item a bug?" and "does anyone need to see the line?" —
+  and L4 only answers the first.
 - L5: Context cancellation (`context.Canceled` / `DeadlineExceeded`) → `Debug`. The
   customer cannot act on a shutdown or a timeout, so L1's question answers this one
   outright; do not leave it as an either/or.
@@ -82,13 +84,13 @@ of SDK behavior the connector does not control, not a rule to copy.
   the customer can act on it.
 - L7: A warning that can fire per-resource or per-page MUST use logarithmic sampling
   (occurrences 1, 10, 100, then every 1000) with a `total_occurrences` field. This is not a
-  judgement call, and the two halves bind different people: **MUST** for the author writing
-  the line, **suggestion** severity for the reviewer flagging it. Flag every unsampled
-  recurrent warn, even when the level itself is correct per L1. It is a suggestion because
-  an unsampled warn breaks nothing — it only costs — so it should not block a merge, but it
-  should never be waved through silently either. Warn-level output is ingested and retained downstream while debug
-  is filtered, so an unsampled per-resource warn costs real money on a large sync for lines
-  nobody reads. Bounding the volume is what makes L1 affordable. A one-shot warn (once per
+  judgement call, and the two halves bind different people: **MUST** for the author writing the
+  line, **suggestion** severity for the reviewer flagging it. Flag every unsampled recurrent
+  warn, even when the level itself is correct per L1. It is a suggestion because an unsampled
+  warn breaks nothing — it only costs — so it should not block a merge, but it should never be
+  waved through silently either. Warn-level output is ingested and retained downstream while
+  debug is filtered, so an unsampled per-resource warn costs real money on a large sync for
+  lines nobody reads. Bounding the volume is what makes L1 affordable. A one-shot warn (once per
   sync, once at connector init) needs no sampling.
 
 The test before writing `l.Error`: is it a connector code bug? does the connector stop?
@@ -106,8 +108,23 @@ and *which code*:
   failures ("HTTP 200 but body says failed"). If all requests use `uhttp.BaseHttpClient`,
   uhttp wraps automatically — do not require manual wrapping.
 - E2: `preferredCode` is a gRPC `codes.Code`, not an HTTP status. Expected mapping:
-  401→`Unauthenticated`, 403→`PermissionDenied`, 404→`NotFound`, 429→`ResourceExhausted`,
-  5xx→`Internal`. The SDK reads this code to decide retry vs surface.
+  401→`Unauthenticated`, 403→`PermissionDenied`, 404→`NotFound`, **429→`Unavailable`,
+  5xx→`Unavailable`** (501 is the exception: `Unimplemented`). Match what `uhttp` itself
+  produces: `GrpcCodeFromHTTPStatus` (`pkg/uhttp/wrapper.go`) maps 429, 502, 503, 504 and every
+  other 5xx to `Unavailable`, so a hand-wrapped error should land on the same code the same
+  status would get through `BaseHttpClient`.
+
+  **Why this one matters more than tidiness.** `pkg/retry` waits and retries only `Unavailable`
+  and `DeadlineExceeded`, and it is what runs on the parallel syncer and on
+  `Grant`/`Revoke`/`Validate`/tickets. Labelling a rate limit `ResourceExhausted` or a 502
+  `Internal` takes it out of that path wherever it applies. Note what it does **not** buy: the
+  sequential syncer is the default and never calls the retryer, so on a default sync a 429 is
+  returned either way. The platform retries the whole sync for these codes, so
+  nothing is lost — a sync gets re-run where a backoff would have done. Flag the two wrong
+  mappings. Both codes still have uses, just not these: `ResourceExhausted` for an exhaustion
+  the connector itself hit — the SDK's local rate limiter (`pkg/ratelimit/grpc.go`) produces
+  it, as would a quota or memory ceiling — and `Internal` for an invariant broken inside the
+  connector rather than a fault reported by the upstream.
 - E3: Provisioning errors (P4) should carry a gRPC status code so Grant/Revoke failures
   surface correctly.
 

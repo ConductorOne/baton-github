@@ -61,13 +61,25 @@ func WrapErrors(preferredCode codes.Code, statusMsg string, errs ...error) error
 | Auth failure (401) | `codes.Unauthenticated` |
 | Permission denied (403) | `codes.PermissionDenied` |
 | Not found (404) | `codes.NotFound` |
-| Rate limited (429) | `codes.ResourceExhausted` |
-| Server error (5xx) | `codes.Internal` |
+| Rate limited (429) | `codes.Unavailable` |
+| Server error (5xx) | `codes.Unavailable` — except 501, which is `codes.Unimplemented` |
 
 ```go
-// SDK library error — wrap with appropriate gRPC code:
+// SDK library error — map the vendor's HTTP status through the SDK so a 429 or a
+// 5xx lands on Unavailable rather than being frozen as Internal. Internal is for
+// an error you know is not transient. Fall back to Unknown when the SDK gives you
+// no status to map.
 if err != nil {
-    return nil, uhttp.WrapErrors(codes.Internal, "baton-myservice: failed to list users", err)
+    code := codes.Unknown
+    // vendorHTTPStatus stands in for your SDK's own status accessor — typically an
+    // errors.As into the type that actually carries the status, e.g.
+    // *github.ErrorResponse (.Response.StatusCode) or, for aws-sdk-go-v2,
+    // *smithyhttp.ResponseError (.HTTPStatusCode()) — not *smithy.GenericAPIError,
+    // which has only Code, Message and Fault.
+    if st, ok := vendorHTTPStatus(err); ok {
+        code = uhttp.GrpcCodeFromHTTPStatus(st)
+    }
+    return nil, uhttp.WrapErrors(code, "baton-myservice: failed to list users", err)
 }
 
 // Developer-inferred error from response body or status code:
@@ -88,9 +100,9 @@ if resp.StatusCode == http.StatusForbidden {
 
 | Error Type | Retryable? | Action |
 |------------|-----------|--------|
-| Rate limit (429) | Yes | SDK retries automatically |
-| Network timeout | Yes | SDK retries |
-| Server error (5xx) | Yes | SDK retries |
+| Rate limit (429) | Yes | Back off and retry — the SDK only does this for you on some paths, see "Do not assume a 429 gets retried for you" below |
+| Network timeout | Yes | Same |
+| Server error (5xx) | Yes | Same |
 | Bad request (400) | No | Return error with context |
 | Unauthorized (401) | No | Return error, check credentials |
 | Forbidden (403) | No | Return error, check permissions |
@@ -99,7 +111,7 @@ if resp.StatusCode == http.StatusForbidden {
 **Log level is deliberately not in this table.** Retryability and log level are different
 questions, and answering them together is what produced the blanket "all 4xx → Warn" rule this
 guide used to carry. A 5xx is retryable *and* an `Error`; a 429 is retryable and belongs at
-`Debug` because the SDK handles it and the customer cannot act on it. See
+`Debug` because the customer cannot act on a single throttled call. See
 [Log Level Classification](#log-level-classification) — Rule 1 decides the level for logging you
 write, on whether the customer can act, and it is the only place in this file that does.
 
@@ -299,8 +311,9 @@ the condition:
   `Warn`. These are one-shot in practice: the credential is bad for the whole run, so the
   line appears once.
 - **Not actionable** — a 403 on an optional per-item call the connector already falls back
-  from, a 404 for a record deleted mid-sync, a 429 the SDK retries for you. `Debug`. The
-  customer can do nothing with it and it fires once per resource.
+  from, a 404 for a record deleted mid-sync, a 429 on a single call. `Debug`. The customer
+  can do nothing with one throttled request — whether or not anything retries it — and it
+  fires once per resource.
 
 ```go
 // WRONG — alerts on a customer config issue
@@ -469,7 +482,7 @@ return nil, fmt.Errorf("baton-myservice: failed getting metadata: %w", err)
 | Upstream 403 on an optional per-item call the connector falls back from | **Debug** | Customer cannot act; fires per resource |
 | Upstream 403 on a per-object ACL the customer can grant individually | **Warn, sampled** | Actionable *and* recurring — see sampling below |
 | Upstream 404 (record deleted mid-sync) | **Debug** | Nothing to act on |
-| Upstream 429 (rate limit) | **Debug** | SDK retries it; the customer cannot do anything |
+| Upstream 429 (rate limit) | **Debug** | The customer cannot act on one throttled call. Sustained throttling is a different finding |
 | Upstream 400 (bad request) | **Error** if the connector built the request, **Warn** if customer data caused it | A malformed request we constructed is our bug |
 | Upstream 5xx (server error) | **Error** | Genuine upstream failure |
 | OAuth token refresh failure | **Warn** | Customer credential issue, fires once |
@@ -512,6 +525,21 @@ If your connector makes HTTP calls outside of `uhttp.BaseHttpClient` (e.g., usin
 // logError keeps server-class gRPC errors at Error. Client-class errors are never
 // Error, but the level is the caller's call: pass Warn when the customer can act on
 // it, Debug when they cannot (Rule 1). A helper cannot know which it is.
+//
+// `Unavailable` carries both a rate limit and a 5xx — GrpcCodeFromHTTPStatus
+// produces it for either — and it is deliberately NOT in clientCodes below, so
+// both land at Error. Right for the 5xx, noisy for the 429.
+//
+// Leaving it out is the safer half of the trade. One call site passes one level
+// for whatever that call returns, so putting Unavailable in clientCodes would
+// send a 5xx to whatever that site chose — Debug at most sites, which the
+// default info level never emits. A 429 at Error is noise; a 5xx at Debug is a
+// server failure nobody sees.
+//
+// To avoid the noise, narrow at the call site rather than in the helper: where
+// you still hold the response use logStatus below, and where you only have an
+// opaque error, errors.As into the vendor's rate-limit type and log that case
+// yourself before falling through to logError.
 func logError(l *zap.Logger, err error, clientLevel zapcore.Level, msg string, fields ...zap.Field) {
     clientCodes := map[codes.Code]bool{
         codes.InvalidArgument:  true,
@@ -523,7 +551,8 @@ func logError(l *zap.Logger, err error, clientLevel zapcore.Level, msg string, f
         codes.OutOfRange:       true,
         codes.Unimplemented:    true,
         codes.Canceled:         true,
-        codes.ResourceExhausted: true,
+        codes.ResourceExhausted: true, // the SDK's local rate limiter, or a limit the
+                                       // connector itself enforces — never an HTTP status
     }
 
     fields = append(fields, zap.Error(err))
@@ -535,17 +564,19 @@ func logError(l *zap.Logger, err error, clientLevel zapcore.Level, msg string, f
 }
 
 // Caller decides: a record that vanished mid-sync is not actionable.
-// (Not a rate limit — outside BaseHttpClient nothing retries it for you.)
 logError(l, err, zapcore.DebugLevel, "role not found, skipping")
 // ...but a credential the customer must rotate is.
 logError(l, err, zapcore.WarnLevel, "token refresh failed")
+
 ```
 
 For direct HTTP responses without gRPC wrapping, branch on status code:
 
 ```go
-// Same rule as the helper: the status class decides Error vs not, the caller
-// decides Warn vs Debug. Keep it a function so the level is a real parameter.
+// Same split as the helper, but without its ambiguity: a 429 is simply not >= 500,
+// so the status separates what the gRPC code cannot. The caller still picks Warn
+// vs Debug.
+// Keep it a function so the level is a real parameter.
 func logStatus(l *zap.Logger, statusCode int, clientLevel zapcore.Level, msg string, err error) {
     fields := []zap.Field{zap.Int("status", statusCode), zap.Error(err)}
     if statusCode >= 500 {
@@ -556,21 +587,27 @@ func logStatus(l *zap.Logger, statusCode int, clientLevel zapcore.Level, msg str
 }
 
 // A record that vanished mid-sync is nothing the customer can act on — see Rule 1.
-// (Not a 429: on this path there is no SDK retry to lean on.)
 logStatus(l, resp.StatusCode, zapcore.DebugLevel, "record not found, skipping", err)
 // A rejected credential is.
 logStatus(l, resp.StatusCode, zapcore.WarnLevel, "request unauthorized", err)
 ```
 
-**Both samples answer "is it Error?", not "is it Warn?".** A client-side status or code means
-*not* `Error` — it does not mean the line is worth shipping. A 404 for a record that vanished
-mid-sync is the usual case: client-class, and nothing the customer can act on. Note that this
-section is for calls made *outside* `uhttp.BaseHttpClient`, so "the SDK retries it" — the reason
-a 429 is `Debug` elsewhere in this file — does not apply here. That removes the reason, not the
-answer: run a 429 on this path back through Rule 1 rather than through the retry. Sustained
-throttling after your retries are exhausted *is* actionable — the operator can lower concurrency
-or raise the vendor quota — so `Warn`, sampled if it recurs. If instead you return the error and
-let the SDK log it, Rule 6 applies and the local line is `Debug`. That is why neither sample
+**Both samples answer "is it Error?", not "is it Warn?".** A client-class code means *not*
+`Error` — it does not mean the line is worth shipping. A 404 for a record that vanished
+mid-sync is the usual case: client-class, and nothing the customer can act on.
+
+**Do not assume a 429 gets retried for you.** `pkg/retry` is not part of uhttp — it wraps the
+connector's own methods — but the sequential syncer, which is the default (`pkg/sync/syncer.go`
+has no reference to it; `workerCount == 1` means sequential), never calls it. Retry exists on
+the parallel syncer, which is opt-in behind a tenant feature flag and a configured worker count,
+and on `Grant`/`Revoke`, `Validate` and tickets via `connectorbuilder`. uhttp's transport does
+not replay a 429 either. So on a default sync a rate limit is returned, not retried, whatever
+code it carries. Wrapping it as `Unavailable` — see the wrapping table near the top of this file
+— is still right: it is what uhttp produces and it is the code the retryer looks for where a
+retryer exists — but it buys a retry only there. The customer-facing condition is the same
+either way: sustained throttling is something the operator can act on, by lowering concurrency
+or raising the vendor quota, so `Warn`, sampled if it recurs. If instead you return the error
+and let the SDK log it, Rule 6 applies and the local line is `Debug`. That is why neither sample
 hardcodes `Warn`; both take the non-`Error` level from the caller, who is the only one who knows
 whether the customer can act.
 
