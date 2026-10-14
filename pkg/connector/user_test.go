@@ -40,6 +40,8 @@ func TestUsersList(t *testing.T) {
 			[]string{organization.DisplayName},
 			nil,
 			nil,
+			nil,
+			false,
 		)
 
 		users, results, err := client.List(

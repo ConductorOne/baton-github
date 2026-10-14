@@ -30,7 +30,7 @@ func (d *DefaultCapabilitiesBuilder) ResourceSyncers(_ context.Context) []connec
 	return []connectorbuilder.ResourceSyncerV2{
 		OrgBuilder(nil, nil, nil, nil, false),
 		TeamBuilder(nil, nil, false),
-		UserBuilder(nil, nil, nil, nil, nil, nil),
+		UserBuilder(nil, nil, nil, nil, nil, nil, nil, false),
 		RepositoryBuilder(nil, nil, false, false),
 		OrgRoleBuilder(nil, nil),
 		InvitationBuilder(InvitationBuilderParams{}),

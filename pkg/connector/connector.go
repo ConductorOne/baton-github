@@ -129,13 +129,26 @@ type GitHub struct {
 	enterprises              []string
 	newEnterpriseRoleClients enterpriseClientProvider
 	syncLastActivity         bool
+	connectorOpts            *cli.ConnectorOpts
+}
+
+// willSyncResourceType is true when the type is in this sync. Nil opts, which
+// is how the capabilities prototype is built, means no filter, so every
+// advertised type is in scope.
+func (gh *GitHub) willSyncResourceType(resourceTypeID string) bool {
+	if gh.connectorOpts == nil {
+		return true
+	}
+
+	return gh.connectorOpts.WillSyncResourceType(resourceTypeID)
 }
 
 func (gh *GitHub) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
 	resourceSyncers := []connectorbuilder.ResourceSyncerV2{
 		OrgBuilder(gh.client, gh.appClient, gh.orgCache, gh.orgs, gh.syncSecrets),
 		TeamBuilder(gh.client, gh.orgCache, gh.directCollaboratorsOnly),
-		UserBuilder(gh.client, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises),
+		UserBuilder(gh.client, gh.graphqlClient, gh.orgCache, gh.orgs, gh.customClient, gh.enterprises,
+			gh.newEnterpriseRoleClients, gh.willSyncResourceType(resourceTypeEnterpriseRole.Id)),
 		RepositoryBuilder(gh.client, gh.orgCache, gh.omitArchivedRepositories, gh.directCollaboratorsOnly),
 		OrgRoleBuilder(gh.client, gh.orgCache),
 		InvitationBuilder(InvitationBuilderParams{
@@ -329,21 +342,21 @@ func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.Conne
 		err   error
 	)
 	if group == cfg.GithubAppGroup {
-		cb, err = newWithGithubApp(ctx, ghc)
+		cb, err = newWithGithubApp(ctx, ghc, cliOpts)
 		if err != nil {
 			return nil, nil, err
 		}
 		return cb, nil, nil
 	}
 
-	cb, err = newWithGithubPAT(ctx, ghc)
+	cb, err = newWithGithubPAT(ctx, ghc, cliOpts)
 	if err != nil {
 		return nil, nil, err
 	}
 	return cb, nil, nil
 }
 
-func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
+func newWithGithubPAT(ctx context.Context, ghc *cfg.Github, connectorOpts *cli.ConnectorOpts) (*GitHub, error) {
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: ghc.Token},
 	)
@@ -367,6 +380,7 @@ func newWithGithubPAT(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
 		syncLastActivity:         ghc.SyncLastActivity,
+		connectorOpts:            connectorOpts,
 	}, nil
 }
 
@@ -384,7 +398,7 @@ func appPrivateKeyPEM(ghc *cfg.Github) (string, error) {
 	return "", errors.New("github app authentication requires either --app-privatekey or --app-privatekey-path")
 }
 
-func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
+func newWithGithubApp(ctx context.Context, ghc *cfg.Github, connectorOpts *cli.ConnectorOpts) (*GitHub, error) {
 	enterprises := distinctEnterprises(ghc.Enterprises)
 	privateKey, err := appPrivateKeyPEM(ghc)
 	if err != nil {
@@ -485,6 +499,7 @@ func newWithGithubApp(ctx context.Context, ghc *cfg.Github) (*GitHub, error) {
 		omitArchivedRepositories: ghc.OmitArchivedRepositories,
 		directCollaboratorsOnly:  ghc.DirectCollaboratorsOnly,
 		syncLastActivity:         ghc.SyncLastActivity,
+		connectorOpts:            connectorOpts,
 	}
 	return gh, nil
 }

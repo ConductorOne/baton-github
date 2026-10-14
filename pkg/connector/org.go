@@ -3,9 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strconv"
-	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -92,8 +90,6 @@ func (o *orgResourceType) List(
 		}, nil
 	}
 
-	l := ctxzap.Extract(ctx)
-
 	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeOrg.Id})
 	if err != nil {
 		return nil, nil, err
@@ -119,20 +115,12 @@ func (o *orgResourceType) List(
 		if _, ok := o.orgs[org.GetLogin()]; !ok && len(o.orgs) > 0 {
 			continue
 		}
-		membership, resp, err := o.client.Organizations.GetOrgMembership(ctx, "", org.GetLogin())
+		// Only sync orgs that we are an admin for
+		isAdmin, resp, err := administersOrg(ctx, o.client, org.GetLogin())
 		if err != nil {
-			if resp != nil && resp.StatusCode == http.StatusForbidden {
-				l.Debug("insufficient access to list org membership, skipping org",
-					zap.String("org", org.GetLogin()),
-					zap.String("github_error", gitHubErrorMessage(err)),
-				)
-				continue
-			}
 			return nil, nil, wrapGitHubError(err, resp, "github-connector: failed to get org membership")
 		}
-
-		// Only sync orgs that we are an admin for
-		if strings.ToLower(membership.GetRole()) != orgRoleAdmin {
+		if !isAdmin {
 			continue
 		}
 

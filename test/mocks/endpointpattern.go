@@ -9,6 +9,16 @@ var GetUserById = mock.EndpointPattern{
 	Method:  methodGet,
 }
 
+var GetUserMembershipsOrgsByOrg = mock.EndpointPattern{
+	Pattern: "/user/memberships/orgs/{org}",
+	Method:  methodGet,
+}
+
+var GetOrgsMembersByOrgByUsername = mock.EndpointPattern{
+	Pattern: "/orgs/{org}/members/{username}",
+	Method:  methodGet,
+}
+
 var PutOrganizationsTeamsMembershipsByOrganizationByTeamIdByUsername = mock.EndpointPattern{
 	Pattern: "/organizations/{org_id}/team/{team_id}/memberships/{username}",
 	Method:  "PUT",

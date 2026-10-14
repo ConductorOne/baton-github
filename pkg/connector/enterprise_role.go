@@ -421,10 +421,7 @@ func (o *enterpriseRoleResourceType) appGrants(
 		bag.Push(pagination.PageState{ResourceTypeID: enterpriseOwnersPhase})
 	}
 
-	var after *githubv4.String
-	if cursor := bag.PageToken(); cursor != "" {
-		after = githubv4.NewString(githubv4.String(cursor))
-	}
+	after := graphqlCursor(bag.PageToken())
 
 	var (
 		ret        []*v2.Grant

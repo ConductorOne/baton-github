@@ -16,7 +16,9 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/sessions"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/google/go-github/v69/github"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
+	"go.uber.org/zap"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"google.golang.org/grpc/codes"
@@ -68,6 +70,30 @@ func (o *orgNameCache) GetOrgNameFromRemoteServer(ctx context.Context, rID strin
 		return "", err
 	}
 	return org.GetLogin(), nil
+}
+
+// administersOrg reports whether the credential administers the organization,
+// which is what decides that this sync emits its members. A 403 means the
+// membership is not visible, which reads the same way: not administered.
+//
+// Shared by the organization syncer, which filters on it, and by the user
+// syncer, which uses it to tell whether an organization in this sync already
+// emits an account. The two must agree, or the user syncer drops a principal
+// whose member page never runs.
+func administersOrg(ctx context.Context, client *github.Client, org string) (bool, *github.Response, error) {
+	membership, resp, err := client.Organizations.GetOrgMembership(ctx, "", org)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusForbidden {
+			ctxzap.Extract(ctx).Debug("baton-github: no access to the membership of this organization, skipping it",
+				zap.String("org", org),
+				zap.String("github_error", gitHubErrorMessage(err)),
+			)
+			return false, resp, nil
+		}
+		return false, resp, err
+	}
+
+	return strings.EqualFold(membership.GetRole(), orgRoleAdmin), resp, nil
 }
 
 func newOrgNameCache(c *github.Client) *orgNameCache {

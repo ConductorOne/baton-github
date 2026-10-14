@@ -423,6 +423,58 @@ func userToMembership(user *github.User) github.Membership {
 	}
 }
 
+// isOrgMember handles GET /orgs/{org}/members/{username}, which answers 204
+// for a member and 404 for anyone else. The real endpoint takes a login; this
+// mock follows its usual convention that a login is the user's ID as a string,
+// so a login it cannot read that way is simply not a member.
+func (mgh MockGitHub) isOrgMember(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	orgId, err := getCrossTableId(w, variables, "org")
+	if err != nil {
+		return
+	}
+	username, ok := getVariable(variables, "username")
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	userId, err := strconv.ParseInt(username, 10, 64)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	members, ok := mgh.organizationMemberships[orgId]
+	if !ok || !members.Contains(userId) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// getAuthenticatedOrgMembership handles GET /user/memberships/orgs/{org},
+// which decides whether the credential administers the organization and so
+// whether the sync emits its members.
+func (mgh MockGitHub) getAuthenticatedOrgMembership(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	orgId, err := getCrossTableId(w, variables, "org")
+	if err != nil {
+		return
+	}
+	if _, ok := mgh.organizations[orgId]; !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	_, _ = w.Write(mock.MustMarshal(github.Membership{
+		Role:  github.Ptr("admin"),
+		State: github.Ptr("active"),
+	}))
+}
+
 func (mgh MockGitHub) getMembership(
 	w http.ResponseWriter,
 	variables map[string]string,
@@ -748,6 +800,8 @@ func (mgh MockGitHub) Server() *http.Client {
 		mock.DeleteOrgsMembershipsByOrgByUsername:                           mgh.removeUser,
 		mock.DeleteReposCollaboratorsByOwnerByRepoByUsername:                mgh.removeRepositoryCollaborator,
 		mock.GetOrgsMembersByOrg:                                            mgh.getUsers,
+		GetOrgsMembersByOrgByUsername:                                       mgh.isOrgMember,
+		GetUserMembershipsOrgsByOrg:                                         mgh.getAuthenticatedOrgMembership,
 		mock.GetOrgsMembershipsByOrgByUsername:                              mgh.getMembership,
 		mock.GetReposCollaboratorsByOwnerByRepo:                             mgh.getRepositoryCollaborators,
 		mock.GetReposCollaboratorsByOwnerByRepoByUsername:                   mgh.getRepositoryCollaborator,

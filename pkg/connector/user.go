@@ -10,6 +10,7 @@ import (
 	"github.com/conductorone/baton-github/pkg/customclient"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/session"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/types/sessions"
@@ -116,14 +117,16 @@ const (
 )
 
 type userResourceType struct {
-	resourceType  *v2.ResourceType
-	client        *github.Client
-	graphqlClient *githubv4.Client
-	samlStates    map[string]samlState // per-org SAML state, keyed by org name
-	orgCache      *orgNameCache
-	orgs          []string
-	customClient  *customclient.Client
-	enterprises   []string
+	resourceType         *v2.ResourceType
+	client               *github.Client
+	graphqlClient        *githubv4.Client
+	samlStates           map[string]samlState // per-org SAML state, keyed by org name
+	orgCache             *orgNameCache
+	orgs                 []string
+	customClient         *customclient.Client
+	enterprises          []string
+	newEnterpriseClients enterpriseClientProvider
+	syncsEnterpriseRoles bool
 }
 
 func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -137,9 +140,19 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 		return nil, &resource.SyncOpResults{}, nil
 	}
 
-	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeUser.Id})
+	bag := &pagination.Bag{}
+	if err := bag.Unmarshal(opts.PageToken.Token); err != nil {
+		return nil, nil, fmt.Errorf("baton-github: error parsing the user page token: %w", err)
+	}
+	if isEnterpriseUserPhase(bag.ResourceTypeID()) {
+		return u.listEnterprisePrincipalUsers(ctx, bag)
+	}
+	if bag.Current() == nil {
+		bag.Push(pagination.PageState{ResourceTypeID: resourceTypeUser.Id})
+	}
+	page, err := convertPageToken(bag.PageToken())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("baton-github: error reading the user page number: %w", err)
 	}
 
 	orgName, err := u.orgCache.GetOrgName(ctx, opts.Session, parentID)
@@ -201,11 +214,6 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 	}
 
 	nextPage, _, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pageToken, err := bag.NextToken(nextPage)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -303,6 +311,11 @@ func (u *userResourceType) List(ctx context.Context, parentID *v2.ResourceId, op
 		annotations.WithRateLimiting(graphqlRateLimit)
 	}
 
+	pageToken, err := u.nextUserPageToken(ctx, bag, nextPage)
+	if err != nil {
+		return nil, &resource.SyncOpResults{Annotations: annotations}, err
+	}
+
 	return rv, &resource.SyncOpResults{
 		NextPageToken: pageToken,
 		Annotations:   annotations,
@@ -366,16 +379,27 @@ func (u *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId
 	return annotations, nil
 }
 
-func UserBuilder(client *github.Client, graphqlClient *githubv4.Client, orgCache *orgNameCache, orgs []string, customClient *customclient.Client, enterprises []string) *userResourceType {
+func UserBuilder(
+	client *github.Client,
+	graphqlClient *githubv4.Client,
+	orgCache *orgNameCache,
+	orgs []string,
+	customClient *customclient.Client,
+	enterprises []string,
+	newEnterpriseClients enterpriseClientProvider,
+	syncsEnterpriseRoles bool,
+) *userResourceType {
 	return &userResourceType{
-		resourceType:  resourceTypeUser,
-		client:        client,
-		graphqlClient: graphqlClient,
-		samlStates:    make(map[string]samlState),
-		orgCache:      orgCache,
-		orgs:          orgs,
-		customClient:  customClient,
-		enterprises:   enterprises,
+		resourceType:         resourceTypeUser,
+		client:               client,
+		graphqlClient:        graphqlClient,
+		samlStates:           make(map[string]samlState),
+		orgCache:             orgCache,
+		orgs:                 orgs,
+		customClient:         customClient,
+		enterprises:          enterprises,
+		newEnterpriseClients: newEnterpriseClients,
+		syncsEnterpriseRoles: syncsEnterpriseRoles,
 	}
 }
 
