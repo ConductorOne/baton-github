@@ -80,6 +80,10 @@ func (g *groupBuilder) Grant(ctx context.Context, principal *v2.Resource,
 }
 ```
 
+Exception: when the target itself belongs to one fixed scope (a GitHub team's org), the
+scope comes from a checked `entitlement.Resource.ParentResourceId`. See
+`.claude/skills/connector/patterns-entity-sources.md#exception-target-owned-scope`.
+
 **Note on ExternalId:** During sync, set `WithExternalID()` with the native system identifier. During Grant/Revoke, retrieve it via `GetExternalId()` to make API calls. ConductorOne assigns its own resource IDs that differ from the target system's native IDs.
 
 ### HTTP Response Safety
@@ -176,7 +180,7 @@ func (c *Connector) Close() error {
 ## Common Mistakes
 
 1. **Pagination bugs** - Infinite loop (hardcoded token) or early termination (always empty token)
-2. **Entity confusion** - Getting workspace from entitlement instead of principal
+2. **Entity confusion** - Getting workspace from entitlement instead of principal (or the reverse, for a target that owns its scope)
 3. **Swapped arguments** - Multiple string params in wrong order (check API docs!)
 4. **Nil pointer panic** - Accessing resp.Body when resp is nil
 5. **Error swallowing** - Logging but not returning errors. Inside `List`/`Entitlements`/`Grants`, `continue` past an item only when the error is a `NotFound` on that item **and this vendor uses 404 for absence, not for permission denial** (log it at Debug); any other error must be returned, because a systemic one skips every item and the empty result C1 reads as deletions. See `patterns-error-handling.md`

@@ -30,7 +30,12 @@ workspaceID := principal.ParentResourceId.Resource  // From principal
 
 **Why it happens:** Both principal and entitlement have `ParentResourceId`. Developers grab the wrong one.
 
-**Detection:** Search for `entitlement.Resource.ParentResourceId` in Grant/Revoke methods.
+**Not this bug:** checked target-owned scope — the target resource owns one fixed scope
+(a GitHub team's org), and the parent (set by this connector's sync) is nil-checked,
+parsed, and passed to an org+team-scoped API call. **Also a bug (mirror):** routing such an operation
+through `principal.ParentResourceId`. See `patterns-entity-sources.md#exception-target-owned-scope`.
+
+**Detection:** Search for `entitlement.Resource.ParentResourceId` in Grant/Revoke methods, then read each hit: flag unchecked reads and principal-scoped uses. The mirror bug does not match this search.
 
 ---
 

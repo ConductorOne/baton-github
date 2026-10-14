@@ -180,7 +180,7 @@ orgID := resource.ParentResourceId.Resource
 **The Entity Source Rule**:
 - **WHO** (principal): The user/service being granted access
 - **WHAT** (entitlement): The permission being granted
-- **WHERE** (context): The org/workspace scope - **ALWAYS from principal**
+- **WHERE** (context): The org/workspace scope - **from principal**, unless the target itself owns one fixed scope (e.g. a GitHub team's org); then from a checked `entitlement.Resource.ParentResourceId`. See `.claude/skills/connector/patterns-entity-sources.md#exception-target-owned-scope`
 
 ```go
 func (g *groupBuilder) Grant(ctx context.Context, principal *v2.Resource,
@@ -220,7 +220,7 @@ if isNotFoundError(err) {
 ```
 
 **Checklist**:
-- [ ] Context (workspace/org) comes from principal, not entitlement
+- [ ] Context (workspace/org) comes from principal, not entitlement (unless checked target-owned scope)
 - [ ] ExternalId is used for API calls, not ResourceId
 - [ ] Already-exists handled as success
 - [ ] Not-found on revoke handled as success
@@ -281,7 +281,7 @@ func (b *widgetBuilder) Grants(ctx context.Context, resource *v2.Resource,
 
 **Checklist**:
 - [ ] ExternalId is set during sync (required for provisioning to work)
-- [ ] Context comes from principal
+- [ ] Context comes from principal (unless checked target-owned scope)
 - [ ] Idempotency handled (already-exists, already-revoked)
 - [ ] capabilities.json updated if needed
 

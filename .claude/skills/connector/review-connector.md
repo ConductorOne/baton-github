@@ -186,12 +186,13 @@ CRITICAL CONTEXT — Entity Source Rules (caused 3 production reverts):
 - WHO (user/account ID): principal.Id.Resource
 - WHAT (group/role): entitlement.Resource.Id.Resource
 - WHERE (workspace/org): principal.ParentResourceId.Resource
-- NEVER get context from entitlement.Resource.ParentResourceId
+- NEVER get context from an unchecked entitlement.Resource.ParentResourceId
+- Exception (target-owned scope): when the target itself belongs to one fixed scope (a GitHub team's org), WHERE may come from entitlement.Resource.ParentResourceId (set by this connector's sync) only with a nil check, parse/validate, and a vendor call scoped to both scope and target (org+team). Routing such an operation through principal.ParentResourceId is the mirror bug — flag it. See patterns-entity-sources.md.
 
 In Revoke:
 - Principal: grant.Principal.Id.Resource
 - Entitlement: grant.Entitlement.Resource.Id.Resource
-- Context: grant.Principal.ParentResourceId.Resource
+- Context: grant.Principal.ParentResourceId.Resource (target-owned: checked grant.Entitlement parent, as above)
 
 ## PROVISIONING CRITERIA (P1-P6)
 - P1: CRITICAL — entity source correctness per rules above

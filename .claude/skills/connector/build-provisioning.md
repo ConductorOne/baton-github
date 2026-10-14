@@ -152,6 +152,13 @@ groupID := entitlement.Resource.Id.Resource
 workspaceID := entitlement.Resource.ParentResourceId.Resource  // WRONG!
 ```
 
+**Exception - target-owned scope:** when the target resource itself belongs to one fixed
+scope (a GitHub team belongs to one org), WHERE comes from the parent of the
+entitlement's resource (set by this connector's sync), but only after a nil check,
+parsing the ID, and a vendor call scoped to both scope and target (org ID + team ID). Routing such an operation through
+`principal.ParentResourceId` is the mirror bug. See
+`patterns-entity-sources.md#exception-target-owned-scope`.
+
 **ALSO WRONG - missing ExternalId:**
 ```go
 // Using ResourceId instead of native ID may not work for API calls

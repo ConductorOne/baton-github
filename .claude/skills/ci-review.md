@@ -181,8 +181,12 @@ two highest-cost mistakes (entity-source confusion has caused 3 production rever
   file, not just the diff — entity-source correctness needs the whole flow.
 - PR2: Context (workspace/org/tenant) comes from `principal.ParentResourceId.Resource`
   (Revoke: `grant.Principal.ParentResourceId.Resource`), NEVER from
-  `entitlement.Resource.ParentResourceId`. Grep the diff for
-  `entitlement.Resource.ParentResourceId` in Grant/Revoke as a direct detector.
+  an unchecked `entitlement.Resource.ParentResourceId`. Grep the diff for
+  `entitlement.Resource.ParentResourceId` in Grant/Revoke as a direct detector, then read
+  each hit. Exception: target-owned scope (the target belongs to one fixed scope, e.g. a
+  GitHub team's org) with a nil check, parse/validate, and an org+team-scoped API call is
+  correct — do not block it. Routing such an operation through
+  `principal.ParentResourceId` is the mirror bug and IS blocking; grep will not find it.
 - PR3: P5 — when an API call takes multiple string params, verify argument order against
   the function signature; swapped IDs are easy to miss and silently grant the wrong thing.
 

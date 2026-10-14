@@ -58,6 +58,12 @@ entitlement.Resource.ParentResourceId  // WRONG for context
 principal.ParentResourceId  // Context comes from principal
 ```
 
+**Exception - target-owned scope:** if the target resource itself belongs to one fixed
+scope (e.g. a GitHub team's org), reading the parent of the entitlement's resource is
+correct when it is nil-checked, parsed, and passed to an API call scoped to both scope
+and target (org+team). Do not flag that. Do flag routing such an operation through
+`principal.ParentResourceId` (the mirror bug).
+
 ### 2. Pagination Termination (High Severity)
 
 Two failure modes - both cause data loss or infinite loops:
@@ -358,7 +364,7 @@ id := strconv.FormatUint(uint64(numericID), 10)
 ### Search for potential issues:
 
 ```
-# Entity confusion
+# Entity confusion (read each hit: OK only for checked target-owned scope)
 entitlement\.Resource\.ParentResourceId
 
 # Always-empty pagination
@@ -396,7 +402,7 @@ Before approving:
 - [ ] No changes to resource ID derivation
 
 ### Entity Sources (CRITICAL)
-- [ ] Context (workspace/org) comes from **principal**, not entitlement
+- [ ] Context (workspace/org) comes from **principal**, not entitlement (unless checked target-owned scope)
 - [ ] In Grant: principal = WHO, entitlement = WHAT
 - [ ] API arguments in correct order (check API docs for multi-string params)
 
