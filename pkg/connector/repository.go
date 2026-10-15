@@ -41,6 +41,21 @@ var repoAccessLevels = []string{
 	repoPermissionAdmin,
 }
 
+// highestRepoPermission returns the highest-privilege permission set to true in
+// a GitHub permissions map. GitHub reports every level at or below a principal's
+// actual access as true (e.g. an admin has pull/triage/push/maintain/admin all
+// true), so we emit a grant only for the highest level. Repository entitlements
+// share an exclusion group, so the highest level implies all lower ones.
+// Returns "" if no recognized permission is set.
+func highestRepoPermission(permissions map[string]bool) string {
+	for i := len(repoAccessLevels) - 1; i >= 0; i-- {
+		if permissions[repoAccessLevels[i]] {
+			return repoAccessLevels[i]
+		}
+	}
+	return ""
+}
+
 // roleNameToRepoPermission maps a role returned by the "get repository
 // permissions for a user" API (read/triage/write/maintain/admin) to the
 // permission vocabulary used by repository entitlements
@@ -203,30 +218,30 @@ func (o *repositoryResourceType) Grants(
 				l.Debug("failed to fetch org base permission, skipping org expansion", zap.Error(err))
 			} else {
 				orgResID := resource.ParentResourceId.Resource
-				// Org admins always have admin on all repos
+				// Org admins always have admin on all repos. admin implies every
+				// lower level via the exclusion group, so emit only the admin grant.
 				adminEntitlementID := fmt.Sprintf("%s:%s:%s", resourceTypeOrg.Id, orgResID, orgRoleAdmin)
-				for _, perm := range repoAccessLevels {
-					rv = append(rv, grant.NewGrant(resource, perm, resource.ParentResourceId,
+				rv = append(rv, grant.NewGrant(resource, repoPermissionAdmin, resource.ParentResourceId,
+					grant.WithAnnotation(&v2.GrantExpandable{
+						EntitlementIds:  []string{adminEntitlementID},
+						Shallow:         true,
+						ResourceTypeIds: []string{resourceTypeUser.Id},
+					}),
+				))
+				// Org members get access based on the org's default repo permission.
+				// orgBasePermissionToRepoPermissions returns levels in ascending order,
+				// so the last entry is the highest and implies the rest.
+				memberPerms := orgBasePermissionToRepoPermissions(basePerm)
+				if len(memberPerms) > 0 {
+					highestMemberPerm := memberPerms[len(memberPerms)-1]
+					memberEntitlementID := fmt.Sprintf("%s:%s:%s", resourceTypeOrg.Id, orgResID, orgRoleMember)
+					rv = append(rv, grant.NewGrant(resource, highestMemberPerm, resource.ParentResourceId,
 						grant.WithAnnotation(&v2.GrantExpandable{
-							EntitlementIds:  []string{adminEntitlementID},
+							EntitlementIds:  []string{memberEntitlementID},
 							Shallow:         true,
 							ResourceTypeIds: []string{resourceTypeUser.Id},
 						}),
 					))
-				}
-				// Org members get access based on the org's default repo permission
-				memberPerms := orgBasePermissionToRepoPermissions(basePerm)
-				if len(memberPerms) > 0 {
-					memberEntitlementID := fmt.Sprintf("%s:%s:%s", resourceTypeOrg.Id, orgResID, orgRoleMember)
-					for _, perm := range memberPerms {
-						rv = append(rv, grant.NewGrant(resource, perm, resource.ParentResourceId,
-							grant.WithAnnotation(&v2.GrantExpandable{
-								EntitlementIds:  []string{memberEntitlementID},
-								Shallow:         true,
-								ResourceTypeIds: []string{resourceTypeUser.Id},
-							}),
-						))
-					}
 				}
 			}
 		}
@@ -275,22 +290,21 @@ func (o *repositoryResourceType) Grants(
 		}
 
 		for _, user := range users {
-			for permission, hasPermission := range user.Permissions {
-				if !hasPermission {
-					continue
-				}
-
-				ur, err := userResource(ctx, user, user.GetEmail(), nil)
-				if err != nil {
-					return nil, nil, err
-				}
-
-				grant := grant.NewGrant(resource, permission, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
-					Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), permission),
-				}))
-				grant.Principal = ur
-				rv = append(rv, grant)
+			permission := highestRepoPermission(user.Permissions)
+			if permission == "" {
+				continue
 			}
+
+			ur, err := userResource(ctx, user, user.GetEmail(), nil)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			grant := grant.NewGrant(resource, permission, ur.Id, grant.WithAnnotation(&v2.V1Identifier{
+				Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, user.GetID(), permission),
+			}))
+			grant.Principal = ur
+			rv = append(rv, grant)
 		}
 
 	case resourceTypeTeam.Id:
@@ -337,29 +351,28 @@ func (o *repositoryResourceType) Grants(
 		}
 
 		for _, team := range teams {
-			for permission, hasPermission := range team.Permissions {
-				if !hasPermission {
-					continue
-				}
-
-				tr, err := teamResource(team, orgID, resource.ParentResourceId)
-				if err != nil {
-					return nil, nil, err
-				}
-
-				rv = append(rv, grant.NewGrant(resource, permission, tr.Id, grant.WithAnnotation(
-					&v2.V1Identifier{
-						Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, team.GetID(), permission),
-					},
-					&v2.GrantExpandable{
-						EntitlementIds: []string{
-							entitlement.NewEntitlementID(tr, teamRoleMaintainer),
-							entitlement.NewEntitlementID(tr, teamRoleMember),
-						},
-						Shallow: true,
-					},
-				)))
+			permission := highestRepoPermission(team.Permissions)
+			if permission == "" {
+				continue
 			}
+
+			tr, err := teamResource(team, orgID, resource.ParentResourceId)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			rv = append(rv, grant.NewGrant(resource, permission, tr.Id, grant.WithAnnotation(
+				&v2.V1Identifier{
+					Id: fmt.Sprintf("repo-grant:%s:%d:%s", resource.Id.Resource, team.GetID(), permission),
+				},
+				&v2.GrantExpandable{
+					EntitlementIds: []string{
+						entitlement.NewEntitlementID(tr, teamRoleMaintainer),
+						entitlement.NewEntitlementID(tr, teamRoleMember),
+					},
+					Shallow: true,
+				},
+			)))
 		}
 	default:
 		return nil, nil, fmt.Errorf("unexpected resource type while fetching grants for repo")
