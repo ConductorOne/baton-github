@@ -9,7 +9,7 @@ sidebarTitle: "GitHub"
 <Tip>
 **This is an updated and improved version of the GitHub integration!** The v2 version of the GitHub integration adds provisioning support for repositories and modernizes the underlying architecture. If you're setting up a GitHub connector with C1 for the first time, you're in the right place.
 
-Use this integration if your organization accesses GitHub at `github.com`. If you use a custom domain, follow the instructions to set up the [GitHub Enterprise](/baton/github-enterprise) integration.
+Use this connector if your organization is on `github.com`. You can manage one organization per GitHub app, or several organizations with a single personal access token. It also supports fine-grained personal access tokens for authentication. If you use a custom domain, follow the instructions to set up the [GitHub Enterprise](/baton/github-enterprise) integration.
 </Tip>
 
 ## Capabilities
@@ -20,10 +20,15 @@ Use this integration if your organization accesses GitHub at `github.com`. If yo
 | Repositories | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
 | Teams | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
 | Orgs | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
+| Org roles | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
 | GitHub Apps (NHI) | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |  |
 | Secrets - API keys | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |  |
 
 The GitHub connector supports [automatic account provisioning and deprovisioning](/product/admin/account-provisioning). New accounts will send an invitation to the account owner; while an invitation is pending, the account status will be shown as **Pending**. Expired invitations also report **Pending**, distinguished by `invitation_expired` in the status details. 
+
+<Note>
+**Enterprise Managed Users (EMU):** If your GitHub organization uses Enterprise Managed Users, account provisioning fails with an error stating that accounts are provisioned by your identity provider, because GitHub does not allow org invitations for managed users. To create accounts for EMU users, use your identity provider's GitHub SCIM integration. The connector still syncs and governs access for existing EMU users.
+</Note>
 
 Repository permissions that are inherited through team membership are labeled as such on the relevant entitlement's **Grants** tab in the C1 web app. 
 
