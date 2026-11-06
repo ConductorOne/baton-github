@@ -9,8 +9,7 @@ import (
 // storeCaps is the set of optional store capabilities pkg/sync uses,
 // resolved once when a store is attached (syncer.setStore) and read as
 // plain fields afterwards. A nil field means "this engine does not
-// implement it" — SQLite implements almost none of these; Pebble
-// implements all of them.
+// implement it". Pebble implements all of them.
 //
 // The point of resolving up front is that the store's shape is decided
 // once, in one place a reader can enumerate, instead of being rediscovered
@@ -38,8 +37,7 @@ type storeCaps struct {
 	// record-level deletes that stale-external-principal reconciliation
 	// needs. All three or none: when any is nil the reconciliation pass
 	// warns which arms are missing and returns without deleting, leaving
-	// principals from an earlier attempt in place (SQLite implements none
-	// of them).
+	// principals from an earlier attempt in place.
 	resourceDeleter    resourceRecordDeleter
 	entitlementDeleter entitlementRecordDeleter
 	grantRefsDeleter   grantByRefsDeleter
@@ -47,12 +45,6 @@ type storeCaps struct {
 	// external-principal delete path falls through to the per-grant loop,
 	// which commits once per grant.
 	grantBatchDeleter grantsByRefsBatchDeleter
-	// grantPrincipalKeys and principalSortedGrants are the store-level
-	// expansion fast paths. When nil the expander adapter lists whole
-	// grants and extracts principal keys itself, and reports grants as
-	// unsorted so the topological merge buffers and sorts per entitlement.
-	grantPrincipalKeys    grantPrincipalKeyLister
-	principalSortedGrants principalSortedGrantLister
 	// newExpandedGrants and newExpandedContributions are the Grants
 	// sub-store's write fast paths for expansion output. When nil the
 	// adapter falls back to StoreExpandedGrants, materializing grants and
@@ -74,10 +66,6 @@ type storeCaps struct {
 // readerCaps is the subset of storeCaps reachable on a bare
 // connectorstore.Reader: everything a read-only consumer of a c1z (the
 // graph loader, the ingest-invariant pass, the progress log) can use.
-// A reader may be either engine indefinitely — external-resource and
-// previous-sync artifacts stay legacy SQLite long after Pebble is the only
-// sync target — so these are honestly optional in a way the write side is
-// not.
 type readerCaps struct {
 	// entitlementGraph is the c1z graph sidecar used to persist a
 	// preserved entitlement graph for later incremental expansion.
@@ -116,8 +104,6 @@ func resolveStoreCaps(store c1zstore.Store) storeCaps {
 	caps.entitlementDeleter, _ = store.(entitlementRecordDeleter)
 	caps.grantRefsDeleter, _ = store.(grantByRefsDeleter)
 	caps.grantBatchDeleter, _ = store.(grantsByRefsBatchDeleter)
-	caps.grantPrincipalKeys, _ = store.(grantPrincipalKeyLister)
-	caps.principalSortedGrants, _ = store.(principalSortedGrantLister)
 	if meta := store.SyncMeta(); meta != nil {
 		caps.ingestVerification, _ = meta.(c1zstore.IngestInvariantVerificationWriter)
 	}
