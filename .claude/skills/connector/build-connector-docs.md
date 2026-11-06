@@ -160,13 +160,21 @@ Some connectors support custom actions that can be used in C1 automations. Add t
 ```mdx
 ### Connector actions
 
-Connector actions are custom capabilities that extend C1 automations with app-specific operations. You can use connector actions in the [Perform connector action](/product/admin/automations-steps-reference#perform-connector-action) automation step.
+Connector actions are custom capabilities that extend C1 automations with app-specific operations. Which automation step offers an action is determined by the action itself:
+
+| Automation step | Actions offered | How the target is selected |
+|-----------------|-----------------|----------------------------|
+| [Perform connector action](/product/admin/automations-steps-reference#perform-connector-action) | [every action whose type is not account enable/disable, e.g. `update_profile`] | [Varies by action: a resource selector on the resource type, a plain ID field, or no target.] |
+| [Account lifecycle action](/product/admin/automations-steps-reference#account-lifecycle-action) | [actions typed `ACTION_TYPE_ACCOUNT_ENABLE` or `ACTION_TYPE_ACCOUNT_DISABLE`, e.g. `enable_user`, `disable_user`] | The step's own **Target account** selector — either the account in context or a specific account. |
 
 | Action name | Additional fields | Description |
 |-------------|-------------------|-------------|
 | enable_user | `user_id` (string, required) | Unsuspends a suspended user account |
 | disable_user | `user_id` (string, required) | Suspends an active user account |
+| update_profile | `user_id` (string, required), profile fields (optional) | Updates a user's profile attributes |
 ```
+
+**Which step row an action belongs in:** read the action's `ActionType`. Actions typed `ACTION_TYPE_ACCOUNT_ENABLE` or `ACTION_TYPE_ACCOUNT_DISABLE` are offered only by **Account lifecycle action**; C1 rejects them in Perform connector action. Every other type, including `ACTION_TYPE_ACCOUNT_UPDATE_PROFILE`, is offered by **Perform connector action**. Drop a row whose "Actions offered" cell would be empty. Never name a single step for all of a connector's actions.
 
 **Finding action information in baton repos:**
 
@@ -178,6 +186,7 @@ Connector actions are custom capabilities that extend C1 automations with app-sp
    - `pkg/connector/connector.go` - sometimes contains `BatonActionSchema` definitions
 3. Each action schema includes:
    - `Name` - the action identifier (e.g., `enable_user`)
+   - `ActionType` - decides which automation step offers the action (see above)
    - `Arguments` - required and optional fields
    - `ReturnTypes` - what the action returns
    - `Description` - what the action does
