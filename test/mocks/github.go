@@ -116,7 +116,7 @@ func (mgh MockGitHub) Seed() (
 		ID:          &userId,
 		Login:       &userIdStr,
 		Email:       &email,
-		Permissions: &github.RepositoryPermissions{Pull: github.Ptr[bool](true)},
+		Permissions: &github.RepositoryPermissions{Pull: new(true)},
 	}
 	githubRepository := github.Repository{
 		ID:           &repositoryId,
@@ -416,8 +416,8 @@ func (mgh MockGitHub) getMembers(
 func userToMembership(user *github.User) github.Membership {
 	return github.Membership{
 		User:  user,
-		Role:  github.Ptr[string]("admin"),
-		State: github.Ptr[string]("active"),
+		Role:  new("admin"),
+		State: new("active"),
 	}
 }
 
@@ -791,7 +791,7 @@ func (mgh *MockGitHub) AddUserToOrgRole(roleID int64, userID int64) {
 // what GitHub returns to credentials without org-owner visibility.
 func (mgh *MockGitHub) SetOrgDefaultRepoPermission(orgID int64, permission string) {
 	org := mgh.organizations[orgID]
-	org.DefaultRepoPermission = github.Ptr[string](permission)
+	org.DefaultRepoPermission = new(permission)
 	mgh.organizations[orgID] = org
 }
 

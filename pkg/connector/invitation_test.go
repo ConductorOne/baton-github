@@ -57,8 +57,8 @@ func orgByIDHandler() mock.MockBackendOption {
 		mocks.GetOrganizationById,
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write(mock.MustMarshal(github.Organization{
-				ID:    github.Ptr[int64](invitationTestOrgID),
-				Login: github.Ptr[string](invitationTestOrgLogin),
+				ID:    new(invitationTestOrgID),
+				Login: new(invitationTestOrgLogin),
 			}))
 		}),
 	)
@@ -86,26 +86,26 @@ func TestInvitationListPagination(t *testing.T) {
 
 	pendingPage1 := []*github.Invitation{
 		{
-			ID:        github.Ptr[int64](int64(1001)),
-			Login:     github.Ptr[string]("alice"),
-			Email:     github.Ptr[string]("alice@example.com"),
-			Inviter:   &github.User{Login: github.Ptr[string]("admin")},
+			ID:        new(int64(1001)),
+			Login:     new("alice"),
+			Email:     new("alice@example.com"),
+			Inviter:   &github.User{Login: new("admin")},
 			CreatedAt: &github.Timestamp{Time: pendingCreated1},
 		},
 		{
-			ID:        github.Ptr[int64](int64(1002)),
-			Login:     github.Ptr[string]("bob"),
-			Email:     github.Ptr[string]("bob@example.com"),
-			Inviter:   &github.User{Login: github.Ptr[string]("admin")},
+			ID:        new(int64(1002)),
+			Login:     new("bob"),
+			Email:     new("bob@example.com"),
+			Inviter:   &github.User{Login: new("admin")},
 			CreatedAt: &github.Timestamp{Time: pendingCreated2},
 		},
 	}
 	pendingPage2 := []*github.Invitation{
 		{
-			ID:        github.Ptr[int64](int64(1003)),
-			Login:     github.Ptr[string]("carol"),
-			Email:     github.Ptr[string]("carol@example.com"),
-			Inviter:   &github.User{Login: github.Ptr[string]("admin")},
+			ID:        new(int64(1003)),
+			Login:     new("carol"),
+			Email:     new("carol@example.com"),
+			Inviter:   &github.User{Login: new("admin")},
 			CreatedAt: &github.Timestamp{Time: pendingCreated3},
 		},
 	}
@@ -116,39 +116,39 @@ func TestInvitationListPagination(t *testing.T) {
 	// for failures that aren't expirations.
 	failedPage1 := []*github.Invitation{
 		{
-			ID:           github.Ptr[int64](int64(2001)),
-			Email:        github.Ptr[string]("dave-expired@example.com"),
-			Inviter:      &github.User{Login: github.Ptr[string]("admin")},
+			ID:           new(int64(2001)),
+			Email:        new("dave-expired@example.com"),
+			Inviter:      &github.User{Login: new("admin")},
 			CreatedAt:    &github.Timestamp{Time: pendingCreated1},
 			FailedAt:     &github.Timestamp{Time: expiredFailedAt1},
-			FailedReason: github.Ptr[string]("Invitation expired. User did not accept this invite for 7 days"),
+			FailedReason: new("Invitation expired. User did not accept this invite for 7 days"),
 		},
 		{
-			ID:           github.Ptr[int64](int64(2002)),
-			Email:        github.Ptr[string]("eve-inactive@example.com"),
-			Inviter:      &github.User{Login: github.Ptr[string]("admin")},
+			ID:           new(int64(2002)),
+			Email:        new("eve-inactive@example.com"),
+			Inviter:      &github.User{Login: new("admin")},
 			CreatedAt:    &github.Timestamp{Time: pendingCreated1},
 			FailedAt:     &github.Timestamp{Time: expiredFailedAt1},
-			FailedReason: github.Ptr[string]("user_was_inactive"),
+			FailedReason: new("user_was_inactive"),
 		},
 	}
 	failedPage2 := []*github.Invitation{
 		{
-			ID:        github.Ptr[int64](int64(2003)),
-			Email:     github.Ptr[string]("frank-expired@example.com"),
-			Inviter:   &github.User{Login: github.Ptr[string]("admin")},
+			ID:        new(int64(2003)),
+			Email:     new("frank-expired@example.com"),
+			Inviter:   &github.User{Login: new("admin")},
 			CreatedAt: &github.Timestamp{Time: pendingCreated2},
 			FailedAt:  &github.Timestamp{Time: expiredFailedAt2},
 			// Uppercase variant locks in case-insensitive matching.
-			FailedReason: github.Ptr[string]("INVITATION EXPIRED"),
+			FailedReason: new("INVITATION EXPIRED"),
 		},
 		{
-			ID:           github.Ptr[int64](int64(2004)),
-			Email:        github.Ptr[string]("grace-unexpected@example.com"),
-			Inviter:      &github.User{Login: github.Ptr[string]("admin")},
+			ID:           new(int64(2004)),
+			Email:        new("grace-unexpected@example.com"),
+			Inviter:      &github.User{Login: new("admin")},
 			CreatedAt:    &github.Timestamp{Time: pendingCreated2},
 			FailedAt:     &github.Timestamp{Time: expiredFailedAt2},
-			FailedReason: github.Ptr[string]("unexpected_failure"),
+			FailedReason: new("unexpected_failure"),
 		},
 	}
 

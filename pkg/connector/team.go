@@ -311,7 +311,7 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		orgId,
 		teamId,
 		user.GetLogin(),
-		github.AddTeamMembershipRequest{Role: github.Ptr[string](permission)},
+		github.AddTeamMembershipRequest{Role: new(permission)},
 	)
 
 	if er != nil {

@@ -470,7 +470,7 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			repo.GetOwner().GetLogin(),
 			repo.GetName(),
 			user.GetLogin(),
-			github.AddCollaboratorRequest{Permission: github.Ptr[string](permission)},
+			github.AddCollaboratorRequest{Permission: new(permission)},
 		)
 
 		if er != nil {
@@ -487,7 +487,7 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 		}
 
 		resp, err = o.client.Teams.AddTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName(), github.AddTeamRepoRequest{
-			Permission: github.Ptr[string](permission),
+			Permission: new(permission),
 		})
 		if err != nil {
 			return nil, wrapGitHubError(err, resp, "github-connector: failed to add team to repository")

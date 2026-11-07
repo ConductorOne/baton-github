@@ -344,7 +344,7 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 	}
 
 	// User is a member but grant is for admin, so make them an admin.
-	_, resp, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.Ptr[string](orgRoleAdmin)})
+	_, resp, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: new(orgRoleAdmin)})
 	if err != nil {
 		return nil, wrapGitHubError(err, resp, "github-connector: failed to make user an admin")
 	}
@@ -406,7 +406,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 		return nil, nil
 	}
 
-	_, resp, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.Ptr[string](orgRoleMember)})
+	_, resp, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: new(orgRoleMember)})
 	if err != nil {
 		return nil, wrapGitHubError(err, resp, "github-connector: failed to revoke org admin from user")
 	}

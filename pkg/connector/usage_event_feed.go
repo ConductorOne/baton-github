@@ -148,12 +148,12 @@ func (f *usageEventFeed) ListEvents(
 		orgName := cursor.Orgs[cursor.OrgIndex]
 
 		opts := &github.GetAuditLogOptions{
-			Order: github.Ptr[string]("desc"),
+			Order: new("desc"),
 			// "web" excludes raw git-protocol events (push/fetch/clone),
 			// which dominate audit-log volume without losing members who are
 			// otherwise covered by their web/API activity.
-			Include: github.Ptr[string]("web"),
-			Phrase:  github.Ptr[string](sincePhrase),
+			Include: new("web"),
+			Phrase:  new(sincePhrase),
 			ListCursorOptions: github.ListCursorOptions{
 				PerPage: maxPageSize,
 			},

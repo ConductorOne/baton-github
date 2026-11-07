@@ -38,7 +38,7 @@ func newGitHubAPITestClientAt(t *testing.T, handler http.Handler, basePath strin
 	require.NoError(t, err)
 	baseURL = baseURL.JoinPath(basePath)
 
-	client, err := github.NewClient(github.WithHTTPClient(srv.Client()), github.WithURLs(github.Ptr[string](baseURL.String()), nil))
+	client, err := github.NewClient(github.WithHTTPClient(srv.Client()), github.WithURLs(new(baseURL.String()), nil))
 	require.NoError(t, err)
 
 	return client

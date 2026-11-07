@@ -26,13 +26,13 @@ func TestCollaboratorPermissions(t *testing.T) {
 		{name: "missing permissions"},
 		{
 			name:        "false flags do not grant access",
-			permissions: &github.RepositoryPermissions{Pull: github.Ptr[bool](false)},
+			permissions: &github.RepositoryPermissions{Pull: new(false)},
 		},
 		{
 			name: "all GitHub flags retain their entitlement names",
 			permissions: &github.RepositoryPermissions{
-				Pull: github.Ptr[bool](true), Triage: github.Ptr[bool](true), Push: github.Ptr[bool](true),
-				Maintain: github.Ptr[bool](true), Admin: github.Ptr[bool](true),
+				Pull: new(true), Triage: new(true), Push: new(true),
+				Maintain: new(true), Admin: new(true),
 			},
 			want: []string{repoPermissionPull, repoPermissionTriage, repoPermissionPush, repoPermissionMaintain, repoPermissionAdmin},
 		},
