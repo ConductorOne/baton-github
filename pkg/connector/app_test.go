@@ -14,13 +14,13 @@ func TestAppResource(t *testing.T) {
 	ctx := context.Background()
 
 	installation := &github.Installation{
-		ID:                  github.Ptr(int64(42)),
-		AppID:               github.Ptr(int64(7)),
-		AppSlug:             github.Ptr("octo-app"),
-		TargetType:          github.Ptr("Organization"),
-		RepositorySelection: github.Ptr("all"),
-		HTMLURL:             github.Ptr("https://github.com/organizations/acme/settings/installations/42"),
-		Account:             &github.User{Login: github.Ptr("acme")},
+		ID:                  github.Ptr[int64](int64(42)),
+		AppID:               github.Ptr[int64](int64(7)),
+		AppSlug:             github.Ptr[string]("octo-app"),
+		TargetType:          github.Ptr[string]("Organization"),
+		RepositorySelection: github.Ptr[string]("all"),
+		HTMLURL:             github.Ptr[string]("https://github.com/organizations/acme/settings/installations/42"),
+		Account:             &github.User{Login: github.Ptr[string]("acme")},
 	}
 	parent := &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: "1"}
 
