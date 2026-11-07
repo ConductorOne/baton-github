@@ -13,7 +13,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	rType "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -311,7 +311,7 @@ func (o *teamResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		orgId,
 		teamId,
 		user.GetLogin(),
-		&github.TeamAddTeamMembershipOptions{Role: permission},
+		github.AddTeamMembershipRequest{Role: github.Ptr(permission)},
 	)
 
 	if er != nil {

@@ -14,7 +14,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -316,7 +316,7 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 
 	// If user isn't a member, invite them to the org with the requested role
 	if !isMember {
-		_, resp, err = o.client.Organizations.CreateOrgInvitation(ctx, orgName, &github.CreateOrgInvitationOptions{
+		_, resp, err = o.client.Organizations.CreateOrgInvitation(ctx, orgName, github.CreateOrgInvitationRequest{
 			InviteeID: user.ID,
 			Role:      &requestedRole,
 		})

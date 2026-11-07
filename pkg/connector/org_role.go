@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
 
@@ -13,7 +15,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 )
@@ -323,12 +325,13 @@ func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource,
 	}
 
 	// First verify that the role exists
-	req, err := o.client.NewRequest("GET", fmt.Sprintf("orgs/%s/organization-roles/%d", orgName, roleID), nil)
+	rolePath := path.Join("orgs", url.PathEscape(orgName), "organization-roles", strconv.FormatInt(roleID, 10))
+	req, err := o.client.NewRequest(ctx, "GET", rolePath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := o.client.Do(ctx, req, nil)
+	resp, err := o.client.Do(req, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get role existence: %w", err)
 	}
@@ -352,11 +355,12 @@ func (o *orgRoleResourceType) Grant(ctx context.Context, principal *v2.Resource,
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	reqs, err := o.client.NewRequest("PUT", fmt.Sprintf("orgs/%s/organization-roles/users/%s/%d", orgName, user.GetLogin(), roleID), nil)
+	userRolePath := path.Join("orgs", url.PathEscape(orgName), "organization-roles", "users", url.PathEscape(user.GetLogin()), strconv.FormatInt(roleID, 10))
+	reqs, err := o.client.NewRequest(ctx, "PUT", userRolePath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	resp, err = o.client.Do(ctx, reqs, nil)
+	resp, err = o.client.Do(reqs, nil)
 	if err != nil {
 		if resp != nil {
 			l.Error("failed to assign role",
@@ -427,13 +431,13 @@ func (o *orgRoleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (anno
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	url := fmt.Sprintf("orgs/%s/organization-roles/users/%s/%d", orgName, user.GetLogin(), roleID)
-	req, err := o.client.NewRequest("DELETE", url, nil)
+	userRolePath := path.Join("orgs", url.PathEscape(orgName), "organization-roles", "users", url.PathEscape(user.GetLogin()), strconv.FormatInt(roleID, 10))
+	req, err := o.client.NewRequest(ctx, "DELETE", userRolePath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := o.client.Do(ctx, req, nil)
+	resp, err := o.client.Do(req, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to revoke role: %w", err)
 	}

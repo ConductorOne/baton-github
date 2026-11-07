@@ -9,7 +9,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/migueleliasweb/go-github-mock/src/mock"
 	"github.com/stretchr/testify/require"
 
@@ -153,7 +153,7 @@ func TestInvitationListPagination(t *testing.T) {
 	}
 
 	newBuilder := func(httpClient *http.Client) *invitationResourceType {
-		gh := github.NewClient(httpClient)
+		gh := newTestGitHubClient(t, httpClient)
 		return InvitationBuilder(InvitationBuilderParams{
 			client:   gh,
 			orgCache: newOrgNameCache(gh),

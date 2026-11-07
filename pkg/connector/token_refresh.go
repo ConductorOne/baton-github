@@ -9,7 +9,7 @@ import (
 
 	"github.com/conductorone/baton-github/pkg/customclient"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
 	"go.uber.org/zap"
@@ -144,13 +144,13 @@ func newGitHubAppHTTPClient(ctx context.Context, rts *refreshableTokenSource) (*
 func newGitHubAppClients(instanceURL string, httpClient *http.Client) (*github.Client, *githubv4.Client, error) {
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
 
-	gc := github.NewClient(httpClient)
+	opts := []github.ClientOptionsFunc{github.WithHTTPClient(httpClient)}
 	if instanceURL != "" && instanceURL != githubDotCom {
-		var err error
-		gc, err = gc.WithEnterpriseURLs(instanceURL, instanceURL)
-		if err != nil {
-			return nil, nil, err
-		}
+		opts = append(opts, github.WithEnterpriseURLs(instanceURL, instanceURL))
+	}
+	gc, err := github.NewClient(opts...)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	gqlHTTPClient := &http.Client{

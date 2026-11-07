@@ -10,7 +10,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,7 +21,7 @@ func TestOrganization(t *testing.T) {
 
 		githubOrganization, _, _, githubUser, _, _ := mgh.Seed()
 
-		githubClient := github.NewClient(mgh.Server())
+		githubClient := newTestGitHubClient(t, mgh.Server())
 		cache := newOrgNameCache(githubClient)
 		client := OrgBuilder(githubClient, nil, cache, nil, false)
 

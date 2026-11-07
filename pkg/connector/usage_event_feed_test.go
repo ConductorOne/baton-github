@@ -10,7 +10,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/migueleliasweb/go-github-mock/src/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -156,7 +156,7 @@ func TestUsageEventFeed_ListEvents_GracefulDegradation(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, nil)
 	require.NoError(t, err)
@@ -177,7 +177,7 @@ func TestUsageEventFeed_ListEvents_SkipsOrgOn404(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, nil)
 	require.NoError(t, err)
@@ -198,7 +198,7 @@ func TestUsageEventFeed_ListEvents_AbortsOnServerError(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, nil)
 	require.Error(t, err, "a 5xx should abort the call, not be swallowed as a successful empty pass")
@@ -220,7 +220,7 @@ func TestUsageEventFeed_ListEvents_AbortsOnRateLimit(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, nil)
 	require.Error(t, err, "a rate-limited 403 (Remaining: 0) should abort, not be treated as a permission error")
@@ -248,7 +248,7 @@ func TestUsageEventFeed_ListEvents_FiltersToSinceBoundary(t *testing.T) {
 		mock.WithRequestMatch(mock.GetOrgsAuditLogByOrg, entries),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, timestamppb.New(since), nil)
 	require.NoError(t, err)
@@ -272,7 +272,7 @@ func TestUsageEventFeed_ListEvents_ZeroEarliestEventFallsBackToDefaultLookback(t
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	// A zero timestamppb.Timestamp mirrors a degenerate caller-supplied
 	// start-at, which must not be trusted as a real boundary.
@@ -317,7 +317,7 @@ func TestUsageEventFeed_ListEvents_ContinuesPastAnAllFilteredPage(t *testing.T) 
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, timestamppb.New(since), nil)
 	require.NoError(t, err)
@@ -364,7 +364,7 @@ func TestUsageEventFeed_ListEvents_ReturnsTightestRateLimit(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, _, annos, err := f.ListEvents(ctx, timestamppb.New(since), nil)
 	require.NoError(t, err)
@@ -411,7 +411,7 @@ func TestUsageEventFeed_ListEvents_AdvancesAcrossMultipleOrgs(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, timestamppb.New(since), nil)
 	require.NoError(t, err)
@@ -460,7 +460,7 @@ func TestUsageEventFeed_ListEvents_ResumesFromPersistedCursor(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, &pagination.StreamToken{Cursor: cursorStr})
 	require.NoError(t, err)
@@ -503,7 +503,7 @@ func TestUsageEventFeed_ListEvents_ResumesFromPersistedAfterCursor(t *testing.T)
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, &pagination.StreamToken{Cursor: cursorStr})
 	require.NoError(t, err)
@@ -544,7 +544,7 @@ func TestUsageEventFeed_ListEvents_RecoversFromOutOfBoundsCursor(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	require.NotPanics(t, func() {
 		events, state, _, err := f.ListEvents(ctx, nil, &pagination.StreamToken{Cursor: cursorStr})
@@ -562,7 +562,7 @@ func TestUsageEventFeed_ListEvents_NoOrgs(t *testing.T) {
 		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{}),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, nil)
 	require.NoError(t, err)

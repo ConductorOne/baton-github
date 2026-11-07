@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/migueleliasweb/go-github-mock/src/mock"
 )
 
@@ -113,12 +113,10 @@ func (mgh MockGitHub) Seed() (
 		Login: &organizationSlug,
 	}
 	githubUser := github.User{
-		ID:    &userId,
-		Login: &userIdStr,
-		Email: &email,
-		Permissions: map[string]bool{
-			"permission0": true,
-		},
+		ID:          &userId,
+		Login:       &userIdStr,
+		Email:       &email,
+		Permissions: &github.RepositoryPermissions{Pull: github.Ptr(true)},
 	}
 	githubRepository := github.Repository{
 		ID:           &repositoryId,

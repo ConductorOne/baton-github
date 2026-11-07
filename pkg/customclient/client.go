@@ -9,7 +9,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 )
 
 // githubMaxPageSize is the largest per_page the GitHub REST API accepts.
@@ -29,21 +29,28 @@ func consumedLicensesPathParts(enterprise string) []string {
 type Client struct {
 	*uhttp.BaseHttpClient
 	// baseURL is the go-github client's base, so endpoints follow --instance-url.
-	baseURL *url.URL
+	baseURL string
 }
 
 func New(client *github.Client) *Client {
 	return &Client{
 		BaseHttpClient: uhttp.NewBaseHttpClient(client.Client()),
-		baseURL:        client.BaseURL,
+		baseURL:        client.BaseURL(),
 	}
 }
 
 // endpoint resolves path segments against the base URL, escaping each one
 // because url.JoinPath treats its arguments as already escaped.
 func (c *Client) endpoint(segments ...string) (string, error) {
-	if c.baseURL == nil {
+	if c.baseURL == "" {
 		return "", fmt.Errorf("github client has no base URL")
+	}
+	baseURL, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid GitHub API base URL: %w", err)
+	}
+	if baseURL.Scheme == "" || baseURL.Host == "" {
+		return "", fmt.Errorf("GitHub API base URL must have a scheme and host")
 	}
 
 	escaped := make([]string, 0, len(segments))
@@ -51,7 +58,7 @@ func (c *Client) endpoint(segments ...string) (string, error) {
 		escaped = append(escaped, url.PathEscape(segment))
 	}
 
-	return url.JoinPath(c.baseURL.String(), escaped...)
+	return baseURL.JoinPath(escaped...).String(), nil
 }
 
 // GetEnterpriseInstallation returns this app's installation on one enterprise.
