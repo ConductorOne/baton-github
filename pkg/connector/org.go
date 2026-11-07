@@ -14,7 +14,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -316,7 +316,7 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 
 	// If user isn't a member, invite them to the org with the requested role
 	if !isMember {
-		_, resp, err = o.client.Organizations.CreateOrgInvitation(ctx, orgName, &github.CreateOrgInvitationOptions{
+		_, resp, err = o.client.Organizations.CreateOrgInvitation(ctx, orgName, github.CreateOrgInvitationRequest{
 			InviteeID: user.ID,
 			Role:      &requestedRole,
 		})
@@ -344,7 +344,7 @@ func (o *orgResourceType) Grant(ctx context.Context, principal *v2.Resource, en 
 	}
 
 	// User is a member but grant is for admin, so make them an admin.
-	_, resp, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.Ptr(orgRoleAdmin)})
+	_, resp, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.Ptr[string](orgRoleAdmin)})
 	if err != nil {
 		return nil, wrapGitHubError(err, resp, "github-connector: failed to make user an admin")
 	}
@@ -406,7 +406,7 @@ func (o *orgResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotati
 		return nil, nil
 	}
 
-	_, resp, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.Ptr(orgRoleMember)})
+	_, resp, err = o.client.Organizations.EditOrgMembership(ctx, user.GetLogin(), orgName, &github.Membership{Role: github.Ptr[string](orgRoleMember)})
 	if err != nil {
 		return nil, wrapGitHubError(err, resp, "github-connector: failed to revoke org admin from user")
 	}

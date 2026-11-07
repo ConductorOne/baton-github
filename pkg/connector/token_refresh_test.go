@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
@@ -273,9 +273,9 @@ func TestTokenRefreshTransport_EndToEndViaGitHubClient(t *testing.T) {
 	rts := newRefreshableTokenSource(validToken("initial"), src)
 
 	var (
-		callCount   atomic.Int32
-		seenTokens  sync.Map
-		serverMu    sync.Mutex
+		callCount  atomic.Int32
+		seenTokens sync.Map
+		serverMu   sync.Mutex
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		serverMu.Lock()
@@ -299,8 +299,8 @@ func TestTokenRefreshTransport_EndToEndViaGitHubClient(t *testing.T) {
 			rts:  rts,
 		},
 	}
-	gc := github.NewClient(httpClient)
-	parsed, err := gc.WithEnterpriseURLs(server.URL, server.URL)
+	gc := newTestGitHubClient(t, httpClient)
+	parsed, err := gc.Clone(github.WithEnterpriseURLs(server.URL, server.URL))
 	require.NoError(t, err)
 
 	_, _, err = parsed.Repositories.ListCollaborators(context.Background(), "x", "y", &github.ListCollaboratorsOptions{})

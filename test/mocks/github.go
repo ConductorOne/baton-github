@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/migueleliasweb/go-github-mock/src/mock"
 )
 
@@ -113,12 +113,10 @@ func (mgh MockGitHub) Seed() (
 		Login: &organizationSlug,
 	}
 	githubUser := github.User{
-		ID:    &userId,
-		Login: &userIdStr,
-		Email: &email,
-		Permissions: map[string]bool{
-			"permission0": true,
-		},
+		ID:          &userId,
+		Login:       &userIdStr,
+		Email:       &email,
+		Permissions: &github.RepositoryPermissions{Pull: github.Ptr[bool](true)},
 	}
 	githubRepository := github.Repository{
 		ID:           &repositoryId,
@@ -418,8 +416,8 @@ func (mgh MockGitHub) getMembers(
 func userToMembership(user *github.User) github.Membership {
 	return github.Membership{
 		User:  user,
-		Role:  github.Ptr("admin"),
-		State: github.Ptr("active"),
+		Role:  github.Ptr[string]("admin"),
+		State: github.Ptr[string]("active"),
 	}
 }
 
@@ -793,7 +791,7 @@ func (mgh *MockGitHub) AddUserToOrgRole(roleID int64, userID int64) {
 // what GitHub returns to credentials without org-owner visibility.
 func (mgh *MockGitHub) SetOrgDefaultRepoPermission(orgID int64, permission string) {
 	org := mgh.organizations[orgID]
-	org.DefaultRepoPermission = github.Ptr(permission)
+	org.DefaultRepoPermission = github.Ptr[string](permission)
 	mgh.organizations[orgID] = org
 }
 

@@ -21,7 +21,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	jwtv5 "github.com/golang-jwt/jwt/v5"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/shurcooL/githubv4"
 	"go.uber.org/zap"
@@ -312,14 +312,13 @@ func newGitHubClient(ctx context.Context, instanceURL string, ts oauth2.TokenSou
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
 	tc := oauth2.NewClient(ctx, ts)
-	gc := github.NewClient(tc)
-
+	opts := []github.ClientOptionsFunc{github.WithHTTPClient(tc)}
 	instanceURL = strings.TrimSuffix(instanceURL, "/")
 	if instanceURL != "" && instanceURL != githubDotCom {
-		return gc.WithEnterpriseURLs(instanceURL, instanceURL)
+		opts = append(opts, github.WithEnterpriseURLs(instanceURL, instanceURL))
 	}
 
-	return gc, nil
+	return github.NewClient(opts...)
 }
 
 func NewLambdaConnector(ctx context.Context, ghc *cfg.Github, cliOpts *cli.ConnectorOpts) (connectorbuilder.ConnectorBuilderV2, []connectorbuilder.Opt, error) {
@@ -758,7 +757,7 @@ func getJWTToken(appID string, privateKey string) (string, error) {
 }
 
 func findInstallation(ctx context.Context, c *github.Client, orgName string) (*github.Installation, error) {
-	installation, resp, err := c.Apps.FindOrganizationInstallation(ctx, orgName)
+	installation, resp, err := c.Apps.GetOrganizationInstallation(ctx, orgName)
 	if err != nil {
 		return nil, wrapGitHubError(err, resp, fmt.Sprintf("github-connector: failed to find installation for org %s", orgName))
 	}

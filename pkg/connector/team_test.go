@@ -8,7 +8,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	entitlement2 "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
 
 	"github.com/conductorone/baton-github/test"
@@ -23,7 +22,7 @@ func TestTeam(t *testing.T) {
 
 		githubOrganization, _, githubTeam, githubUser, _, _ := mgh.Seed()
 
-		githubClient := github.NewClient(mgh.Server())
+		githubClient := newTestGitHubClient(t, mgh.Server())
 		cache := newOrgNameCache(githubClient)
 		client := TeamBuilder(githubClient, cache, false)
 

@@ -8,7 +8,6 @@ import (
 	"github.com/conductorone/baton-github/test/mocks"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/google/go-github/v69/github"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +29,7 @@ func TestUsersList(t *testing.T) {
 			t.Error(err)
 		}
 
-		githubClient := github.NewClient(mgh.Server())
+		githubClient := newTestGitHubClient(t, mgh.Server())
 		graphQLClient := mocks.MockGraphQL()
 		cache := newOrgNameCache(githubClient)
 		client := UserBuilder(

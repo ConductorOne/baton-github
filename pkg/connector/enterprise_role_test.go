@@ -15,7 +15,7 @@ import (
 	entitlementSdk "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/shurcooL/githubv4"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -426,7 +426,7 @@ func newTestEnterpriseRoleBuilder(
 	require.NoError(t, err)
 
 	builder := EnterpriseRoleProvisioningBuilder(
-		github.NewClient(mgh.Server()),
+		newTestGitHubClient(t, mgh.Server()),
 		nil,
 		[]string{testEnterprise},
 		func(context.Context, []string) (map[string]*customclient.EnterpriseAdminClient, error) {
