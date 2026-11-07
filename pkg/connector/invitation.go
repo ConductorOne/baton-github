@@ -340,21 +340,27 @@ func (i *invitationResourceType) Delete(ctx context.Context, resourceId *v2.Reso
 	}
 
 	var (
-		isRemoved = false
-		resp      *github.Response
+		isRemoved    = false
+		wasCancelled = false
+		hadRealError = false
+		resp         *github.Response
 	)
 
 	for _, org := range orgs {
 		resp, err = i.client.Organizations.CancelInvite(ctx, org, invitationID)
 		if err == nil {
 			isRemoved = true
+			wasCancelled = true
 			continue
 		}
 		if isNotFoundError(resp) {
 			// Invitation is already gone (expired or previously cancelled).
 			// Desired state is achieved, so treat as success.
 			isRemoved = true
+			continue
 		}
+		// A non-404 failure (e.g. 5xx) leaves this org's state undetermined.
+		hadRealError = true
 	}
 
 	if !isRemoved {
@@ -368,6 +374,20 @@ func (i *invitationResourceType) Delete(ctx context.Context, resourceId *v2.Reso
 
 	var annotations annotations.Annotations
 	annotations.WithRateLimiting(restApiRateLimit)
+	if !wasCancelled && !hadRealError {
+		// No active cancellation succeeded and no org returned a non-404
+		// error, yet the invitation is considered removed: the provider
+		// authoritatively reported it already absent (404) for a well-formed
+		// invitation id against a configured org. Emit the typed already-absent
+		// marker so a delete retried after a crash is classified as success
+		// rather than an ambiguous NotFound (SPEC-09a; baton-sdk#1033). An
+		// active cancellation is ordinary success and intentionally carries no
+		// marker; an unresolved non-404 error means absence was not confirmed,
+		// so the marker is withheld even though the pre-existing success return
+		// is preserved. A future baton-sdk bump can replace this direct
+		// construction with resource.ResourceDoesNotExistAnnotations().
+		annotations.Append(&v2.ResourceDoesNotExist{})
+	}
 	return annotations, nil
 }
 
