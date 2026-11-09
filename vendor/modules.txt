@@ -272,7 +272,7 @@ github.com/cockroachdb/swiss
 # github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06
 ## explicit; go 1.19
 github.com/cockroachdb/tokenbucket
-# github.com/conductorone/baton-sdk v0.44.1
+# github.com/conductorone/baton-sdk v0.44.2
 ## explicit; go 1.27.3
 github.com/conductorone/baton-sdk/internal/atomicfile
 github.com/conductorone/baton-sdk/internal/connector
@@ -466,8 +466,8 @@ github.com/inconshreveable/mousetrap
 # github.com/jellydator/ttlcache/v3 v3.3.0
 ## explicit; go 1.18
 github.com/jellydator/ttlcache/v3
-# github.com/klauspost/compress v1.18.7
-## explicit; go 1.24
+# github.com/klauspost/compress v1.20.2
+## explicit; go 1.25
 github.com/klauspost/compress
 github.com/klauspost/compress/fse
 github.com/klauspost/compress/huff0
