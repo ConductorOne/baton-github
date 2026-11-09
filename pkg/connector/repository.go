@@ -16,7 +16,7 @@ import (
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/types/sessions"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -57,6 +57,29 @@ func roleNameToRepoPermission(roleName string) string {
 	default:
 		return ""
 	}
+}
+
+func collaboratorPermissions(p *github.RepositoryPermissions) []string {
+	if p == nil {
+		return nil
+	}
+	var permissions []string
+	if p.GetPull() {
+		permissions = append(permissions, repoPermissionPull)
+	}
+	if p.GetTriage() {
+		permissions = append(permissions, repoPermissionTriage)
+	}
+	if p.GetPush() {
+		permissions = append(permissions, repoPermissionPush)
+	}
+	if p.GetMaintain() {
+		permissions = append(permissions, repoPermissionMaintain)
+	}
+	if p.GetAdmin() {
+		permissions = append(permissions, repoPermissionAdmin)
+	}
+	return permissions
 }
 
 // repositoryResource returns a new connector resource for a GitHub repository.
@@ -275,11 +298,7 @@ func (o *repositoryResourceType) Grants(
 		}
 
 		for _, user := range users {
-			for permission, hasPermission := range user.Permissions {
-				if !hasPermission {
-					continue
-				}
-
+			for _, permission := range collaboratorPermissions(user.Permissions) {
 				ur, err := userResource(ctx, user, user.GetEmail(), nil)
 				if err != nil {
 					return nil, nil, err
@@ -451,7 +470,7 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			repo.GetOwner().GetLogin(),
 			repo.GetName(),
 			user.GetLogin(),
-			&github.RepositoryAddCollaboratorOptions{Permission: permission},
+			github.AddCollaboratorRequest{Permission: new(permission)},
 		)
 
 		if er != nil {
@@ -467,8 +486,8 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			return nil, wrapGitHubError(err, resp, "github-connector: failed to get team")
 		}
 
-		resp, err = o.client.Teams.AddTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName(), &github.TeamAddTeamRepoOptions{
-			Permission: permission,
+		resp, err = o.client.Teams.AddTeamRepoBySlug(ctx, org.GetLogin(), team.GetSlug(), repo.GetOwner().GetLogin(), repo.GetName(), github.AddTeamRepoRequest{
+			Permission: new(permission),
 		})
 		if err != nil {
 			return nil, wrapGitHubError(err, resp, "github-connector: failed to add team to repository")

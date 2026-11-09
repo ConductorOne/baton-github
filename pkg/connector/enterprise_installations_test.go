@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc/codes"
@@ -34,11 +34,12 @@ func newGitHubAPITestClientAt(t *testing.T, handler http.Handler, basePath strin
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	baseURL, err := url.Parse(srv.URL + basePath)
+	baseURL, err := url.Parse(srv.URL)
 	require.NoError(t, err)
+	baseURL = baseURL.JoinPath(basePath)
 
-	client := github.NewClient(srv.Client())
-	client.BaseURL = baseURL
+	client, err := github.NewClient(github.WithHTTPClient(srv.Client()), github.WithURLs(new(baseURL.String()), nil))
+	require.NoError(t, err)
 
 	return client
 }
@@ -340,7 +341,7 @@ func TestNewEnterpriseRoleClientsRejectsANonCloudInstance(t *testing.T) {
 	_, err := newEnterpriseRoleClients(
 		context.Background(), context.Background(),
 		"https://github.acme.com",
-		github.NewClient(nil), nil,
+		newTestGitHubClient(t, nil), nil,
 		[]string{testEnterprise, "another-enterprise"}, nil, "example-org",
 	)
 

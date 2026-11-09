@@ -6,7 +6,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,13 +14,13 @@ func TestAppResource(t *testing.T) {
 	ctx := context.Background()
 
 	installation := &github.Installation{
-		ID:                  github.Ptr(int64(42)),
-		AppID:               github.Ptr(int64(7)),
-		AppSlug:             github.Ptr("octo-app"),
-		TargetType:          github.Ptr("Organization"),
-		RepositorySelection: github.Ptr("all"),
-		HTMLURL:             github.Ptr("https://github.com/organizations/acme/settings/installations/42"),
-		Account:             &github.User{Login: github.Ptr("acme")},
+		ID:                  new(int64(42)),
+		AppID:               new(int64(7)),
+		AppSlug:             new("octo-app"),
+		TargetType:          new("Organization"),
+		RepositorySelection: new("all"),
+		HTMLURL:             new("https://github.com/organizations/acme/settings/installations/42"),
+		Account:             &github.User{Login: new("acme")},
 	}
 	parent := &v2.ResourceId{ResourceType: resourceTypeOrg.Id, Resource: "1"}
 

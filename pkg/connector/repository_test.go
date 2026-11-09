@@ -10,12 +10,39 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	entitlement2 "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	resourceSdk "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/stretchr/testify/require"
 
 	"github.com/conductorone/baton-github/test"
 	"github.com/conductorone/baton-github/test/mocks"
 )
+
+func TestCollaboratorPermissions(t *testing.T) {
+	tests := []struct {
+		name        string
+		permissions *github.RepositoryPermissions
+		want        []string
+	}{
+		{name: "missing permissions"},
+		{
+			name:        "false flags do not grant access",
+			permissions: &github.RepositoryPermissions{Pull: new(false)},
+		},
+		{
+			name: "all GitHub flags retain their entitlement names",
+			permissions: &github.RepositoryPermissions{
+				Pull: new(true), Triage: new(true), Push: new(true),
+				Maintain: new(true), Admin: new(true),
+			},
+			want: []string{repoPermissionPull, repoPermissionTriage, repoPermissionPush, repoPermissionMaintain, repoPermissionAdmin},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, collaboratorPermissions(tc.permissions))
+		})
+	}
+}
 
 func TestRepository(t *testing.T) {
 	ctx := context.Background()
@@ -25,7 +52,7 @@ func TestRepository(t *testing.T) {
 
 		githubOrganization, githubRepository, _, githubUser, _, _ := mgh.Seed()
 
-		githubClient := github.NewClient(mgh.Server())
+		githubClient := newTestGitHubClient(t, mgh.Server())
 		cache := newOrgNameCache(githubClient)
 		client := RepositoryBuilder(githubClient, cache, false, false)
 
@@ -140,7 +167,7 @@ func TestRepositoryGrantsOrgBasePermissionExpansion(t *testing.T) {
 		// Seed a direct collaborator so the collaborator page succeeds.
 		mgh.AddRepositoryCollaborator(githubRepository.GetID(), githubUser.GetID())
 
-		githubClient := github.NewClient(mgh.Server())
+		githubClient := newTestGitHubClient(t, mgh.Server())
 		builder := RepositoryBuilder(githubClient, newOrgNameCache(githubClient), false, true /* directCollaboratorsOnly */)
 
 		organization, err := organizationResource(ctx, githubOrganization, nil, false)

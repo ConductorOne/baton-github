@@ -10,7 +10,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
-	"github.com/google/go-github/v69/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/migueleliasweb/go-github-mock/src/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -27,9 +27,9 @@ func TestUsageEventFromAuditEntry(t *testing.T) {
 		{
 			name: "valid entry",
 			entry: &github.AuditEntry{
-				Actor:     github.Ptr("octocat"),
-				ActorID:   github.Ptr(int64(123)),
-				OrgID:     github.Ptr(int64(456)),
+				Actor:     new("octocat"),
+				ActorID:   new(int64(123)),
+				OrgID:     new(int64(456)),
 				Timestamp: &github.Timestamp{Time: ts},
 			},
 			ok: true,
@@ -37,8 +37,8 @@ func TestUsageEventFromAuditEntry(t *testing.T) {
 		{
 			name: "missing actor id",
 			entry: &github.AuditEntry{
-				Actor:     github.Ptr("octocat"),
-				OrgID:     github.Ptr(int64(456)),
+				Actor:     new("octocat"),
+				OrgID:     new(int64(456)),
 				Timestamp: &github.Timestamp{Time: ts},
 			},
 			ok: false,
@@ -46,8 +46,8 @@ func TestUsageEventFromAuditEntry(t *testing.T) {
 		{
 			name: "missing org id is still attributable",
 			entry: &github.AuditEntry{
-				Actor:     github.Ptr("octocat"),
-				ActorID:   github.Ptr(int64(123)),
+				Actor:     new("octocat"),
+				ActorID:   new(int64(123)),
 				Timestamp: &github.Timestamp{Time: ts},
 			},
 			ok: true,
@@ -55,18 +55,18 @@ func TestUsageEventFromAuditEntry(t *testing.T) {
 		{
 			name: "missing timestamp",
 			entry: &github.AuditEntry{
-				Actor:   github.Ptr("octocat"),
-				ActorID: github.Ptr(int64(123)),
-				OrgID:   github.Ptr(int64(456)),
+				Actor:   new("octocat"),
+				ActorID: new(int64(123)),
+				OrgID:   new(int64(456)),
 			},
 			ok: false,
 		},
 		{
 			name: "bot actor by login suffix",
 			entry: &github.AuditEntry{
-				Actor:     github.Ptr("dependabot[bot]"),
-				ActorID:   github.Ptr(int64(123)),
-				OrgID:     github.Ptr(int64(456)),
+				Actor:     new("dependabot[bot]"),
+				ActorID:   new(int64(123)),
+				OrgID:     new(int64(456)),
 				Timestamp: &github.Timestamp{Time: ts},
 			},
 			ok: false,
@@ -74,9 +74,9 @@ func TestUsageEventFromAuditEntry(t *testing.T) {
 		{
 			name: "bot actor by actor_is_bot field",
 			entry: &github.AuditEntry{
-				Actor:            github.Ptr("some-app-installation"),
-				ActorID:          github.Ptr(int64(123)),
-				OrgID:            github.Ptr(int64(456)),
+				Actor:            new("some-app-installation"),
+				ActorID:          new(int64(123)),
+				OrgID:            new(int64(456)),
 				Timestamp:        &github.Timestamp{Time: ts},
 				AdditionalFields: map[string]interface{}{"actor_is_bot": true},
 			},
@@ -85,9 +85,9 @@ func TestUsageEventFromAuditEntry(t *testing.T) {
 		{
 			name: "actor_is_bot false overrides a non-matching suffix check",
 			entry: &github.AuditEntry{
-				Actor:            github.Ptr("octocat"),
-				ActorID:          github.Ptr(int64(123)),
-				OrgID:            github.Ptr(int64(456)),
+				Actor:            new("octocat"),
+				ActorID:          new(int64(123)),
+				OrgID:            new(int64(456)),
 				Timestamp:        &github.Timestamp{Time: ts},
 				AdditionalFields: map[string]interface{}{"actor_is_bot": false},
 			},
@@ -117,12 +117,12 @@ func TestUsageEventFromAuditEntry_IdFallback(t *testing.T) {
 
 	t.Run("uses the real document id when present", func(t *testing.T) {
 		entry := &github.AuditEntry{
-			Actor:      github.Ptr("octocat"),
-			ActorID:    github.Ptr(int64(123)),
-			OrgID:      github.Ptr(int64(456)),
+			Actor:      new("octocat"),
+			ActorID:    new(int64(123)),
+			OrgID:      new(int64(456)),
 			Timestamp:  &github.Timestamp{Time: ts},
-			DocumentID: github.Ptr("real-doc-id"),
-			Action:     github.Ptr("repo.create"),
+			DocumentID: new("real-doc-id"),
+			Action:     new("repo.create"),
 		}
 		evt, ok := usageEventFromAuditEntry(entry)
 		require.True(t, ok)
@@ -131,11 +131,11 @@ func TestUsageEventFromAuditEntry_IdFallback(t *testing.T) {
 
 	t.Run("synthesizes a stable id when the document id is missing", func(t *testing.T) {
 		entry := &github.AuditEntry{
-			Actor:     github.Ptr("octocat"),
-			ActorID:   github.Ptr(int64(123)),
-			OrgID:     github.Ptr(int64(456)),
+			Actor:     new("octocat"),
+			ActorID:   new(int64(123)),
+			OrgID:     new(int64(456)),
 			Timestamp: &github.Timestamp{Time: ts},
-			Action:    github.Ptr("repo.create"),
+			Action:    new("repo.create"),
 		}
 		evt, ok := usageEventFromAuditEntry(entry)
 		require.True(t, ok)
@@ -148,7 +148,7 @@ func TestUsageEventFeed_ListEvents_GracefulDegradation(t *testing.T) {
 	ctx := context.Background()
 
 	httpClient := mock.NewMockedHTTPClient(
-		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: github.Ptr("octo-org")}}),
+		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: new("octo-org")}}),
 		mock.WithRequestMatchHandler(
 			mock.GetOrgsAuditLogByOrg,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -157,7 +157,7 @@ func TestUsageEventFeed_ListEvents_GracefulDegradation(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, nil)
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func TestUsageEventFeed_ListEvents_SkipsOrgOn404(t *testing.T) {
 	ctx := context.Background()
 
 	httpClient := mock.NewMockedHTTPClient(
-		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: github.Ptr("octo-org")}}),
+		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: new("octo-org")}}),
 		mock.WithRequestMatchHandler(
 			mock.GetOrgsAuditLogByOrg,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +178,7 @@ func TestUsageEventFeed_ListEvents_SkipsOrgOn404(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, nil)
 	require.NoError(t, err)
@@ -190,7 +190,7 @@ func TestUsageEventFeed_ListEvents_AbortsOnServerError(t *testing.T) {
 	ctx := context.Background()
 
 	httpClient := mock.NewMockedHTTPClient(
-		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: github.Ptr("octo-org")}}),
+		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: new("octo-org")}}),
 		mock.WithRequestMatchHandler(
 			mock.GetOrgsAuditLogByOrg,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -199,7 +199,7 @@ func TestUsageEventFeed_ListEvents_AbortsOnServerError(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, nil)
 	require.Error(t, err, "a 5xx should abort the call, not be swallowed as a successful empty pass")
@@ -211,7 +211,7 @@ func TestUsageEventFeed_ListEvents_AbortsOnRateLimit(t *testing.T) {
 	ctx := context.Background()
 
 	httpClient := mock.NewMockedHTTPClient(
-		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: github.Ptr("octo-org")}}),
+		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: new("octo-org")}}),
 		mock.WithRequestMatchHandler(
 			mock.GetOrgsAuditLogByOrg,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +221,7 @@ func TestUsageEventFeed_ListEvents_AbortsOnRateLimit(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, nil)
 	require.Error(t, err, "a rate-limited 403 (Remaining: 0) should abort, not be treated as a permission error")
@@ -239,17 +239,17 @@ func TestUsageEventFeed_ListEvents_FiltersToSinceBoundary(t *testing.T) {
 
 	// Entries in descending order, as requested (Order: "desc").
 	entries := []*github.AuditEntry{
-		{Actor: github.Ptr("alice"), ActorID: github.Ptr(int64(1)), OrgID: github.Ptr(int64(9)), Timestamp: &github.Timestamp{Time: newer1}},
-		{Actor: github.Ptr("bob"), ActorID: github.Ptr(int64(2)), OrgID: github.Ptr(int64(9)), Timestamp: &github.Timestamp{Time: newer2}},
-		{Actor: github.Ptr("carol"), ActorID: github.Ptr(int64(3)), OrgID: github.Ptr(int64(9)), Timestamp: &github.Timestamp{Time: older}},
+		{Actor: new("alice"), ActorID: new(int64(1)), OrgID: new(int64(9)), Timestamp: &github.Timestamp{Time: newer1}},
+		{Actor: new("bob"), ActorID: new(int64(2)), OrgID: new(int64(9)), Timestamp: &github.Timestamp{Time: newer2}},
+		{Actor: new("carol"), ActorID: new(int64(3)), OrgID: new(int64(9)), Timestamp: &github.Timestamp{Time: older}},
 	}
 
 	httpClient := mock.NewMockedHTTPClient(
-		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: github.Ptr("octo-org")}}),
+		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: new("octo-org")}}),
 		mock.WithRequestMatch(mock.GetOrgsAuditLogByOrg, entries),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, timestamppb.New(since), nil)
 	require.NoError(t, err)
@@ -262,7 +262,7 @@ func TestUsageEventFeed_ListEvents_ZeroEarliestEventFallsBackToDefaultLookback(t
 
 	var gotPhrase string
 	httpClient := mock.NewMockedHTTPClient(
-		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: github.Ptr("octo-org")}}),
+		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: new("octo-org")}}),
 		mock.WithRequestMatchHandler(
 			mock.GetOrgsAuditLogByOrg,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -273,7 +273,7 @@ func TestUsageEventFeed_ListEvents_ZeroEarliestEventFallsBackToDefaultLookback(t
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	// A zero timestamppb.Timestamp mirrors a degenerate caller-supplied
 	// start-at, which must not be trusted as a real boundary.
@@ -294,15 +294,15 @@ func TestUsageEventFeed_ListEvents_ContinuesPastAnAllFilteredPage(t *testing.T) 
 	// Page 1 is entirely bot activity - every entry gets filtered out by
 	// usageEventFromAuditEntry, so no event is ever appended on this page.
 	page1 := []*github.AuditEntry{
-		{Actor: github.Ptr("dependabot[bot]"), ActorID: github.Ptr(int64(1)), OrgID: github.Ptr(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
+		{Actor: new("dependabot[bot]"), ActorID: new(int64(1)), OrgID: new(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
 	}
 	page2 := []*github.AuditEntry{
-		{Actor: github.Ptr("octocat"), ActorID: github.Ptr(int64(2)), OrgID: github.Ptr(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
+		{Actor: new("octocat"), ActorID: new(int64(2)), OrgID: new(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
 	}
 
 	calls := 0
 	httpClient := mock.NewMockedHTTPClient(
-		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: github.Ptr("octo-org")}}),
+		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: new("octo-org")}}),
 		mock.WithRequestMatchHandler(
 			mock.GetOrgsAuditLogByOrg,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -318,7 +318,7 @@ func TestUsageEventFeed_ListEvents_ContinuesPastAnAllFilteredPage(t *testing.T) 
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, timestamppb.New(since), nil)
 	require.NoError(t, err)
@@ -335,15 +335,15 @@ func TestUsageEventFeed_ListEvents_ReturnsTightestRateLimit(t *testing.T) {
 	newer := since.Add(1 * time.Hour)
 
 	page1 := []*github.AuditEntry{
-		{Actor: github.Ptr("octocat"), ActorID: github.Ptr(int64(1)), OrgID: github.Ptr(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
+		{Actor: new("octocat"), ActorID: new(int64(1)), OrgID: new(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
 	}
 	page2 := []*github.AuditEntry{
-		{Actor: github.Ptr("alice"), ActorID: github.Ptr(int64(2)), OrgID: github.Ptr(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
+		{Actor: new("alice"), ActorID: new(int64(2)), OrgID: new(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
 	}
 
 	calls := 0
 	httpClient := mock.NewMockedHTTPClient(
-		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: github.Ptr("octo-org")}}),
+		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{{Login: new("octo-org")}}),
 		mock.WithRequestMatchHandler(
 			mock.GetOrgsAuditLogByOrg,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +365,7 @@ func TestUsageEventFeed_ListEvents_ReturnsTightestRateLimit(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, _, annos, err := f.ListEvents(ctx, timestamppb.New(since), nil)
 	require.NoError(t, err)
@@ -388,18 +388,18 @@ func TestUsageEventFeed_ListEvents_AdvancesAcrossMultipleOrgs(t *testing.T) {
 
 	entriesByOrg := map[string][]*github.AuditEntry{
 		"octo-org-a": {
-			{Actor: github.Ptr("alice"), ActorID: github.Ptr(int64(1)), OrgID: github.Ptr(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
+			{Actor: new("alice"), ActorID: new(int64(1)), OrgID: new(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
 		},
 		"octo-org-b": {
-			{Actor: github.Ptr("bob"), ActorID: github.Ptr(int64(2)), OrgID: github.Ptr(int64(8)), Timestamp: &github.Timestamp{Time: newer}},
+			{Actor: new("bob"), ActorID: new(int64(2)), OrgID: new(int64(8)), Timestamp: &github.Timestamp{Time: newer}},
 		},
 	}
 
 	var seenOrgs []string
 	httpClient := mock.NewMockedHTTPClient(
 		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{
-			{Login: github.Ptr("octo-org-a")},
-			{Login: github.Ptr("octo-org-b")},
+			{Login: new("octo-org-a")},
+			{Login: new("octo-org-b")},
 		}),
 		mock.WithRequestMatchHandler(
 			mock.GetOrgsAuditLogByOrg,
@@ -412,7 +412,7 @@ func TestUsageEventFeed_ListEvents_AdvancesAcrossMultipleOrgs(t *testing.T) {
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, timestamppb.New(since), nil)
 	require.NoError(t, err)
@@ -455,13 +455,13 @@ func TestUsageEventFeed_ListEvents_ResumesFromPersistedCursor(t *testing.T) {
 				gotPage = r.URL.Query().Get("page")
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write(mock.MustMarshal([]*github.AuditEntry{
-					{Actor: github.Ptr("bob"), ActorID: github.Ptr(int64(2)), OrgID: github.Ptr(int64(8)), Timestamp: &github.Timestamp{Time: newer}},
+					{Actor: new("bob"), ActorID: new(int64(2)), OrgID: new(int64(8)), Timestamp: &github.Timestamp{Time: newer}},
 				}))
 			}),
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, &pagination.StreamToken{Cursor: cursorStr})
 	require.NoError(t, err)
@@ -498,13 +498,13 @@ func TestUsageEventFeed_ListEvents_ResumesFromPersistedAfterCursor(t *testing.T)
 				gotPage = r.URL.Query().Get("page")
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write(mock.MustMarshal([]*github.AuditEntry{
-					{Actor: github.Ptr("bob"), ActorID: github.Ptr(int64(2)), OrgID: github.Ptr(int64(8)), Timestamp: &github.Timestamp{Time: newer}},
+					{Actor: new("bob"), ActorID: new(int64(2)), OrgID: new(int64(8)), Timestamp: &github.Timestamp{Time: newer}},
 				}))
 			}),
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, &pagination.StreamToken{Cursor: cursorStr})
 	require.NoError(t, err)
@@ -539,13 +539,13 @@ func TestUsageEventFeed_ListEvents_RecoversFromOutOfBoundsCursor(t *testing.T) {
 				gotPage = r.URL.Query().Get("page")
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write(mock.MustMarshal([]*github.AuditEntry{
-					{Actor: github.Ptr("octocat"), ActorID: github.Ptr(int64(1)), OrgID: github.Ptr(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
+					{Actor: new("octocat"), ActorID: new(int64(1)), OrgID: new(int64(9)), Timestamp: &github.Timestamp{Time: newer}},
 				}))
 			}),
 		),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	require.NotPanics(t, func() {
 		events, state, _, err := f.ListEvents(ctx, nil, &pagination.StreamToken{Cursor: cursorStr})
@@ -563,7 +563,7 @@ func TestUsageEventFeed_ListEvents_NoOrgs(t *testing.T) {
 		mock.WithRequestMatch(mock.GetUserOrgs, []*github.Organization{}),
 	)
 
-	f := newUsageEventFeed(github.NewClient(httpClient), nil)
+	f := newUsageEventFeed(newTestGitHubClient(t, httpClient), nil)
 
 	events, state, _, err := f.ListEvents(ctx, nil, nil)
 	require.NoError(t, err)
