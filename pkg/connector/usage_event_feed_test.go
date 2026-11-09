@@ -107,6 +107,7 @@ func TestUsageEventFromAuditEntry(t *testing.T) {
 			require.Equal(t, usageAppResourceID, evt.GetUsageEvent().GetTargetResource().GetId().GetResource())
 			require.Equal(t, resourceTypeUser.Id, evt.GetUsageEvent().GetActorResource().GetId().GetResourceType())
 			require.Equal(t, resourceTypeUsageApp.Id, evt.GetUsageEvent().GetTargetResource().GetId().GetResourceType())
+			require.Equal(t, v2.UsageEvent_TARGET_KIND_APP_ACCESS, evt.GetUsageEvent().GetTargetKind())
 		})
 	}
 }
