@@ -320,6 +320,7 @@ func usageEventFromAuditEntry(entry *github.AuditEntry) (*v2.Event, bool) {
 		OccurredAt: timestamppb.New(ts),
 		Event: &v2.Event_UsageEvent{
 			UsageEvent: &v2.UsageEvent{
+				TargetKind: v2.UsageEvent_TARGET_KIND_APP_ACCESS,
 				TargetResource: &v2.Resource{
 					Id: &v2.ResourceId{
 						ResourceType: resourceTypeUsageApp.Id,
