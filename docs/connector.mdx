@@ -500,8 +500,9 @@ Enabling **Optimize sync for large organizations** (env var: `BATON_DIRECT_COLLA
 
 - **Direct collaborators only.** GitHub is asked only for users with direct repository access. Team-based access is reconstructed from team membership, which the connector already syncs separately.
 - **Skips per-team detail calls.** The `members_count` and `repos_count` profile fields are not synced for team resources.
+- **Direct-only grant and revoke.** Repository grants always create a direct collaborator record. Repository revokes remove only that record. Access through teams or organization base permissions is not changed.
 
-**Enable this option if** your GitHub organization has thousands of repositories or thousands of members and you want faster syncs and fewer API calls. Repository access data in C1 is equivalent — only the way grants are sourced (direct vs. team-expanded) differs.
+**Enable this option if** your GitHub organization has thousands of repositories or thousands of members and you want faster syncs and fewer API calls. Repository access data in C1 is equivalent for sync — only the way grants are sourced (direct vs. team-expanded) differs.
 
 ## Troubleshooting
 
