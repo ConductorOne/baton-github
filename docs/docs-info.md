@@ -73,7 +73,7 @@
    `--sync-secrets` — sync fine-grained personal access tokens as API keys
    `--sync-last-activity` — emit the audit-log usage event feed. Hidden from `--help` and from the GUI config here, because it only applies to GitHub Enterprise audit-log access; `baton-github-enterprise` sets it directly instead of going through this CLI layer
    `--omit-archived-repositories` — skip archived repositories
-   `--direct-collaborators-only` — reduce API calls on large organizations. Grant and revoke do not depend on this option. Grant returns `GrantAlreadyExists` when the user already has the requested permission, including through a team, the organization base permission, or organization ownership. No direct collaborator record is created in that case. Revoke removes only the direct collaborator or invitation, so inherited access stays
+   `--direct-collaborators-only` — reduce API calls on large organizations. Grant and revoke do not depend on this option. Grant returns `GrantAlreadyExists` only when the effective permission level is exactly the requested level. Effective access includes access through a team, the organization base permission, or organization ownership. No direct collaborator record is created in that case. If the effective level is higher or lower, Grant still adds a direct collaborator. Revoke removes only the direct collaborator or invitation, so inherited access stays
 
 2. **For each item in the list above:**
    - **How does a user create or look up that credential or info?**
@@ -169,7 +169,7 @@
 - **Parent**: Organization
 - **Entitlements**: `pull`, `triage`, `push`, `maintain`, `admin` (permission), grantable to users and teams, and declared as an exclusion group because a principal holds one level at a time
 - **Grants**: One grant per collaborator for their permission level, and one per team with repository access. The organization's `default_repository_permission` is expanded into the cumulative levels it implies and emitted against the organization, annotated as expandable through the org's `member` and `admin` entitlements
-- **Provisioning**: Grant and Revoke add or remove a collaborator, or a team's repository access. Grant skips a user who already has the requested permission through a team, the organization base permission, or organization ownership. Revoke removes only the direct collaborator or invitation
+- **Provisioning**: Grant and Revoke add or remove a collaborator, or a team's repository access. Grant skips a user whose effective permission level, through a team, the organization base permission, or organization ownership, is exactly the requested level. Otherwise Grant adds a direct collaborator. Revoke removes only the direct collaborator or invitation
 - **Note**: `--omit-archived-repositories` skips archived repositories. `--direct-collaborators-only` relies on grant expansion for team access instead of fetching per-team detail
 
 ### Organization roles
