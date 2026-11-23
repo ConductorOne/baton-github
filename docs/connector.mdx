@@ -500,6 +500,7 @@ Enabling **Optimize sync for large organizations** (env var: `BATON_DIRECT_COLLA
 
 - **Direct collaborators only.** GitHub is asked only for users with direct repository access. Team-based access is reconstructed from team membership, which the connector already syncs separately.
 - **Skips per-team detail calls.** The `members_count` and `repos_count` profile fields are not synced for team resources.
+- **Inherited access in grant and revoke.** Grant and revoke behave the same with or without this option. A repository grant checks the user's effective access first. If the user already has the requested permission, the grant returns "already exists" and no direct collaborator record is created. Effective access includes access through a team, the organization base permission, and organization ownership. With this option on, the sync lists only direct collaborators. A user with only inherited access can show a fulfilled grant in C1 and have no direct collaborator record on GitHub. A repository revoke removes only the direct collaborator or invitation. It does not change team or organization access, so the user can keep access after a revoke.
 
 **Enable this option if** your GitHub organization has thousands of repositories or thousands of members and you want faster syncs and fewer API calls. Repository access data in C1 is equivalent — only the way grants are sourced (direct vs. team-expanded) differs.
 
