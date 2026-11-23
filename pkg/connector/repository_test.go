@@ -221,3 +221,78 @@ func TestOrgBasePermissionToRepoPermissions(t *testing.T) {
 		})
 	}
 }
+
+func TestRepositoryGrantRevokeDirectCollaborators(t *testing.T) {
+	ctx := context.Background()
+
+	const (
+		repoID = int64(34)
+		userID = int64(56)
+	)
+
+	setup := func(t *testing.T, directOnly bool) (*mocks.MockGitHub, *repositoryResourceType, *v2.Resource, *v2.Resource, *v2.Entitlement) {
+		t.Helper()
+		mgh := mocks.NewMockGitHub()
+		githubOrganization, githubRepository, _, githubUser, _, _ := mgh.Seed()
+
+		githubClient := newTestGitHubClient(t, mgh.Server())
+		builder := RepositoryBuilder(githubClient, newOrgNameCache(githubClient), false, directOnly)
+
+		organization, err := organizationResource(ctx, githubOrganization, nil, false)
+		require.NoError(t, err)
+		repository, err := repositoryResource(ctx, githubRepository, organization.Id)
+		require.NoError(t, err)
+		user, err := userResource(ctx, githubUser, *githubUser.Email, nil)
+		require.NoError(t, err)
+		en := &v2.Entitlement{
+			Id:       entitlement2.NewEntitlementID(repository, repoPermissionPush),
+			Resource: repository,
+		}
+		return mgh, builder, repository, user, en
+	}
+
+	hasGrantAlreadyExists := func(t *testing.T, annos annotations.Annotations) bool {
+		t.Helper()
+		found, err := annos.Pick(&v2.GrantAlreadyExists{})
+		require.NoError(t, err)
+		return found
+	}
+
+	t.Run("grant with flag on adds collaborator despite effective team access", func(t *testing.T) {
+		mgh, builder, _, user, en := setup(t, true)
+		mgh.SetRepositoryRole(repoID, userID, "write")
+
+		annos, err := builder.Grant(ctx, user, en)
+		require.NoError(t, err)
+		require.False(t, hasGrantAlreadyExists(t, annos))
+		require.Equal(t, []string{repoPermissionPush}, mgh.AddedCollaboratorPermissions(repoID))
+	})
+
+	t.Run("grant with flag off reports existing permission", func(t *testing.T) {
+		mgh, builder, _, user, en := setup(t, false)
+		mgh.SetRepositoryRole(repoID, userID, "write")
+
+		annos, err := builder.Grant(ctx, user, en)
+		require.NoError(t, err)
+		require.True(t, hasGrantAlreadyExists(t, annos))
+		require.Empty(t, mgh.AddedCollaboratorPermissions(repoID))
+	})
+
+	t.Run("revoke with flag on treats non-direct user as already revoked", func(t *testing.T) {
+		_, builder, _, user, en := setup(t, true)
+
+		annos, err := builder.Revoke(ctx, &v2.Grant{Entitlement: en, Principal: user})
+		require.NoError(t, err)
+		require.Empty(t, annos)
+	})
+
+	t.Run("revoke with flag on succeeds when team access remains", func(t *testing.T) {
+		mgh, builder, _, user, en := setup(t, true)
+		mgh.AddRepositoryCollaborator(repoID, userID)
+		mgh.SetRepositoryRole(repoID, userID, "write")
+
+		annos, err := builder.Revoke(ctx, &v2.Grant{Entitlement: en, Principal: user})
+		require.NoError(t, err)
+		require.Empty(t, annos)
+	})
+}

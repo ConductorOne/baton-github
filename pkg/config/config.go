@@ -88,7 +88,9 @@ var (
 		field.WithDisplayName("Optimize sync for large organizations"),
 		field.WithDescription(
 			"Reduces API calls by using grant expansion for team-based repo access "+
-				"and skipping per-team detail fetches. Recommended for large orgs.",
+				"and skipping per-team detail fetches. Recommended for large orgs. "+
+				"With this option on, repository grants create a direct collaborator record "+
+				"and repository revokes remove only that record. Access through teams is separate and is not changed.",
 		),
 	)
 	orgField = field.StringField(

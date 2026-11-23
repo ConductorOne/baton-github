@@ -73,7 +73,7 @@
    `--sync-secrets` — sync fine-grained personal access tokens as API keys
    `--sync-last-activity` — emit the audit-log usage event feed. Hidden from `--help` and from the GUI config here, because it only applies to GitHub Enterprise audit-log access; `baton-github-enterprise` sets it directly instead of going through this CLI layer
    `--omit-archived-repositories` — skip archived repositories
-   `--direct-collaborators-only` — reduce API calls on large organizations
+   `--direct-collaborators-only` — reduce API calls on large organizations. With this option on, repository grants create a direct collaborator record, and repository revokes remove only that record. Access through teams is separate and is not changed
 
 2. **For each item in the list above:**
    - **How does a user create or look up that credential or info?**

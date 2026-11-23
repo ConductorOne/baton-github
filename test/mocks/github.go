@@ -24,6 +24,8 @@ type MockGitHub struct {
 	users                   map[int64]github.User
 	orgRoles                map[int64]mapset.Set[int64] // Maps role ID to set of user IDs
 	SimulateOrgRolePermErr  bool                        // Simulate permission error for org roles
+	repositoryRoles         map[int64]map[int64]string  // Effective repository role by repository ID and user ID
+	addedCollaborators      map[int64][]string          // Permissions requested through AddCollaborator by repository ID
 }
 
 func NewMockGitHub() *MockGitHub {
@@ -36,6 +38,8 @@ func NewMockGitHub() *MockGitHub {
 		teams:                   map[int64]github.Team{},
 		users:                   map[int64]github.User{},
 		orgRoles:                map[int64]mapset.Set[int64]{},
+		repositoryRoles:         map[int64]map[int64]string{},
+		addedCollaborators:      map[int64][]string{},
 	}
 }
 
@@ -460,13 +464,38 @@ func (mgh MockGitHub) getRepositoryCollaborator(
 	w http.ResponseWriter,
 	variables map[string]string,
 ) {
+	repoID, _ := getCrossTableId(w, variables, "repo")
+	userID, _ := getUserId(w, variables)
+	if _, ok := mgh.repositoryRoles[repoID][userID]; ok {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	user := mgh.getUserFromCrossTable(
 		w,
 		variables,
 		mgh.repositoryMemberships,
-		"repository_id",
+		"repo",
 	)
+	if user == nil {
+		return
+	}
 	_, _ = w.Write(mock.MustMarshal(user))
+}
+
+func (mgh MockGitHub) getRepositoryPermissionLevel(
+	w http.ResponseWriter,
+	variables map[string]string,
+) {
+	repoID, _ := getCrossTableId(w, variables, "repo")
+	userID, _ := getUserId(w, variables)
+	role, ok := mgh.repositoryRoles[repoID][userID]
+	if !ok {
+		role = "none"
+	}
+	_, _ = w.Write(mock.MustMarshal(github.RepositoryPermissionLevel{
+		Permission: &role,
+		RoleName:   &role,
+	}))
 }
 
 func (mgh MockGitHub) addMembership(
@@ -485,6 +514,8 @@ func (mgh MockGitHub) addRepositoryCollaborator(
 	w http.ResponseWriter,
 	variables map[string]string,
 ) {
+	repoID, _ := getCrossTableId(w, variables, "repo")
+	mgh.addedCollaborators[repoID] = append(mgh.addedCollaborators[repoID], variables["permission"])
 	mgh.addUserToCrossTable(
 		w,
 		variables,
@@ -509,12 +540,20 @@ func (mgh MockGitHub) removeRepositoryCollaborator(
 	w http.ResponseWriter,
 	variables map[string]string,
 ) {
+	repoID, _ := getCrossTableId(w, variables, "repo")
+	userID, _ := getUserId(w, variables)
+	memberships, ok := mgh.repositoryMemberships[repoID]
+	if !ok || !memberships.Contains(userID) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	mgh.removeUserFromCrossTable(
 		w,
 		variables,
 		mgh.repositoryMemberships,
 		"repo",
 	)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type OrganizationRole struct {
@@ -749,6 +788,7 @@ func (mgh MockGitHub) Server() *http.Client {
 		mock.GetOrgsMembershipsByOrgByUsername:                              mgh.getMembership,
 		mock.GetReposCollaboratorsByOwnerByRepo:                             mgh.getRepositoryCollaborators,
 		mock.GetReposCollaboratorsByOwnerByRepoByUsername:                   mgh.getRepositoryCollaborator,
+		mock.GetReposCollaboratorsPermissionByOwnerByRepoByUsername:         mgh.getRepositoryPermissionLevel,
 		mock.GetReposTeamsByOwnerByRepo:                                     mgh.getRepositoryTeams,
 		mock.PostOrgsInvitationsByOrg:                                       mgh.addUser,
 		mock.PutReposCollaboratorsByOwnerByRepoByUsername:                   mgh.addRepositoryCollaborator,
@@ -802,6 +842,21 @@ func (mgh *MockGitHub) AddRepositoryCollaborator(repoID int64, userID int64) {
 		mgh.repositoryMemberships[repoID] = mapset.NewSet[int64]()
 	}
 	mgh.repositoryMemberships[repoID].Add(userID)
+}
+
+// SetRepositoryRole sets the effective role a user has on a repository, such as
+// access inherited from a team, for testing purposes.
+func (mgh *MockGitHub) SetRepositoryRole(repoID int64, userID int64, role string) {
+	if _, ok := mgh.repositoryRoles[repoID]; !ok {
+		mgh.repositoryRoles[repoID] = map[int64]string{}
+	}
+	mgh.repositoryRoles[repoID][userID] = role
+}
+
+// AddedCollaboratorPermissions returns the permissions requested through
+// AddCollaborator calls for a repository.
+func (mgh *MockGitHub) AddedCollaboratorPermissions(repoID int64) []string {
+	return mgh.addedCollaborators[repoID]
 }
 
 // AddMembership adds a user to a team for testing purposes.

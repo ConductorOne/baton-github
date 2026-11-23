@@ -428,40 +428,15 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 			return nil, wrapGitHubError(err, resp, "github-connector: failed to get user")
 		}
 
-		collaborator, resp, err := o.client.Repositories.IsCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin())
-		if err != nil {
-			return nil, wrapGitHubError(err, resp, "github-connector: failed to check if user is a collaborator")
-		}
-
 		var replacedGrantID string
-		if collaborator {
-			permLevel, resp, err := o.client.Repositories.GetPermissionLevel(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin())
+		if !o.directCollaboratorsOnly {
+			var alreadyGranted bool
+			replacedGrantID, alreadyGranted, err = o.existingUserGrant(ctx, principal, en, repo, user.GetLogin(), permission)
 			if err != nil {
-				return nil, wrapGitHubError(err, resp, "github-connector: failed to get user's repository permission")
+				return nil, err
 			}
-
-			prevPermission := roleNameToRepoPermission(permLevel.GetRoleName())
-			if prevPermission == "" {
-				// Custom repository role: fall back to the coarse permission (read/write/admin).
-				prevPermission = roleNameToRepoPermission(permLevel.GetPermission())
-			}
-
-			switch prevPermission {
-			case permission:
+			if alreadyGranted {
 				return annotations.New(&v2.GrantAlreadyExists{}), nil
-			case "":
-				l.Warn(
-					"github-connectorv2: unrecognized existing repository role, granting without GrantReplaced annotation",
-					zap.String("role_name", permLevel.GetRoleName()),
-					zap.String("permission", permLevel.GetPermission()),
-				)
-			default:
-				// AddCollaborator overwrites the user's existing role, so report the
-				// old role's grant as replaced. GitHub permissions are cumulative;
-				// grants for other implied flags are reconciled at the next sync.
-				replacedGrantID = grant.NewGrantID(principal, &v2.Entitlement{
-					Id: entitlement.NewEntitlementID(en.Resource, prevPermission),
-				})
 			}
 		}
 
@@ -504,6 +479,68 @@ func (o *repositoryResourceType) Grant(ctx context.Context, principal *v2.Resour
 	return nil, nil
 }
 
+func (o *repositoryResourceType) existingUserGrant(
+	ctx context.Context,
+	principal *v2.Resource,
+	en *v2.Entitlement,
+	repo *github.Repository,
+	login string,
+	permission string,
+) (string, bool, error) {
+	l := ctxzap.Extract(ctx)
+
+	var replacedGrantID string
+	collaborator, resp, err := o.client.Repositories.IsCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), login)
+	if err != nil {
+		return "", false, wrapGitHubError(err, resp, "github-connector: failed to check if user is a collaborator")
+	}
+
+	if collaborator {
+		permLevel, resp, err := o.client.Repositories.GetPermissionLevel(ctx, repo.GetOwner().GetLogin(), repo.GetName(), login)
+		if err != nil {
+			return "", false, wrapGitHubError(err, resp, "github-connector: failed to get user's repository permission")
+		}
+
+		prevPermission := roleNameToRepoPermission(permLevel.GetRoleName())
+		if prevPermission == "" {
+			// Custom repository role: fall back to the coarse permission (read/write/admin).
+			prevPermission = roleNameToRepoPermission(permLevel.GetPermission())
+		}
+
+		switch prevPermission {
+		case permission:
+			return "", true, nil
+		case "":
+			l.Warn(
+				"github-connectorv2: unrecognized existing repository role, granting without GrantReplaced annotation",
+				zap.String("role_name", permLevel.GetRoleName()),
+				zap.String("permission", permLevel.GetPermission()),
+			)
+		default:
+			// AddCollaborator overwrites the user's existing role, so report the
+			// old role's grant as replaced. GitHub permissions are cumulative;
+			// grants for other implied flags are reconciled at the next sync.
+			replacedGrantID = grant.NewGrantID(principal, &v2.Entitlement{
+				Id: entitlement.NewEntitlementID(en.Resource, prevPermission),
+			})
+		}
+	}
+
+	return replacedGrantID, false, nil
+}
+
+func (o *repositoryResourceType) warnIfAccessRemains(ctx context.Context, repo *github.Repository, login string) {
+	hasAccess, _, err := o.client.Repositories.IsCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), login)
+	if err != nil || !hasAccess {
+		return
+	}
+	ctxzap.Extract(ctx).Warn(
+		"github-connectorv2: user still has repository access through a team or organization permission after direct collaborator removal",
+		zap.String("repository", repo.GetFullName()),
+		zap.String("user", login),
+	)
+}
+
 func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
@@ -535,8 +572,13 @@ func (o *repositoryResourceType) Revoke(ctx context.Context, grant *v2.Grant) (a
 		}
 
 		resp, er := o.client.Repositories.RemoveCollaborator(ctx, repo.GetOwner().GetLogin(), repo.GetName(), user.GetLogin())
-		if er != nil {
+		alreadyRevoked := o.directCollaboratorsOnly && resp != nil && resp.StatusCode == http.StatusNotFound
+		if er != nil && !alreadyRevoked {
 			return nil, wrapGitHubError(er, resp, "github-connector: failed to remove user from repository")
+		}
+
+		if o.directCollaboratorsOnly {
+			o.warnIfAccessRemains(ctx, repo, user.GetLogin())
 		}
 	case resourceTypeTeam.Id:
 		team, resp, err := o.client.Teams.GetTeamByID(ctx, org.GetID(), principalID) //nolint:staticcheck,nolintlint // TODO: migrate to GetTeamBySlug
