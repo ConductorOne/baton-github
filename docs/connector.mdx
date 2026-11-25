@@ -263,7 +263,7 @@ To complete this task, you'll need:
 
 <Steps>
 <Step>
-In C1, navigate to **Apps** > **Connectors** and click **Add connector**.
+In C1, navigate to **Apps** > **Connectors** and click **Browse connectors**.
 </Step>
 <Step>
 Search for **GitHub v2** and click **Add**.
@@ -278,6 +278,8 @@ Set the connector's **Name** and, optionally, a **Description**.
 </Step>
 <Step>
 Click the pencil icon next to **Owners** to choose who can configure and manage this connector.
+
+Make sure any user who you select as a connector owner has either the Connector Admin or Super Admin user role in C1, as this is required to manage the connector.
 </Step>
 <Step>
 Click **Add**. The connector is created and its configuration page opens.
@@ -341,15 +343,14 @@ When running in service mode on Kubernetes, a self-hosted connector maintains an
 
 ### Resources
 
-* [Official download center](https://dist.conductorone.com/ConductorOne/baton-github): For stable binaries (Windows/Linux/macOS) and container images.
+* [Official connector registry](https://dist.conductorone.com/ConductorOne/baton-github): For stable binaries (Windows/Linux/macOS) and container images.
 
-* [GitHub repository](https://github.com/conductorone/baton-github): Access the source code, report issues, or contribute to the project.
 
 ### Step 1: Set up a new GitHub connector
 
 <Steps>
 <Step>
-In C1, navigate to **Apps** > **Connectors** > **Add connector**.
+In C1, navigate to **Apps** > **Connectors** and click **Browse connectors**.
 </Step>
 <Step>
 Search for **Baton** and click **Add**.
@@ -364,6 +365,8 @@ Set the connector's **Name** and, optionally, a **Description**.
 </Step>
 <Step>
 Click the pencil icon next to **Owners** to choose who can configure and manage this connector.
+
+Make sure any user who you select as a connector owner has either the Connector Admin or Super Admin user role in C1, as this is required to manage the connector.
 </Step>
 <Step>
 Click **Add**. The connector is created and its configuration page opens.
@@ -432,7 +435,7 @@ stringData:
 
 If you're using `BATON_APP_PRIVATEKEY_PATH`, the private key must be mounted into the container as a file rather than passed as an environment variable. The manifest above stores the key in its own Secret so it can be mounted as a volume in the deployment configuration below. Set `BATON_APP_PRIVATEKEY_PATH` to the path where the key will be mounted. If you use `BATON_APP_PRIVATEKEY` instead, the raw PEM contents are passed directly and no volume mount is needed.
 
-See the connector's README or run `--help` to see all available configuration flags and environment variables.
+Run `--help` to see all available configuration flags and environment variables.
 
 #### Deployment configuration
 
@@ -484,7 +487,7 @@ The `volumeMounts` and `volumes` entries above are only needed if you're configu
 Create a namespace in which to run C1 connectors (if desired), then apply the secret config and deployment config files.
 </Step>
 <Step>
-Check that the connector data uploaded correctly. In C1, click **Apps**. On the **Managed apps** tab, locate and click the name of the application you added the GitHub connector to. GitHub data should be found on the **Entitlements** and **Accounts** tabs.
+Check that the connector data uploaded correctly. In C1, click **Apps**. On the **Applications** tab, locate and click the name of the application you added the GitHub connector to. GitHub data should be found on the **Entitlements** and **Accounts** tabs.
 </Step>
 </Steps>
 
